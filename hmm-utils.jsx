@@ -1,0 +1,637 @@
+// hmm-utils.jsx — Storage, utilities, AI, Context
+const { createContext } = React;
+
+const AppCtx = createContext(null);
+
+// ── Storage — IndexedDB-backed with in-memory cache ─────────────
+// Fixes the localStorage QuotaExceededError: base64 avatars + chat
+// images blow past the ~5MB localStorage cap. IndexedDB holds
+// hundreds of MB. All reads hit an in-memory Map (synchronous),
+// writes go to the Map immediately and to IDB asynchronously.
+const __mem = new Map();
+let __db = null;
+
+function __idbOpen() {
+  return new Promise((res, rej) => {
+    const req = indexedDB.open('hmm_db', 1);
+    req.onupgradeneeded = () => req.result.createObjectStore('kv');
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => rej(req.error);
+  });
+}
+function __idbPut(key, val) {
+  if (!__db) {
+    // Fallback: best-effort localStorage (may hit quota, but don't crash)
+    try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { console.warn('Storage write failed:', key, e); }
+    return;
+  }
+  try {
+    const tx = __db.transaction('kv', 'readwrite');
+    tx.objectStore('kv').put(val, key);
+    tx.onerror = () => console.warn('IDB write failed:', key, tx.error);
+  } catch (e) { console.warn('IDB write failed:', key, e); }
+}
+function __idbDel(key) {
+  if (!__db) { try { localStorage.removeItem(key); } catch {} return; }
+  try { __db.transaction('kv', 'readwrite').objectStore('kv').delete(key); } catch {}
+}
+const __get = (k, fb) => __mem.has(k) ? __mem.get(k) : fb;
+const __set = (k, v) => { __mem.set(k, v); __idbPut(k, v); };
+
+// Boot: open IDB, hydrate cache, one-time migration from localStorage
+window.HMMStorageReady = (async () => {
+  try {
+    __db = await __idbOpen();
+    await new Promise((res, rej) => {
+      const req = __db.transaction('kv', 'readonly').objectStore('kv').openCursor();
+      req.onsuccess = () => {
+        const cur = req.result;
+        if (cur) { __mem.set(cur.key, cur.value); cur.continue(); } else res();
+      };
+      req.onerror = () => rej(req.error);
+    });
+    // Migrate legacy localStorage data once, then free the quota
+    const legacy = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (/^hmm_(chars$|chat_|hist_|lorebook$|settings$|personas$)/.test(k)) legacy.push(k);
+    }
+    legacy.forEach(k => {
+      if (!__mem.has(k)) {
+        try {
+          const v = JSON.parse(localStorage.getItem(k));
+          __mem.set(k, v); __idbPut(k, v);
+        } catch (e) { console.warn('Migration skipped corrupt key:', k); }
+      }
+    });
+    legacy.forEach(k => { try { localStorage.removeItem(k); } catch {} });
+    if (legacy.length) console.info(`HMM: migrated ${legacy.length} record(s) from localStorage → IndexedDB`);
+  } catch (e) {
+    console.error('IndexedDB unavailable — falling back to localStorage:', e);
+    __db = null;
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (/^hmm_(chars$|chat_|hist_|lorebook$|settings$|personas$)/.test(k)) {
+        try { __mem.set(k, JSON.parse(localStorage.getItem(k))); } catch {}
+      }
+    }
+  }
+})();
+
+const S = {
+  chars: () => __get('hmm_chars', []),
+  saveChars: v => __set('hmm_chars', v),
+  chat: id => __get(`hmm_chat_${id}`, []),
+  saveChat: (id, v) => __set(`hmm_chat_${id}`, v),
+  history: id => __get(`hmm_hist_${id}`, []),
+  saveHistory: (id, v) => __set(`hmm_hist_${id}`, v),
+  lorebook: () => __get('hmm_lorebook', []),
+  saveLorebook: v => __set('hmm_lorebook', v),
+  // Scripts — attachable lorebooks with advanced trigger rules.
+  // Auto-migrates the legacy flat lorebook into a global script.
+  scripts: () => {
+    const sc = __get('hmm_scripts', null);
+    if (sc) return sc;
+    const legacy = __get('hmm_lorebook', []);
+    if (!legacy.length) return [];
+    return [{
+      id: 'legacy_lorebook', name: 'Lorebook', description: 'Migrated from the old Lorebook',
+      enabled: true, global: true, charIds: [],
+      entries: legacy.map(e => ({ probability: 100, minMessages: 0, order: 5, group: '', groupWeight: 100, depth: 8, ...e })),
+    }];
+  },
+  saveScripts: v => __set('hmm_scripts', v),
+  deleteCharData: id => {
+    __mem.delete(`hmm_chat_${id}`); __mem.delete(`hmm_hist_${id}`);
+    __idbDel(`hmm_chat_${id}`); __idbDel(`hmm_hist_${id}`);
+  },
+  clearAll: () => new Promise(res => {
+    __mem.clear();
+    if (!__db) return res();
+    try {
+      const tx = __db.transaction('kv', 'readwrite');
+      tx.objectStore('kv').clear();
+      tx.oncomplete = tx.onerror = () => res();
+    } catch { res(); }
+  }),
+  settings: () => ({
+    model: 'claude-haiku-4-5',
+    temperature: 0.8,
+    maxTokens: 1024,
+    topP: 0.9,
+    autoScroll: true,
+    showTokens: true,
+    theme: 'terminal',
+    provider: 'claude', // 'claude' | 'openrouter' | 'local'
+    openrouterKey: '',
+    openrouterModel: 'anthropic/claude-3.5-sonnet',
+    localEndpoint: '',
+    localApiKey: '',
+    localModel: 'llama3',
+    ...__get('hmm_settings', {})
+  }),
+  saveSettings: v => __set('hmm_settings', v),
+  personas: () => __get('hmm_personas', null) || [{ id: 'default', name: 'You', description: '', avatar: '' }],
+  savePersonas: v => __set('hmm_personas', v),
+  activePersonaId: () => localStorage.getItem('hmm_active_persona') || 'default',
+  setActivePersonaId: id => localStorage.setItem('hmm_active_persona', id),
+};
+
+// ── Utilities ────────────────────────────────────────────────────
+const genId = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36);
+
+// Downscale + re-encode an image data-URL so stored avatars/attachments stay small
+function compressImage(dataUrl, maxDim = 512, quality = 0.85) {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      if (scale === 1 && dataUrl.length < 250000) return resolve(dataUrl);
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(img.width * scale));
+      c.height = Math.max(1, Math.round(img.height * scale));
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      try {
+        const out = c.toDataURL('image/webp', quality);
+        resolve(out.length < dataUrl.length ? out : dataUrl);
+      } catch { resolve(dataUrl); }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+const estimateTokens = text => Math.ceil((text || '').length / 4);
+const formatTime = ts => ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+const formatDate = ts => {
+  if (!ts) return '';
+  const d = new Date(ts), now = new Date(), diff = now - d;
+  if (diff < 86400000) return formatTime(ts);
+  if (diff < 604800000) return d.toLocaleDateString([], { weekday: 'short' });
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+};
+
+function renderMarkdown(text) {
+  if (!text) return '';
+  const esc = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  let html = esc
+    .replace(/```([\s\S]*?)```/g, (_, c) => `<pre><code>${c.trim()}</code></pre>`)
+    .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*\n<>]+)\*/g, '<em class="rp-action">$1</em>')
+    .replace(/_([^_\n<>]+)_/g, '<em>$1</em>');
+
+  // ── Embeds & links ──────────────────────────────────────────────
+  // Markdown image: ![alt](url)
+  html = html.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g,
+    (_, alt, url) => `<img class="embed-img" src="${url}" alt="${alt||''}" loading="lazy" onclick="window.__hmmLightbox&&window.__hmmLightbox('${url}')" onerror="this.style.display='none'">`);
+  // Markdown link: [text](url)
+  html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
+    (_, t, url) => `<a href="${url}" target="_blank" rel="noopener">${t}</a>`);
+
+  // Bare URLs (not already inside an attribute) → embed by type
+  html = html.replace(/(^|[\s>])(https?:\/\/[^\s<]+)/g, (m, pre, url) => {
+    if (/__hmm|src=|href=/.test(m)) return m;
+    const clean = url.replace(/[.,!?;:)]+$/, '');
+    const trail = url.slice(clean.length);
+    // Image
+    if (/\.(png|jpe?g|gif|webp|avif|bmp)(\?.*)?$/i.test(clean)) {
+      return `${pre}<img class="embed-img" src="${clean}" loading="lazy" onclick="window.__hmmLightbox&&window.__hmmLightbox('${clean}')" onerror="this.replaceWith(Object.assign(document.createElement('a'),{href:'${clean}',target:'_blank',rel:'noopener',textContent:'${clean}'}))">${trail}`;
+    }
+    // YouTube
+    const yt = clean.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([\w-]{11})/);
+    if (yt) {
+      return `${pre}<span class="embed-yt"><iframe src="https://www.youtube.com/embed/${yt[1]}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></span>${trail}`;
+    }
+    // Audio
+    if (/\.(mp3|ogg|wav|m4a)(\?.*)?$/i.test(clean)) {
+      return `${pre}<audio controls src="${clean}" class="embed-audio"></audio>${trail}`;
+    }
+    // Video
+    if (/\.(mp4|webm|mov)(\?.*)?$/i.test(clean)) {
+      return `${pre}<video controls src="${clean}" class="embed-video"></video>${trail}`;
+    }
+    return `${pre}<a href="${clean}" target="_blank" rel="noopener">${clean}</a>${trail}`;
+  });
+
+  return html.replace(/\n/g, '<br>');
+}
+
+function nameHash(name) {
+  let h = 0;
+  for (let i = 0; i < (name || '').length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
+  return (h % 360 + 360) % 360;
+}
+const charBg = name => `oklch(0.22 0.07 ${nameHash(name)}deg)`;
+const charFg = name => `oklch(0.72 0.14 ${nameHash(name)}deg)`;
+
+// ── Lorebook injection ────────────────────────────────────────────
+// ── Scripts engine ─────────────────────────────────────────
+// Keyword-triggered injection with probability (re-rolled every message),
+// min-messages, scan depth (1 = only your last message), inclusion groups
+// with weighted lottery + key-match priority, and order-based priority.
+function getMatchedLoreEntries(messages, char) {
+  const scripts = S.scripts().filter(s =>
+    s.enabled !== false && (s.global !== false || (char?.id && (s.charIds || []).includes(char.id)))
+  );
+  if (!scripts.length) return [];
+
+  const msgText = m => (typeof m.content === 'string' ? m.content : m.content?.find?.(c => c.type === 'text')?.text || '');
+  const lastUserText = (() => {
+    for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === 'user') return msgText(messages[i]).toLowerCase();
+    return '';
+  })();
+  const windowText = d => messages.slice(-Math.max(1, d)).map(msgText).join(' ').toLowerCase();
+
+  // 1. Match phase
+  const matched = [];
+  scripts.forEach(s => (s.entries || []).forEach(e => {
+    if (e.enabled === false) return;
+    if ((e.minMessages || 0) > messages.length) return;
+    const depth = e.depth ?? 8;
+    const scan = depth === 1 ? lastUserText : windowText(depth);
+    const keys = (e.keywords || []).filter(k => k.trim());
+    if (!keys.length) return;
+    const hits = keys.filter(k => scan.includes(k.trim().toLowerCase())).length;
+    if (!hits) return;
+    if ((e.probability ?? 100) < 100 && Math.random() * 100 >= (e.probability ?? 100)) return; // re-rolled every message, never sticky
+    matched.push({ ...e, _hits: hits });
+  }));
+  if (!matched.length) return [];
+
+  // 2. Inclusion groups — one winner per group (key-match priority, then weighted lottery)
+  const winners = [];
+  const groups = {};
+  matched.forEach(e => {
+    const gs = (e.group || '').split(',').map(x => x.trim()).filter(Boolean);
+    if (!gs.length) { winners.push(e); return; }
+    gs.forEach(g => (groups[g] = groups[g] || []).push(e));
+  });
+  const suppressed = new Set(), chosen = new Set();
+  Object.values(groups).forEach(list => {
+    const alive = list.filter(e => !suppressed.has(e.id) && !chosen.has(e.id));
+    if (!alive.length) return;
+    const maxHits = Math.max(...alive.map(e => e._hits));
+    const best = alive.filter(e => e._hits === maxHits);
+    const total = best.reduce((sum, e) => sum + (e.groupWeight ?? 100), 0);
+    let r = Math.random() * total, win = best[0];
+    for (const e of best) { r -= (e.groupWeight ?? 100); if (r <= 0) { win = e; break; } }
+    chosen.add(win.id);
+    list.forEach(e => { if (e.id !== win.id) suppressed.add(e.id); });
+  });
+  matched.forEach(e => { if (chosen.has(e.id) && !suppressed.has(e.id)) winners.push(e); });
+
+  // 3. Priority order (lower = first)
+  return winners.sort((a, b) => (a.order ?? 5) - (b.order ?? 5));
+}
+
+function __legacyGetMatched(messages) {
+  const entries = S.lorebook().filter(e => e.enabled !== false);
+  if (!entries.length) return [];
+  // Scan last 8 messages for keyword matches
+  const recentText = messages.slice(-8).map(m =>
+    typeof m.content === 'string' ? m.content : m.content?.find?.(c => c.type==='text')?.text || ''
+  ).join(' ').toLowerCase();
+  return entries.filter(e =>
+    (e.keywords || []).some(kw => kw.trim() && recentText.includes(kw.trim().toLowerCase()))
+  );
+}
+
+// ── Advanced scripts — user JS run against a mutable context each message ──
+function runAdvancedScripts(char, settings, messages) {
+  const scripts = S.scripts().filter(s =>
+    s.enabled !== false && s.type === 'advanced' && (s.code || '').trim() &&
+    (s.global !== false || (char?.id && (s.charIds || []).includes(char.id)))
+  );
+  if (!scripts.length) return char;
+
+  const msgText = m => (typeof m?.content === 'string' ? m.content : m?.content?.find?.(c => c.type === 'text')?.text || '');
+  const lastUser = [...messages].reverse().find(m => m.role === 'user');
+  // Mutable copy — scripts edit scenario/personality/etc without touching the saved character
+  const c = {
+    name: char.name || '', description: char.description || '', personality: char.personality || '',
+    scenario: char.scenario || '', systemPrompt: char.systemPrompt || '',
+  };
+  const notes = [];
+  const context = {
+    chat: {
+      message_count: messages.length,
+      last_message: msgText(messages[messages.length - 1]),
+      last_user_message: msgText(lastUser),
+      messages: messages.map(m => ({ role: m.role, text: msgText(m) })),
+    },
+    character: c,
+    user: { name: settings?.activePersona?.name || 'You', description: settings?.activePersona?.description || '' },
+    inject: t => { if (t) notes.push(String(t)); },
+    chance: p => Math.random() * 100 < p,
+  };
+  scripts.forEach(s => {
+    try { new Function('context', s.code)(context); }
+    catch (e) { console.warn(`Advanced script "${s.name}" error:`, e.message); }
+  });
+  return { ...char, description: c.description, personality: c.personality, scenario: c.scenario, systemPrompt: c.systemPrompt, _scriptNotes: notes };
+}
+
+// ── System prompt builder ─────────────────────────────────────────
+function buildSystemPrompt(char, settings, messages = []) {
+  char = runAdvancedScripts(char, settings, messages);
+  const lore = getMatchedLoreEntries(messages, char);
+  const pinnedMsgs = (messages || []).filter(m => m.pinned);
+
+  return [
+    settings?.globalPrompt?.trim() || null,
+    `You are ${char.name}, engaging in an unrestricted creative roleplay session.`,
+    char.description  && `Description: ${char.description}`,
+    char.personality  && `Personality: ${char.personality}`,
+    char.scenario     && `Scenario: ${char.scenario}`,
+    char.exampleDialogues && `Example dialogues:\n${char.exampleDialogues}`,
+    char.systemPrompt,
+    settings?.activePersona?.name && settings.activePersona.name !== 'You'
+      ? `The user's character is: ${settings.activePersona.name}${settings.activePersona.description ? ' — ' + settings.activePersona.description : ''}.`
+      : null,
+    settings?.replyLengthHint || null,
+    lore.length > 0 && `[WORLD INFO — inject naturally into responses when relevant]\n${lore.map(e => `### ${e.name}\n${e.content}`).join('\n\n')}`,
+    char._scriptNotes?.length > 0 && `[SCRIPT NOTES — weave into the response naturally]\n${char._scriptNotes.join('\n')}`,
+    pinnedMsgs.length > 0 && `[PINNED CONTEXT — always keep in mind]\n${pinnedMsgs.map(m => {
+      const t = typeof m.content === 'string' ? m.content : m.content?.find?.(c=>c.type==='text')?.text||'';
+      return `${m.role === 'user' ? (settings?.activePersona?.name||'You') : char.name}: ${t}`;
+    }).join('\n')}`,
+    `Stay in character as ${char.name}. Use *asterisks* for actions/narration. Be engaging, vivid, and responsive.`,
+    `When you see a message starting with [NARRATOR:], treat it as an omniscient narrator setting the scene — respond accordingly.`,
+  ].filter(Boolean).join('\n\n');
+}
+
+// ── AI ───────────────────────────────────────────────────────────
+async function callAI(messages, char, settings, onChunk) {
+  const resolvedSettings = settings || S.settings();
+  const system = buildSystemPrompt(char, resolvedSettings, messages);
+
+  // Build clean API messages — preserve images (vision), handle narrator
+  const apiMsgs = messages
+    .filter(m => m.role === 'user' || m.role === 'assistant')
+    .map(m => {
+      if (Array.isArray(m.content)) {
+        let text = m.content.find(c => c.type === 'text')?.text || '';
+        if (m.narrator) text = `[NARRATOR: ${text}]`;
+        const img = m.content.find(c => c.type === 'image');
+        if (img?.source) {
+          const dataUrl = `data:${img.source.media_type};base64,${img.source.data}`;
+          return { role: m.role, _multimodal: [
+            { type: 'text', text: text || ' ' },
+            { type: 'image_url', image_url: { url: dataUrl } },
+          ], content: text };
+        }
+        return { role: m.role, content: text };
+      }
+      let content = typeof m.content === 'string' ? m.content : '';
+      if (m.narrator) content = `[NARRATOR: ${content}]`;
+      return { role: m.role, content };
+    })
+    .filter(m => m.content || m._multimodal);
+
+  if (!apiMsgs.length) return '';
+
+  let result = '';
+
+  // ── External provider (OpenRouter / Local / Custom OpenAI-compatible) ──
+  const useExternal = resolvedSettings?.provider && resolvedSettings.provider !== 'claude';
+  let endpoint = '';
+  if (useExternal) {
+    if (resolvedSettings.provider === 'openrouter') {
+      endpoint = 'https://openrouter.ai/api';
+    } else {
+      endpoint = resolvedSettings?.localEndpoint?.trim() || '';
+    }
+  }
+  if (endpoint) {
+    try {
+      const base = endpoint.replace(/\/+$/, '').replace(/\/v1$/, '');
+      const url = base + '/v1/chat/completions';
+      let model = resolvedSettings.localModel || (resolvedSettings.provider === 'openrouter' ? 'anthropic/claude-3.5-sonnet' : 'llama3');
+      // Web search: OpenRouter supports the :online suffix for live web access
+      if (resolvedSettings.webSearch && resolvedSettings.provider === 'openrouter' && !/:online$/.test(model)) {
+        model += ':online';
+      }
+      const apiKey = resolvedSettings.localApiKey;
+      // Expand multimodal messages into OpenAI vision format
+      const outMsgs = apiMsgs.map(m => m._multimodal ? { role: m.role, content: m._multimodal } : { role: m.role, content: m.content });
+      const body = {
+        model,
+        messages: [{ role: 'system', content: system }, ...outMsgs],
+        temperature: resolvedSettings.temperature || 0.8,
+        max_tokens: resolvedSettings.maxTokens || 1024,
+        top_p: resolvedSettings.topP,
+        stream: !!onChunk,
+      };
+      const headers = { 'Content-Type': 'application/json' };
+      if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+      if (resolvedSettings.provider === 'openrouter') {
+        headers['HTTP-Referer'] = window.location.origin || 'https://hmm.local';
+        headers['X-Title'] = 'HMM Roleplay';
+      }
+
+      const resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+      if (!resp.ok) {
+        const errTxt = await resp.text().catch(() => '');
+        throw new Error(`${resp.status} ${resp.statusText} ${errTxt.slice(0, 200)}`);
+      }
+
+      if (onChunk) {
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let partial = '';
+        let buffer = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          for (const line of lines) {
+            const trimmed = line.replace(/^data: ?/, '').trim();
+            if (!trimmed || trimmed === '[DONE]') continue;
+            try {
+              const j = JSON.parse(trimmed);
+              const delta = j.choices?.[0]?.delta?.content;
+              if (delta) { partial += delta; onChunk(partial, false); }
+            } catch {}
+          }
+        }
+        onChunk(partial, true);
+        return partial;
+      } else {
+        const j = await resp.json();
+        result = j.choices?.[0]?.message?.content || '';
+      }
+    } catch(e) {
+      const providerName = resolvedSettings.provider === 'openrouter' ? 'OpenRouter' : resolvedSettings.provider === 'local' ? 'Local model' : 'Custom endpoint';
+      result = `*${providerName} error: ${e.message}*\n\nCheck your endpoint URL, API key, and model ID in Settings.`;
+    }
+    if (onChunk && result) onChunk(result, true);
+    return result;
+  }
+
+  // ── Claude (window.claude helper) ────────────────────────────
+  try {
+    if (window.claude) {
+      const fullMsgs = [
+        { role: 'user',      content: `[System]\n${system}` },
+        { role: 'assistant', content: `Understood. I am ${char.name} and will stay in character.` },
+        ...apiMsgs.map(m => ({ role: m.role, content: m.content })),
+      ];
+      result = await window.claude.complete({ messages: fullMsgs });
+    }
+  } catch (e) { console.error('AI error:', e); }
+
+  if (!result) {
+    result = `*${char.name} looks at you quietly.*\n\nNo API response — add your Anthropic key in Settings to enable live AI.`;
+  }
+
+  if (onChunk) {
+    const tokens = result.split(/(\s+)/);
+    let partial = '';
+    for (const tok of tokens) {
+      partial += tok;
+      onChunk(partial, false);
+      await new Promise(r => setTimeout(r, 9 + Math.random() * 12));
+    }
+    onChunk(partial, true);
+  }
+  return result;
+}
+
+// ── Context summarizer ────────────────────────────────────────────
+async function summarizeMessages(messages, char, settings) {
+  if (messages.length < 6) return null;
+  const toSummarize = messages.slice(0, -4); // keep last 4 intact
+  const text = toSummarize.map(m => {
+    const t = typeof m.content === 'string' ? m.content : m.content?.find?.(c=>c.type==='text')?.text||'';
+    const who = m.role === 'user' ? (settings?.activePersona?.name||'You') : char.name;
+    if (m.narrator) return `[NARRATOR] ${t}`;
+    return `${who}: ${t}`;
+  }).join('\n');
+
+  const sysMsg = `Summarize this roleplay conversation excerpt into a compact 3-6 sentence narrative summary. Preserve key plot points, emotional beats, established facts, and character dynamics. Write in past tense, third person. Return ONLY the summary text.`;
+  const fakeChar = { name: 'Summarizer', description: '', personality: '', scenario: '', firstMessage: '', exampleDialogues: '', systemPrompt: sysMsg };
+  const result = await callAI([{ role: 'user', content: text }], fakeChar, settings);
+  return result.trim();
+}
+
+// ── GitHub Gist Sync ─────────────────────────────────────────────
+const GistSync = {
+  FILENAME: 'hmm-data.json',
+  headers(token) {
+    return { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', 'Accept': 'application/vnd.github+json' };
+  },
+  buildPayload() {
+    const chars = S.chars();
+    const chats = {}, histories = {};
+    chars.forEach(c => { chats[c.id] = S.chat(c.id); histories[c.id] = S.history(c.id); });
+    // Strip all secrets — never sync API keys to a gist (they get auto-disabled if detected)
+    const { apiKey, openrouterKey, localApiKey, globalPrompt, ...safeSettings } = S.settings();
+    return {
+      version: 2,
+      exportedAt: new Date().toISOString(),
+      settings: safeSettings,
+      personas: S.personas(),
+      activePersonaId: S.activePersonaId(),
+      characters: chars,
+      chats,
+      histories,
+      lorebook: S.lorebook(),
+      scripts: S.scripts(),
+    };
+  },
+  restorePayload(data) {
+    if (data.settings) {
+      // Preserve local secrets — restore everything else from gist
+      const current = S.settings();
+      S.saveSettings({
+        ...data.settings,
+        apiKey: current.apiKey,
+        openrouterKey: current.openrouterKey,
+        localApiKey: current.localApiKey,
+        globalPrompt: current.globalPrompt,
+      });
+    }
+    if (data.personas)        S.savePersonas(data.personas);
+    if (data.activePersonaId) S.setActivePersonaId(data.activePersonaId);
+    if (data.lorebook)        S.saveLorebook(data.lorebook);
+    if (data.scripts)         S.saveScripts(data.scripts);
+    if (Array.isArray(data.characters)) {
+      S.saveChars(data.characters);
+      data.characters.forEach(c => {
+        if (data.chats?.[c.id])     S.saveChat(c.id, data.chats[c.id]);
+        if (data.histories?.[c.id]) S.saveHistory(c.id, data.histories[c.id]);
+      });
+    }
+  },
+  async push(token, gistId) {
+    const payload = this.buildPayload();
+    const content = JSON.stringify(payload, null, 2);
+
+    // Safety check: make sure it's valid JSON before sending
+    try { JSON.parse(content); } catch(e) { throw new Error('Local data is corrupted — cannot push: ' + e.message); }
+
+    const body = { description: 'HMM Roleplay App — auto backup', public: false, files: { [this.FILENAME]: { content } } };
+    let id;
+    if (gistId) {
+      const r = await fetch(`https://api.github.com/gists/${gistId}`, { method: 'PATCH', headers: this.headers(token), body: JSON.stringify(body) });
+      if (!r.ok) throw new Error(`GitHub ${r.status}: ${r.statusText}`);
+      id = gistId;
+    } else {
+      const r = await fetch('https://api.github.com/gists', { method: 'POST', headers: this.headers(token), body: JSON.stringify(body) });
+      if (!r.ok) throw new Error(`GitHub ${r.status}: ${r.statusText}`);
+      id = (await r.json()).id;
+    }
+
+    // Verify: read back and parse to catch any GitHub-side truncation
+    try {
+      const verify = await fetch(`https://api.github.com/gists/${id}`, { headers: this.headers(token) });
+      const j = await verify.json();
+      const file = j.files?.[this.FILENAME];
+      if (!file) throw new Error('no content found');
+      // GitHub truncates files >1MB in the API response — fetch raw_url for the full content
+      let raw = file.content;
+      if (file.truncated && file.raw_url) {
+        const rawResp = await fetch(file.raw_url);
+        if (rawResp.ok) raw = await rawResp.text();
+      }
+      JSON.parse(raw); // throws only if genuinely truncated
+    } catch(e) {
+      throw new Error(`Push verification failed: ${e.message}. Your gist may be corrupted — try pushing again.`);
+    }
+    return id;
+  },
+  async pull(token, gistId) {
+    const r = await fetch(`https://api.github.com/gists/${gistId}`, { headers: this.headers(token) });
+    if (!r.ok) throw new Error(`GitHub ${r.status}: ${r.statusText}`);
+    const j = await r.json();
+    const raw = j.files?.[this.FILENAME]?.content;
+    if (!raw) throw new Error('No HMM data found in this gist');
+
+    // GitHub truncates very large gist files in the standard response — fetch raw_url when truncated
+    let actualContent = raw;
+    if (j.files[this.FILENAME].truncated && j.files[this.FILENAME].raw_url) {
+      const rawResp = await fetch(j.files[this.FILENAME].raw_url);
+      if (rawResp.ok) actualContent = await rawResp.text();
+    }
+
+    try {
+      return JSON.parse(actualContent);
+    } catch(e) {
+      throw new Error(`This gist is corrupted (${e.message}). Try editing it manually on gist.github.com or push a fresh backup from another browser.`);
+    }
+  },
+  async listGists(token) {
+    const r = await fetch('https://api.github.com/gists?per_page=30', { headers: this.headers(token) });
+    if (!r.ok) throw new Error(`GitHub ${r.status}: ${r.statusText}`);
+    return (await r.json()).filter(g => g.files?.[this.FILENAME]);
+  },
+};
+
+Object.assign(window, {
+  AppCtx, S, genId, estimateTokens, compressImage,
+  formatTime, formatDate, renderMarkdown,
+  charBg, charFg, buildSystemPrompt, callAI,
+  summarizeMessages, GistSync,
+});
