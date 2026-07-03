@@ -290,7 +290,7 @@ function SettingsModal({ onClose }) {
                 <div className="form-group">
                   <label className="form-label">ANTHROPIC API KEY</label>
                   <input type="password" className="form-input" value={form.apiKey || ''} onChange={e => set('apiKey', e.target.value)} placeholder="sk-ant-..." />
-                  <div className="form-hint">Stored locally. Used by the backend server only.</div>
+                  <div className="form-hint">Stored locally, sent only with your own requests. Note: temperature is ignored by Opus 4.8 / Sonnet 5 (the API rejects sampling params there).</div>
                 </div>
                 <div className="form-group">
                   <label className="form-label">MODEL</label>
@@ -305,7 +305,7 @@ function SettingsModal({ onClose }) {
             )}
             <div className="form-group">
               <label className="form-label">MAX TOKENS: {form.maxTokens}</label>
-              <input type="range" className="form-range" min={256} max={8192} step={256} value={form.maxTokens} onChange={e => set('maxTokens', Number(e.target.value))} />
+              <input type="range" className="form-range" min={256} max={16384} step={256} value={form.maxTokens} onChange={e => set('maxTokens', Number(e.target.value))} />
             </div>
             <div className="form-group">
               <label className="form-label">TEMPERATURE: {form.temperature}</label>

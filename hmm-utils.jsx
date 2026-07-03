@@ -492,9 +492,81 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
     return result;
   }
 
-  // ── Claude (window.claude helper) ────────────────────────────
+  // ── Claude (Anthropic API via Netlify function) ───────────────
+  // Real API call with model choice, temperature (where supported), max tokens,
+  // and true SSE streaming. Falls through to the window.claude shim when the
+  // function isn't deployed (404 / network error) or no API key is set.
+  if (resolvedSettings.apiKey) {
+    try {
+      // Convert to Anthropic message format (image parts → base64 source blocks)
+      const anthMsgs = apiMsgs.map(m => m._multimodal
+        ? {
+            role: m.role,
+            content: m._multimodal.map(p => p.type === 'image_url'
+              ? { type: 'image', source: { type: 'base64', media_type: p.image_url.url.slice(5, p.image_url.url.indexOf(';')), data: p.image_url.url.split(',')[1] } }
+              : { type: 'text', text: p.text || ' ' }),
+          }
+        : { role: m.role, content: m.content });
+      // Anthropic requires the first message to be a user turn; chats open with
+      // the character's greeting (assistant), so prepend a neutral user turn
+      if (anthMsgs[0]?.role === 'assistant') anthMsgs.unshift({ role: 'user', content: '[Begin roleplay]' });
+
+      const resp = await fetch('/api/anthropic', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          apiKey: resolvedSettings.apiKey,
+          model: resolvedSettings.model || 'claude-haiku-4-5',
+          system,
+          messages: anthMsgs,
+          maxTokens: structured ? Math.max(4096, resolvedSettings.maxTokens || 1024) : (resolvedSettings.maxTokens || 1024),
+          temperature: resolvedSettings.temperature,
+          stream: !!onChunk,
+        }),
+      });
+
+      if (resp.ok) {
+        if (onChunk) {
+          const reader = resp.body.getReader();
+          const decoder = new TextDecoder();
+          let partial = '';
+          let buffer = '';
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            for (const line of lines) {
+              if (!line.startsWith('data:')) continue;
+              try {
+                const j = JSON.parse(line.slice(5).trim());
+                if (j.type === 'content_block_delta' && j.delta?.type === 'text_delta') {
+                  partial += j.delta.text;
+                  onChunk(partial, false);
+                }
+              } catch {}
+            }
+          }
+          onChunk(partial, true);
+          return partial;
+        }
+        const j = await resp.json();
+        result = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+        if (j.stop_reason === 'refusal' && !result) {
+          result = '*The model declined this request (safety refusal). Try rephrasing, or switch provider in Settings.*';
+        }
+      } else if (resp.status !== 404) {
+        const errTxt = await resp.text().catch(() => '');
+        result = `*Anthropic error: ${resp.status} ${errTxt.slice(0, 200)}*\n\nCheck your API key and model in Settings.`;
+      }
+      // 404 → functions not deployed here; fall through to the shim below
+    } catch (e) { console.error('Anthropic API error:', e); }
+  }
+
+  // ── Claude (window.claude helper — artifact/shim fallback) ────
   try {
-    if (window.claude) {
+    if (!result && window.claude) {
       const fullMsgs = [
         { role: 'user',      content: `[System]\n${system}` },
         { role: 'assistant', content: structured
