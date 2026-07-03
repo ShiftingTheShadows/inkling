@@ -114,22 +114,31 @@ const S = {
       tx.oncomplete = tx.onerror = () => res();
     } catch { res(); }
   }),
-  settings: () => ({
-    model: 'claude-haiku-4-5',
-    temperature: 0.8,
-    maxTokens: 1024,
-    topP: 0.9,
-    autoScroll: true,
-    showTokens: true,
-    theme: 'terminal',
-    provider: 'claude', // 'claude' | 'openrouter' | 'local'
-    openrouterKey: '',
-    openrouterModel: 'anthropic/claude-3.5-sonnet',
-    localEndpoint: '',
-    localApiKey: '',
-    localModel: 'llama3',
-    ...__get('hmm_settings', {})
-  }),
+  settings: () => {
+    const saved = { ...__get('hmm_settings', {}) };
+    // Retired Anthropic model ids saved before the 2026-07 refresh — old ids now 404
+    const MODEL_MIGRATE = {
+      'claude-sonnet-4-20250514': 'claude-sonnet-5',
+      'claude-opus-4-20250514': 'claude-opus-4-8',
+    };
+    if (MODEL_MIGRATE[saved.model]) saved.model = MODEL_MIGRATE[saved.model];
+    return {
+      model: 'claude-haiku-4-5',
+      temperature: 0.8,
+      maxTokens: 1024,
+      topP: 0.9,
+      autoScroll: true,
+      showTokens: true,
+      theme: 'terminal',
+      provider: 'claude', // 'claude' | 'openrouter' | 'local'
+      openrouterKey: '',
+      openrouterModel: 'anthropic/claude-sonnet-5',
+      localEndpoint: '',
+      localApiKey: '',
+      localModel: 'llama3',
+      ...saved,
+    };
+  },
   saveSettings: v => __set('hmm_settings', v),
   personas: () => __get('hmm_personas', null) || [{ id: 'default', name: 'You', description: '', avatar: '' }],
   savePersonas: v => __set('hmm_personas', v),
@@ -406,7 +415,7 @@ async function callAI(messages, char, settings, onChunk) {
     try {
       const base = endpoint.replace(/\/+$/, '').replace(/\/v1$/, '');
       const url = base + '/v1/chat/completions';
-      let model = resolvedSettings.localModel || (resolvedSettings.provider === 'openrouter' ? 'anthropic/claude-3.5-sonnet' : 'llama3');
+      let model = resolvedSettings.localModel || (resolvedSettings.provider === 'openrouter' ? 'anthropic/claude-sonnet-5' : 'llama3');
       // Web search: OpenRouter supports the :online suffix for live web access
       if (resolvedSettings.webSearch && resolvedSettings.provider === 'openrouter' && !/:online$/.test(model)) {
         model += ':online';

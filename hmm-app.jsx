@@ -134,7 +134,7 @@ function App() {
     addToast('Session restored', 'success');
   };
 
-  const modelShort = settings.model?.replace('claude-', '').replace(/-2025\d{4}$/, '') || 'haiku';
+  const modelShort = settings.model?.replace('claude-', '').replace(/-20\d{6}$/, '') || 'haiku';
 
   const ctx = {
     chars, setChars,

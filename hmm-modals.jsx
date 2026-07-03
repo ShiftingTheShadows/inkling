@@ -2,6 +2,20 @@
 const { useState, useContext, useEffect, useRef } = React;
 const { AppCtx, S, genId, charBg, charFg, GistSync, callAI, compressImage } = window;
 
+// Curated OpenRouter picks (slugs verified against openrouter.ai/api/v1/models, 2026-07)
+const OPENROUTER_MODELS = [
+  ['anthropic/claude-sonnet-5',           'Claude Sonnet 5 (recommended)'],
+  ['anthropic/claude-opus-4.8',           'Claude Opus 4.8'],
+  ['anthropic/claude-opus-4.6',           'Claude Opus 4.6'],
+  ['anthropic/claude-haiku-4.5',          'Claude Haiku 4.5 (fast/cheap)'],
+  ['openai/gpt-5.1',                      'GPT-5.1'],
+  ['google/gemini-2.5-pro',               'Gemini 2.5 Pro'],
+  ['google/gemini-2.5-flash',             'Gemini 2.5 Flash'],
+  ['deepseek/deepseek-v4-pro',            'DeepSeek V4 Pro'],
+  ['meta-llama/llama-3.3-70b-instruct',   'Llama 3.3 70B'],
+  ['mistralai/mistral-large-2512',        'Mistral Large 2512'],
+];
+
 // Robust JSON extraction — handles markdown fences, prose wrappers, balanced-brace scan, and light repair
 function robustParseJSON(text) {
   if (!text) return null;
@@ -199,17 +213,31 @@ function SettingsModal({ onClose }) {
                     placeholder={form.provider === 'openrouter' ? 'sk-or-v1-...' : form.provider === 'local' ? 'leave blank for Ollama' : 'your API key'} />
                   {form.provider === 'openrouter' && <div className="form-hint">Get a key at <span style={{ color: 'var(--accent2)' }}>openrouter.ai/keys</span></div>}
                 </div>
-                <div className="form-group">
-                  <label className="form-label">MODEL ID</label>
-                  <input className="form-input" value={form.localModel || ''} onChange={e => set('localModel', e.target.value)}
-                    placeholder={
-                      form.provider === 'openrouter' ? 'anthropic/claude-3.5-sonnet  or  meta-llama/llama-3.3-70b-instruct' :
-                      form.provider === 'local' ? 'llama3, mistral, etc' :
-                      'model-id'
-                    }
-                  />
-                  {form.provider === 'openrouter' && <div className="form-hint">Browse at <span style={{ color: 'var(--accent2)' }}>openrouter.ai/models</span> — copy the model ID.</div>}
-                </div>
+                {form.provider === 'openrouter' ? (
+                  <div className="form-group">
+                    <label className="form-label">MODEL</label>
+                    <select
+                      className="form-select"
+                      value={OPENROUTER_MODELS.some(([v]) => v === form.localModel) ? form.localModel : '__custom'}
+                      onChange={e => set('localModel', e.target.value === '__custom' ? '' : e.target.value)}
+                    >
+                      {OPENROUTER_MODELS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                      <option value="__custom">Custom model ID…</option>
+                    </select>
+                    {!OPENROUTER_MODELS.some(([v]) => v === form.localModel) && (
+                      <input className="form-input" style={{ marginTop: 6 }} value={form.localModel || ''} onChange={e => set('localModel', e.target.value)}
+                        placeholder="vendor/model-id, e.g. anthropic/claude-sonnet-5" />
+                    )}
+                    <div className="form-hint">Browse at <span style={{ color: 'var(--accent2)' }}>openrouter.ai/models</span> — pick Custom to paste any model ID.</div>
+                  </div>
+                ) : (
+                  <div className="form-group">
+                    <label className="form-label">MODEL ID</label>
+                    <input className="form-input" value={form.localModel || ''} onChange={e => set('localModel', e.target.value)}
+                      placeholder={form.provider === 'local' ? 'llama3, mistral, etc' : 'model-id'}
+                    />
+                  </div>
+                )}
                 {form.provider === 'openrouter' && (
                   <div className="form-group">
                     <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12 }}>
@@ -232,9 +260,10 @@ function SettingsModal({ onClose }) {
                 <div className="form-group">
                   <label className="form-label">MODEL</label>
                   <select className="form-select" value={form.model} onChange={e => set('model', e.target.value)}>
-                    <option value="claude-haiku-4-5">Claude Haiku 4 (Fast)</option>
-                    <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
-                    <option value="claude-opus-4-20250514">Claude Opus 4 (Best)</option>
+                    <option value="claude-haiku-4-5">Claude Haiku 4.5 (Fast)</option>
+                    <option value="claude-sonnet-4-6">Claude Sonnet 4.6</option>
+                    <option value="claude-sonnet-5">Claude Sonnet 5</option>
+                    <option value="claude-opus-4-8">Claude Opus 4.8 (Best)</option>
                   </select>
                 </div>
               </>

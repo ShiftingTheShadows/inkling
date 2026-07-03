@@ -913,7 +913,7 @@ function ChatView() {
             <span className="token-count">~{totalTokens.toLocaleString()} tkns</span>
             {inputVal.trim() && <span style={{ color: 'var(--text3)' }}>· {inputVal.trim().split(/\s+/).length}w</span>}
             <span style={{ color: 'var(--text3)' }}>|</span>
-            <span>{settings.model?.replace('claude-','').replace(/-2025\d+/,'')}</span>
+            <span>{settings.model?.replace('claude-','').replace(/-20\d{6}/,'')}</span>
             <span style={{ color: 'var(--text3)' }}>|</span>
             {/* Persona switcher */}
             <div style={{ position: 'relative' }}>
