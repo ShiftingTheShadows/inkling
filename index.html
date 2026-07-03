@@ -474,7 +474,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .chat-view { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
 .chat-header { height: 52px; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; background: var(--surface); border-bottom: 1px solid var(--border2); flex-shrink: 0; gap: 12px; }
 .chat-header-left { display: flex; align-items: center; gap: 10px; }
-.chat-header-right { display: flex; align-items: center; gap: 1px; }
+.chat-header-right { display: flex; align-items: center; gap: 2px; }
+.hdr-sep { width: 1px; height: 18px; background: var(--border2); margin: 0 5px; flex-shrink: 0; }
 .chat-name { font-size: 13px; font-weight: 600; color: var(--text); }
 .chat-status { font-size: 10px; color: var(--accent); letter-spacing: 0.04em; }
 .context-bar { height: 2px; background: var(--border); flex-shrink: 0; }
@@ -569,7 +570,7 @@ body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after 
 .btn-icon { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; color: var(--text2); border: 1px solid transparent; transition: all 0.1s; }
 .btn-icon:hover { color: var(--accent); background: var(--surface2); border-color: var(--border2); }
 .btn-icon.active { color: var(--accent); }
-.btn-icon.danger:hover { color: var(--danger); border-color: transparent; background: transparent; }
+.btn-icon.danger:hover { color: var(--danger); border-color: var(--border2); background: color-mix(in srgb, var(--danger) 12%, transparent); }
 .btn-primary { padding: 7px 16px; background: var(--accent); color: var(--bg); border: 1px solid var(--accent); font-size: 10px; font-weight: 700; letter-spacing: 0.12em; font-family: var(--font); transition: all 0.1s; }
 .btn-primary:hover { background: var(--accent2); border-color: var(--accent2); }
 .btn-primary:active:not(:disabled) { transform: translateY(1px); }
@@ -664,6 +665,7 @@ body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after 
   .messages-container { padding: 12px 12px 8px; }
   .chat-header { height: 50px; padding: 0 10px; }
   .chat-header-right { gap: 0; }
+  .hdr-sep { display: none; }
   .input-statusbar { padding: 5px 10px; }
   .input-meta { gap: 6px; }
 

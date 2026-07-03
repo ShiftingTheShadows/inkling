@@ -460,6 +460,7 @@ function CharAIAssist({ form, setForm, onClose }) {
   const [guidelines, setGuidelines] = useState('');
   const [fields, setFields] = useState({ description: true, personality: true, scenario: false, firstMessage: true, exampleDialogues: false, systemPrompt: false });
   const [busy, setBusy] = useState(false);
+  const [busyField, setBusyField] = useState(null); // field key being regenerated
   const [preview, setPreview] = useState(null);
   const [refImage, setRefImage] = useState(null); // { dataUrl, base64, mediaType }
   const [webSearch, setWebSearch] = useState(false);
@@ -484,24 +485,20 @@ function CharAIAssist({ form, setForm, onClose }) {
     e.target.value = '';
   };
 
-  const run = async () => {
-    if (!prompt.trim() && !refImage) { ctx.addToast('Describe your character or attach a reference image', 'warning'); return; }
-    setBusy(true); setPreview(null);
-    try {
-      const selectedFields = Object.entries(fields).filter(([,v]) => v).map(([k]) => k);
-      if (!selectedFields.length) { ctx.addToast('Select at least one field', 'warning'); setBusy(false); return; }
+  // Generate/improve the given fields; `context` (other already-generated fields)
+  // keeps a single-field regenerate consistent with the rest of the preview
+  const generateFields = async (selectedFields, context = null) => {
+    const existing = selectedFields.map(f => form[f] ? `${fieldLabels[f]}: ${form[f]}` : null).filter(Boolean).join('\n');
+    const isImprove = !!existing;
 
-      const existing = selectedFields.map(f => form[f] ? `${fieldLabels[f]}: ${form[f]}` : null).filter(Boolean).join('\n');
-      const isImprove = !!existing;
-
-      const sysMsg = `You are a creative character designer for AI roleplay. Generate character details in JSON format.${guidelines ? `\n\nGuidelines to follow:\n${guidelines}` : ''}${refImage ? `\n\nA reference image is attached — base the character's physical appearance and vibe on what you see in it.` : ''}
+    const sysMsg = `You are a creative character designer for AI roleplay. Generate character details in JSON format.${guidelines ? `\n\nGuidelines to follow:\n${guidelines}` : ''}${refImage ? `\n\nA reference image is attached — base the character's physical appearance and vibe on what you see in it.` : ''}
 
 Return ONLY valid JSON with these fields (only include requested ones):
 ${selectedFields.map(f => `"${f}": "..."`).join(',\n')}
 
 Rules:
 - description: physical appearance, background, history (2-4 sentences)
-- personality: traits, mannerisms, quirks, speech patterns (2-3 sentences)  
+- personality: traits, mannerisms, quirks, speech patterns (2-3 sentences)
 - scenario: current situation/setting the character is in (1-2 sentences)
 - firstMessage: how the character opens the conversation — vivid, in-character, engaging (2-4 sentences, use *asterisks* for actions)
 - exampleDialogues: 3-4 exchanges showing speech patterns, use {{user}} and {{char}}
@@ -514,35 +511,61 @@ CRITICAL OUTPUT RULES:
 - All field values must be JSON strings with properly escaped quotes and newlines (\\n).
 - For exampleDialogues, write {{user}} and {{char}} literally inside the string — they are fine inside JSON string values.`;
 
-      const baseUserText = isImprove
-        ? `Character name: ${form.name || 'Unknown'}\n\nUser's concept: ${prompt || '(see attached image)'}\n\nExisting content to improve:\n${existing}\n\nImprove and enhance the selected fields while keeping the core concept. Return JSON only.`
-        : `Character name: ${form.name || 'Unknown'}\n\nUser's concept: ${prompt || '(base it on the attached image)'}\n\nGenerate the selected fields for this character. Return JSON only.`;
+    const contextTxt = context && Object.keys(context).length
+      ? `\n\nAlready-generated fields (write the requested field to fit these — do NOT return them):\n${Object.entries(context).map(([k, v]) => `${fieldLabels[k] || k}: ${v}`).join('\n')}`
+      : '';
+    const baseUserText = (isImprove
+      ? `Character name: ${form.name || 'Unknown'}\n\nUser's concept: ${prompt || '(see attached image)'}\n\nExisting content to improve:\n${existing}\n\nImprove and enhance the selected fields while keeping the core concept. Return JSON only.`
+      : `Character name: ${form.name || 'Unknown'}\n\nUser's concept: ${prompt || '(base it on the attached image)'}\n\nGenerate the selected fields for this character. Return JSON only.`)
+      + contextTxt;
 
-      const callSettings = { ...settingsNow, webSearch: webSearch && orActive };
+    const callSettings = { ...settingsNow, webSearch: webSearch && orActive };
 
-      // Build message content (multimodal if a reference image is attached)
-      const buildContent = (txt) => refImage
-        ? [
-            { type: 'image', source: { type: 'base64', media_type: refImage.mediaType, data: refImage.base64 } },
-            { type: 'text', text: txt },
-          ]
-        : txt;
+    // Build message content (multimodal if a reference image is attached)
+    const buildContent = (txt) => refImage
+      ? [
+          { type: 'image', source: { type: 'base64', media_type: refImage.mediaType, data: refImage.base64 } },
+          { type: 'text', text: txt },
+        ]
+      : txt;
 
-      const parsed = await generateJSON({
-        system: sysMsg,
-        userText: baseUserText,
-        settings: callSettings,
-        content: buildContent,
-        validate: p => selectedFields.some(f => typeof p[f] === 'string' && p[f].trim()),
-      });
-      const cleaned = {};
-      selectedFields.forEach(f => { if (typeof parsed[f] === 'string' && parsed[f].trim()) cleaned[f] = parsed[f].trim(); });
-      if (!Object.keys(cleaned).length) throw new Error('AI returned no usable fields. Try again.');
-      setPreview(cleaned);
+    const parsed = await generateJSON({
+      system: sysMsg,
+      userText: baseUserText,
+      settings: callSettings,
+      content: buildContent,
+      validate: p => selectedFields.some(f => typeof p[f] === 'string' && p[f].trim()),
+    });
+    const cleaned = {};
+    selectedFields.forEach(f => { if (typeof parsed[f] === 'string' && parsed[f].trim()) cleaned[f] = parsed[f].trim(); });
+    if (!Object.keys(cleaned).length) throw new Error('AI returned no usable fields. Try again.');
+    return cleaned;
+  };
+
+  const run = async () => {
+    if (!prompt.trim() && !refImage) { ctx.addToast('Describe your character or attach a reference image', 'warning'); return; }
+    const selectedFields = Object.entries(fields).filter(([,v]) => v).map(([k]) => k);
+    if (!selectedFields.length) { ctx.addToast('Select at least one field', 'warning'); return; }
+    setBusy(true); setPreview(null);
+    try {
+      setPreview(await generateFields(selectedFields));
     } catch(e) {
       ctx.addToast(`AI error: ${e.message}`, 'error');
     }
     setBusy(false);
+  };
+
+  const regenField = async (f) => {
+    if (busy || busyField) return;
+    setBusyField(f);
+    try {
+      const { [f]: _skip, ...rest } = preview || {};
+      const cleaned = await generateFields([f], rest);
+      setPreview(p => ({ ...p, ...cleaned }));
+    } catch(e) {
+      ctx.addToast(`AI error: ${e.message}`, 'error');
+    }
+    setBusyField(null);
   };
 
   const apply = () => {
@@ -633,11 +656,18 @@ CRITICAL OUTPUT RULES:
         {preview && (
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 6 }}>PREVIEW — generated fields:</div>
-            <div style={{ background: 'var(--surface3)', border: '1px solid var(--border2)', padding: '8px 10px', maxHeight: 140, overflowY: 'auto', fontSize: 10, color: 'var(--text2)', lineHeight: 1.6 }}>
+            <div style={{ background: 'var(--surface3)', border: '1px solid var(--border2)', padding: '8px 10px', maxHeight: 160, overflowY: 'auto', fontSize: 10, color: 'var(--text2)', lineHeight: 1.6 }}>
               {Object.entries(preview).map(([k, v]) => (
-                <div key={k} style={{ marginBottom: 6 }}>
-                  <span style={{ color: 'var(--accent2)', fontWeight: 700 }}>{fieldLabels[k] || k}:</span>{' '}
-                  {String(v).slice(0, 120)}{String(v).length > 120 ? '…' : ''}
+                <div key={k} style={{ marginBottom: 6, display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+                  <button
+                    type="button" className="msg-action-btn" title={`Regenerate ${fieldLabels[k] || k}`}
+                    onClick={() => regenField(k)} disabled={busy || !!busyField}
+                    style={{ width: 20, height: 20, flexShrink: 0, fontSize: 11, opacity: busyField && busyField !== k ? 0.4 : 1 }}
+                  >{busyField === k ? '⟳' : '↻'}</button>
+                  <div style={{ flex: 1, opacity: busyField === k ? 0.5 : 1 }}>
+                    <span style={{ color: 'var(--accent2)', fontWeight: 700 }}>{fieldLabels[k] || k}:</span>{' '}
+                    {String(v).slice(0, 120)}{String(v).length > 120 ? '…' : ''}
+                  </div>
                 </div>
               ))}
             </div>

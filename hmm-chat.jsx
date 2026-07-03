@@ -819,6 +819,7 @@ function ChatView() {
           {iconBtn('Edit Character', false, false, () => ctx.openModal('char-editor', char.id),
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M11 4H4C2.9 4 2 4.9 2 6V20C2 21.1 2.9 22 4 22H18C19.1 22 20 21.1 20 20V13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M18.5 2.5C19.3 1.7 20.7 1.7 21.5 2.5C22.3 3.3 22.3 4.7 21.5 5.5L12 15L8 16L9 12L18.5 2.5Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
           )}
+          <span className="hdr-sep" />
           {iconBtn('Variations Panel', showVarPanel, false, () => setShowVarPanel(v => !v),
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="18" stroke="currentColor" strokeWidth="2"/><path d="M8 3V21M16 3V21" stroke="currentColor" strokeWidth="2"/></svg>
           )}
@@ -828,6 +829,7 @@ function ChatView() {
           {iconBtn('Chat History', false, false, () => ctx.openModal('history'),
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M12 8V12L15 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M3.05 11A9 9 0 1 0 4 7.4M3 4V8H7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
           )}
+          <span className="hdr-sep" />
           {iconBtn('New Chat', false, false, newChat,
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M12 5V19M5 12H19" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/></svg>
           )}
@@ -844,6 +846,7 @@ function ChatView() {
             () => { downloadCharJson(char); ctx.addToast('JSON card downloaded', 'success'); },
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M8 3H7C5.9 3 5 3.9 5 5V9C5 10.1 4.1 11 3 11V13C4.1 13 5 13.9 5 15V19C5 20.1 5.9 21 7 21H8M16 3H17C18.1 3 19 3.9 19 5V9C19 10.1 19.9 11 21 11V13C19.9 13 19 13.9 19 15V19C19 20.1 18.1 21 17 21H16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
           )}
+          <span className="hdr-sep" />
           {iconBtn('Delete Character', false, true, () => {
             if (!window.confirm(`Delete "${char.name}"? Cannot be undone.`)) return;
             ctx.setChars(prev => { const n = prev.filter(c => c.id !== char.id); S.saveChars(n); return n; });
