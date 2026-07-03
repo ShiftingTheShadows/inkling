@@ -101,6 +101,42 @@ async function generateJSON({ system, userText, settings, validate, content }) {
   return parsed;
 }
 
+// Import a card's embedded lorebook (chara_card_v2 `character_book`) as a
+// character-scoped lorebook script. Re-importing the same character replaces
+// its previously imported book instead of duplicating it. Returns entry count.
+function importCharacterBook(d, charId, charName) {
+  const book = d.character_book;
+  if (!Array.isArray(book?.entries) || !book.entries.length) return 0;
+  const clampDepth = v => Math.min(Math.max(1, Number(v) || 8), 50);
+  const entries = book.entries.map(e => ({
+    id: genId(),
+    keywords: [...(e.keys || []), ...(e.secondary_keys || [])].map(k => String(k)).filter(k => k.trim()),
+    content: String(e.content || ''),
+    enabled: e.enabled !== false,
+    probability: e.extensions?.probability ?? e.probability ?? 100,
+    minMessages: 0,
+    order: typeof e.insertion_order === 'number' ? e.insertion_order : 5,
+    group: '',
+    groupWeight: 100,
+    depth: clampDepth(e.extensions?.scan_depth ?? book.scan_depth),
+  })).filter(e => e.content.trim());
+  if (!entries.length) return 0;
+  const scripts = S.scripts().filter(s => s._cardBookFor !== charId);
+  scripts.push({
+    id: genId(),
+    name: `${charName} — Lorebook`,
+    description: book.name ? `Imported from character card ("${book.name}")` : 'Imported from character card',
+    global: false,
+    charIds: [charId],
+    type: 'lorebook',
+    enabled: true,
+    entries,
+    _cardBookFor: charId,
+  });
+  S.saveScripts(scripts);
+  return entries.length;
+}
+
 function ToastStack() {
   const ctx = useContext(AppCtx);
   return (
@@ -746,7 +782,16 @@ function CharEditorModal({ editId, onClose }) {
         avatar,
       }));
       if (avatar) setAvatarPreview(avatar);
-      ctx.addToast(`Loaded "${d.name || 'character'}" into editor — review and save${editId ? ' (chats are kept)' : ''}`, 'success');
+      let loreNote = '';
+      if (Array.isArray(d.character_book?.entries) && d.character_book.entries.length) {
+        if (editId) {
+          const n = importCharacterBook(d, editId, d.name || form.name || 'Character');
+          if (n) loreNote = `, ${n} lorebook entries imported`;
+        } else {
+          loreNote = ' — card has a lorebook; it imports when you re-import onto the saved character';
+        }
+      }
+      ctx.addToast(`Loaded "${d.name || 'character'}" into editor — review and save${editId ? ' (chats are kept)' : ''}${loreNote}`, 'success');
     } catch (err) {
       ctx.addToast(`Import failed: ${err.message}`, 'error');
     }
@@ -996,7 +1041,7 @@ function ImportModal({ onClose }) {
         const updated = { ...existing, ...charData, updatedAt: new Date().toISOString() };
         charsRef.current = charsRef.current.map(c => c.id === existing.id ? updated : c);
         commitChars();
-        return { char: updated, replaced: true };
+        return { char: updated, replaced: true, lore: importCharacterBook(d, updated.id, charData.name) };
       }
       // 'keep' falls through and imports as a separate character
     }
@@ -1004,7 +1049,7 @@ function ImportModal({ onClose }) {
     const nc = { id: genId(), ...charData, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), favorite: false };
     charsRef.current = [...charsRef.current, nc];
     commitChars();
-    return { char: nc };
+    return { char: nc, lore: importCharacterBook(d, nc.id, charData.name) };
   };
 
   // Import a single file; returns { char } | { backup: n } | { error }
@@ -1069,9 +1114,11 @@ function ImportModal({ onClose }) {
     const errors = results.filter(r => r.error);
     const total = chars.length + backupCount;
 
+    const loreTotal = results.reduce((s, r) => s + (r.lore || 0), 0);
     const details = [
       replaced ? `${replaced} replaced` : null,
       skipped ? `${skipped} skipped` : null,
+      loreTotal ? `${loreTotal} lore entries` : null,
       errors.length ? `${errors.length} failed` : null,
     ].filter(Boolean).join(', ');
     if (total === 1 && chars.length === 1 && !details) {

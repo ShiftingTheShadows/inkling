@@ -747,10 +747,23 @@ const GistSync = {
 
 // ── Character card export (SillyTavern chara_card_v2 — JSON + PNG with 'chara' tEXt chunk) ──
 function charToCardV2(char) {
+  // Round-trip an imported card lorebook back into the exported card
+  const bookScript = S.scripts().find(s => s._cardBookFor === char.id);
+  const character_book = bookScript ? {
+    name: `${char.name} Lorebook`,
+    entries: (bookScript.entries || []).map((e, i) => ({
+      keys: e.keywords || [],
+      content: e.content || '',
+      enabled: e.enabled !== false,
+      insertion_order: e.order ?? i,
+      extensions: { probability: e.probability ?? 100, scan_depth: e.depth ?? 8 },
+    })),
+  } : undefined;
   return {
     spec: 'chara_card_v2',
     spec_version: '2.0',
     data: {
+      ...(character_book ? { character_book } : {}),
       name: char.name || '',
       description: char.description || '',
       personality: char.personality || '',

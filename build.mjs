@@ -4,7 +4,7 @@
 // type="text/babel" and works opened directly; this script writes the
 // production version to dist/ (what Netlify publishes).
 import { transformSync } from 'esbuild';
-import { mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { mkdirSync, readFileSync, writeFileSync, cpSync } from 'fs';
 
 const files = ['hmm-utils.jsx', 'hmm-sidebar.jsx', 'hmm-chat.jsx', 'hmm-modals.jsx', 'hmm-app.jsx'];
 
@@ -33,3 +33,9 @@ if (html.includes('text/babel') || html.includes('@babel/standalone')) {
 }
 writeFileSync('dist/index.html', html);
 console.log(`built dist/index.html (${before} -> ${html.length} bytes)`);
+
+// PWA static assets
+cpSync('manifest.webmanifest', 'dist/manifest.webmanifest');
+cpSync('sw.js', 'dist/sw.js');
+cpSync('icons', 'dist/icons', { recursive: true });
+console.log('copied manifest, sw.js, icons/');

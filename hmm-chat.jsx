@@ -740,9 +740,9 @@ function ChatView() {
           return `${m.role === 'user' ? (activePersona?.name||'You') : char.name}: ${t}`;
         }).join('\n');
         const sysMsg = `You are helping write the NEXT message from ${activePersona?.name||'You'} in a roleplay with ${char.name}.${activePersona?.description ? ` ${activePersona.name} is: ${activePersona.description}.` : ''} Write ONLY the message text — no quotes, no labels, no explanation. Make it natural and fitting the tone. ${lengthHint}${dirHint}`;
-        const fakeChar = { name: activePersona?.name||'You', description: '', personality: '', scenario: '', firstMessage: '', exampleDialogues: '', systemPrompt: sysMsg };
+        const fakeChar = { name: activePersona?.name||'You', description: '', personality: '', scenario: '', firstMessage: '', exampleDialogues: '', systemPrompt: '' };
         const fakeMsgs = [{ role: 'user', content: `Conversation so far:\n${history}\n\nWrite ${activePersona?.name||'You'}'s next message.` }];
-        result = await callAI(fakeMsgs, fakeChar, settingsNow);
+        result = await callAI(fakeMsgs, fakeChar, settingsNow, null, { system: sysMsg });
 
       } else if (mode === 'enhance') {
         const draft = inputVal.trim();
@@ -752,9 +752,9 @@ function ChatView() {
           return `${m.role === 'user' ? (activePersona?.name||'You') : char.name}: ${t}`;
         }).join('\n');
         const sysMsg = `You are a creative writing assistant. Enhance the user's draft message for a roleplay — make it more vivid, expressive and immersive while keeping the same core intent. ${lengthHint}${dirHint}\n\nReturn ONLY the enhanced message — no explanation, no quotes.`;
-        const fakeChar = { name: 'Assistant', description: '', personality: '', scenario: '', firstMessage: '', exampleDialogues: '', systemPrompt: sysMsg };
+        const fakeChar = { name: 'Assistant', description: '', personality: '', scenario: '', firstMessage: '', exampleDialogues: '', systemPrompt: '' };
         const fakeMsgs = [{ role: 'user', content: `Recent context:\n${history}\n\nMy draft: "${draft}"\n\nEnhance it.` }];
-        result = await callAI(fakeMsgs, fakeChar, settingsNow);
+        result = await callAI(fakeMsgs, fakeChar, settingsNow, null, { system: sysMsg });
 
       } else if (mode === 'continue') {
         const lastAsst = [...messages].reverse().find(m => m.role === 'assistant');
@@ -787,9 +787,9 @@ function ChatView() {
           return `${m.role === 'user' ? (activePersona?.name||'You') : char.name}: ${t}`;
         }).join('\n');
         const sysMsg = `You are writing dialogue AS ${activePersona?.name||'You'}${activePersona?.description ? ` (${activePersona.description})` : ''} in a roleplay with ${char.name}. Write a natural, in-character response from ${activePersona?.name||'You'}'s perspective. ${lengthHint}${dirHint}\n\nReturn ONLY the message text.`;
-        const fakeChar = { name: activePersona?.name||'You', description: '', personality: '', scenario: '', firstMessage: '', exampleDialogues: '', systemPrompt: sysMsg };
+        const fakeChar = { name: activePersona?.name||'You', description: '', personality: '', scenario: '', firstMessage: '', exampleDialogues: '', systemPrompt: '' };
         const fakeMsgs = [{ role: 'user', content: `Conversation:\n${history}\n\nWrite ${activePersona?.name||'You'}'s response.` }];
-        result = await callAI(fakeMsgs, fakeChar, settingsNow);
+        result = await callAI(fakeMsgs, fakeChar, settingsNow, null, { system: sysMsg });
       }
 
       if (result) {
