@@ -372,11 +372,12 @@ function buildSystemPrompt(char, settings, messages = []) {
 // ── AI ───────────────────────────────────────────────────────────
 async function callAI(messages, char, settings, onChunk, opts = {}) {
   const resolvedSettings = settings || S.settings();
-  // Structured mode: generator calls (AI assists) send their own clean system prompt.
-  // Skips the roleplay scaffolding (persona, lorebook, global prompt, "stay in
-  // character / use *asterisks*") that otherwise fights JSON output.
+  // opts.system: caller-supplied clean system prompt — skips the roleplay
+  // scaffolding (persona, lorebook, global prompt, "stay in character / use
+  // *asterisks*") that otherwise pollutes utility calls (assists, summarizer).
+  // opts.structured additionally requests JSON output (response_format + token floor).
   const structured = !!opts.structured;
-  const system = structured ? (opts.system || '') : buildSystemPrompt(char, resolvedSettings, messages);
+  const system = opts.system != null ? opts.system : buildSystemPrompt(char, resolvedSettings, messages);
 
   // Build clean API messages — preserve images (vision), handle narrator
   const apiMsgs = messages
@@ -498,7 +499,9 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
         { role: 'user',      content: `[System]\n${system}` },
         { role: 'assistant', content: structured
           ? 'Understood. I will respond with only the requested JSON — no commentary, no markdown fences.'
-          : `Understood. I am ${char.name} and will stay in character.` },
+          : (opts.system != null
+            ? 'Understood. I will follow those instructions exactly.'
+            : `Understood. I am ${char.name} and will stay in character.`) },
         ...apiMsgs.map(m => ({ role: m.role, content: m.content })),
       ];
       result = await window.claude.complete({ messages: fullMsgs });
@@ -534,8 +537,9 @@ async function summarizeMessages(messages, char, settings) {
   }).join('\n');
 
   const sysMsg = `Summarize this roleplay conversation excerpt into a compact 3-6 sentence narrative summary. Preserve key plot points, emotional beats, established facts, and character dynamics. Write in past tense, third person. Return ONLY the summary text.`;
-  const fakeChar = { name: 'Summarizer', description: '', personality: '', scenario: '', firstMessage: '', exampleDialogues: '', systemPrompt: sysMsg };
-  const result = await callAI([{ role: 'user', content: text }], fakeChar, settings);
+  const fakeChar = { name: 'Summarizer', description: '', personality: '', scenario: '', firstMessage: '', exampleDialogues: '', systemPrompt: '' };
+  // Clean system prompt — the summarizer must not inherit the roleplay scaffolding
+  const result = await callAI([{ role: 'user', content: text }], fakeChar, settings, null, { system: sysMsg });
   return result.trim();
 }
 
