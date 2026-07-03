@@ -707,6 +707,51 @@ function CharEditorModal({ editId, onClose }) {
     reader.readAsDataURL(file);
   };
 
+  // Load a JSON / PNG card into the editor form — replaces the fields but keeps
+  // the character id on save, so chats and history survive external card edits
+  const importIntoForm = async e => {
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      let d = null, avatarUrl = null;
+      if (file.name.endsWith('.png') || file.type === 'image/png') {
+        const card = await parsePngCard(file);
+        if (!card) { ctx.addToast('No character data found in this PNG', 'error'); return; }
+        d = card.data || card;
+        const rawUrl = await new Promise(res => {
+          const reader = new FileReader();
+          reader.onload = ev => res(ev.target.result);
+          reader.readAsDataURL(file);
+        });
+        avatarUrl = await compressImage(rawUrl, 512, 0.85);
+      } else {
+        const raw = JSON.parse(await file.text());
+        if (Array.isArray(raw.characters)) { ctx.addToast('That is a full HMM backup — use Import Character from the command palette instead', 'warning'); return; }
+        d = raw.data || raw;
+      }
+      if (!(d.first_mes || d.firstMessage || d.name)) { ctx.addToast('Unrecognized character format', 'error'); return; }
+      const avatar = avatarUrl || d.avatar || form.avatar || '';
+      setForm(f => ({
+        ...f,
+        name: d.name || f.name,
+        description: d.description || d.char_persona || '',
+        personality: d.personality || '',
+        scenario: d.scenario || '',
+        firstMessage: d.first_mes || d.firstMessage || '',
+        alternateGreetings: d.alternate_greetings || d.alternateGreetings || [],
+        exampleDialogues: d.mes_example || d.exampleDialogues || '',
+        systemPrompt: d.system_prompt || d.systemPrompt || '',
+        tags: Array.isArray(d.tags) ? d.tags.join(', ') : (d.tags || ''),
+        avatar,
+      }));
+      if (avatar) setAvatarPreview(avatar);
+      ctx.addToast(`Loaded "${d.name || 'character'}" into editor — review and save${editId ? ' (chats are kept)' : ''}`, 'success');
+    } catch (err) {
+      ctx.addToast(`Import failed: ${err.message}`, 'error');
+    }
+  };
+
   const save = () => {
     if (!form.name.trim()) { ctx.addToast('Name is required', 'error'); return; }
     if (!form.firstMessage.trim()) { ctx.addToast('First message is required', 'error'); return; }
@@ -740,6 +785,14 @@ function CharEditorModal({ editId, onClose }) {
         <div className="modal-header">
           <span className="modal-title">{editId ? 'EDIT CHARACTER' : 'CREATE CHARACTER'}</span>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <label
+              className="btn-secondary btn-sm"
+              style={{ cursor: 'pointer' }}
+              title={editId ? 'Replace fields from a JSON or PNG card — keeps this character’s id and chats' : 'Fill the editor from a JSON or PNG card'}
+            >
+              ↑ {editId ? 'REPLACE FROM FILE' : 'IMPORT FILE'}
+              <input type="file" accept=".json,.png,application/json,image/png" className="sr-only" onChange={importIntoForm} />
+            </label>
             <button
               className={`btn-secondary btn-sm${showAI ? ' active' : ''}`}
               onClick={() => setShowAI(v => !v)}
