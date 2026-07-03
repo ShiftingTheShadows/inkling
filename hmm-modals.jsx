@@ -1026,9 +1026,81 @@ function PersonaAvatar({ persona, size = 40 }) {
   );
 }
 
+function PersonaAIAssist({ form, set, onClose }) {
+  const ctx = useContext(AppCtx);
+  const [prompt, setPrompt] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const run = async () => {
+    if (!prompt.trim() && !form.description?.trim()) { ctx.addToast('Describe your persona or fill the description first', 'warning'); return; }
+    setBusy(true);
+    try {
+      const sysMsg = `You are helping a user craft their roleplay persona — the character THEY play in AI roleplay. Generate persona details in JSON format.
+
+Return ONLY valid JSON: {"name": "...", "description": "..."}
+
+Rules:
+- name: a fitting short character name (the user may already have one — still include the field)
+- description: 2-4 sentences covering appearance, personality, and how they carry themselves. Written in third person so the AI partner understands who it's talking to.
+
+CRITICAL OUTPUT RULES:
+- Return ONLY raw JSON, no markdown fences, no commentary before or after.
+- All field values must be JSON strings with properly escaped quotes and newlines (\\n).`;
+      const userTxt = `Persona name: ${form.name?.trim() || '(none yet — invent one)'}\n\nUser's concept: ${prompt.trim() || '(improve the existing description)'}\n${form.description?.trim() ? `\nExisting description to improve:\n${form.description}\n` : ''}\nReturn JSON only.`;
+      const fakeChar = { name: 'PersonaGen', description: '', personality: '', scenario: '', firstMessage: '', exampleDialogues: '', systemPrompt: sysMsg };
+
+      let parsed = null, lastResult = '';
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const txt = attempt === 0
+          ? userTxt
+          : `${userTxt}\n\n[ATTEMPT ${attempt + 1} — your previous response could not be parsed as JSON. Output ONLY a single valid JSON object starting with { and ending with }.]`;
+        const result = await callAI([{ role: 'user', content: txt }], fakeChar, { ...S.settings(), temperature: attempt === 0 ? 0.8 : 0.4 });
+        lastResult = result;
+        parsed = robustParseJSON(result);
+        if (parsed && typeof parsed.description === 'string' && parsed.description.trim()) break;
+        parsed = null;
+      }
+      if (!parsed) {
+        console.warn('PersonaGen failed. Last AI response:', lastResult);
+        throw new Error('Could not parse AI response — try a shorter / clearer concept.');
+      }
+      if (!form.name?.trim() && typeof parsed.name === 'string' && parsed.name.trim()) set('name', parsed.name.trim());
+      set('description', parsed.description.trim());
+      ctx.addToast('Persona updated — review and save', 'success');
+      onClose();
+    } catch (e) {
+      ctx.addToast(`AI error: ${e.message}`, 'error');
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div style={{ background: 'var(--surface3)', border: '1px solid var(--accent3)', padding: 12, marginBottom: 12 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', color: 'var(--accent)' }}>✦ AI PERSONA ASSIST</div>
+        <button className="modal-close" onClick={onClose} style={{ color: 'var(--text3)' }}>×</button>
+      </div>
+      <div className="form-group" style={{ marginBottom: 8 }}>
+        <label className="form-label">DESCRIBE WHO YOU WANT TO PLAY</label>
+        <textarea
+          className="form-textarea" rows={2}
+          value={prompt} onChange={e => setPrompt(e.target.value)}
+          placeholder={`e.g. "A cocky mercenary pilot with a soft spot for strays. Leather jacket, old scars, always chewing a toothpick."`}
+          style={{ minHeight: 52 }}
+        />
+        <div className="form-hint">Leave empty to improve the existing description instead.</div>
+      </div>
+      <button className="btn-primary btn-sm" onClick={run} disabled={busy}>
+        {busy ? '⟳ GENERATING...' : (form.description?.trim() && !prompt.trim() ? '✦ IMPROVE' : '✦ GENERATE')}
+      </button>
+    </div>
+  );
+}
+
 function PersonaEditor({ persona, onSave, onCancel }) {
   const [form, setForm] = useState({ name: '', description: '', avatar: '', ...(persona || {}) });
   const [preview, setPreview] = useState(persona?.avatar || '');
+  const [showAI, setShowAI] = useState(false);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const handleFile = e => {
@@ -1044,6 +1116,7 @@ function PersonaEditor({ persona, onSave, onCancel }) {
 
   return (
     <div style={{ background: 'var(--surface2)', border: '1px solid var(--border2)', padding: 16, marginBottom: 12 }}>
+      {showAI && <PersonaAIAssist form={form} set={set} onClose={() => setShowAI(false)} />}
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
         {/* Avatar */}
         <div style={{ flexShrink: 0 }}>
@@ -1073,6 +1146,12 @@ function PersonaEditor({ persona, onSave, onCancel }) {
         </div>
       </div>
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+        <button
+          className={`btn-secondary btn-sm${showAI ? ' active' : ''}`}
+          style={{ marginRight: 'auto', borderColor: showAI ? 'var(--accent)' : undefined, color: showAI ? 'var(--accent)' : undefined }}
+          title="AI Persona Assistant"
+          onClick={() => setShowAI(v => !v)}
+        >✦ AI ASSIST</button>
         <button className="btn-secondary btn-sm" onClick={onCancel}>CANCEL</button>
         <button className="btn-primary btn-sm" onClick={() => {
           if (!form.name.trim()) return;
