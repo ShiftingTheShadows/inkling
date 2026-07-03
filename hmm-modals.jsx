@@ -66,6 +66,41 @@ function robustParseJSON(text) {
   return null;
 }
 
+// Shared structured-generation helper for the AI assists.
+// Runs callAI in structured mode (clean system prompt, JSON response_format,
+// no roleplay scaffolding) and retries with stricter instructions on parse failure.
+// `content` optionally wraps the user text (e.g. to attach a reference image).
+async function generateJSON({ system, userText, settings, validate, content }) {
+  let parsed = null, lastResult = '', lastErr = null;
+  const genChar = { name: 'Generator', description: '', personality: '', scenario: '', firstMessage: '', exampleDialogues: '', systemPrompt: '' };
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const txt = attempt === 0
+        ? userText
+        : `${userText}\n\n[ATTEMPT ${attempt + 1} — your previous response could not be parsed as JSON. Output ONLY a single valid JSON object starting with { and ending with }. No markdown, no prose, no code fences.]`;
+      const result = await callAI(
+        [{ role: 'user', content: content ? content(txt) : txt }],
+        genChar,
+        { ...settings, temperature: attempt === 0 ? 0.8 : 0.4 },
+        null,
+        { structured: true, system },
+      );
+      lastResult = result;
+      parsed = robustParseJSON(result);
+      if (parsed && typeof parsed === 'object') {
+        if (!validate || validate(parsed)) break;
+        lastErr = new Error('AI returned JSON but no requested fields had usable content.');
+        parsed = null;
+      }
+    } catch (e) { lastErr = e; }
+  }
+  if (!parsed) {
+    console.warn('generateJSON failed. Last AI response:', lastResult);
+    throw new Error((lastErr?.message || 'Could not parse AI response') + ' — Try a shorter / clearer concept, or fewer fields at once.');
+  }
+  return parsed;
+}
+
 function ToastStack() {
   const ctx = useContext(AppCtx);
   return (
@@ -483,7 +518,6 @@ CRITICAL OUTPUT RULES:
         ? `Character name: ${form.name || 'Unknown'}\n\nUser's concept: ${prompt || '(see attached image)'}\n\nExisting content to improve:\n${existing}\n\nImprove and enhance the selected fields while keeping the core concept. Return JSON only.`
         : `Character name: ${form.name || 'Unknown'}\n\nUser's concept: ${prompt || '(base it on the attached image)'}\n\nGenerate the selected fields for this character. Return JSON only.`;
 
-      const fakeChar = { name: 'CharGen', description: '', personality: '', scenario: '', firstMessage: '', exampleDialogues: '', systemPrompt: sysMsg };
       const callSettings = { ...settingsNow, webSearch: webSearch && orActive };
 
       // Build message content (multimodal if a reference image is attached)
@@ -494,31 +528,13 @@ CRITICAL OUTPUT RULES:
           ]
         : txt;
 
-      // Try up to 3 times with progressively stricter prompts
-      let parsed = null;
-      let lastResult = '';
-      let lastErr = null;
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try {
-          const attemptTxt = attempt === 0
-            ? baseUserText
-            : `${baseUserText}\n\n[ATTEMPT ${attempt + 1} — your previous response could not be parsed as JSON. Output ONLY a single valid JSON object starting with { and ending with }. No markdown, no prose, no code fences, no leading or trailing text. Just JSON.]`;
-          const result = await callAI([{ role: 'user', content: buildContent(attemptTxt) }], fakeChar, { ...callSettings, temperature: attempt === 0 ? 0.8 : 0.4 });
-          lastResult = result;
-          parsed = robustParseJSON(result);
-          if (parsed && typeof parsed === 'object') {
-            const anyValid = selectedFields.some(f => typeof parsed[f] === 'string' && parsed[f].trim());
-            if (anyValid) break;
-            lastErr = new Error('AI returned JSON but no requested fields had usable content.');
-            parsed = null;
-          }
-        } catch(e) { lastErr = e; }
-      }
-
-      if (!parsed) {
-        console.warn('CharGen failed. Last AI response:', lastResult);
-        throw new Error((lastErr?.message || 'Could not parse AI response') + ' — Try a shorter / clearer concept, or fewer fields at once.');
-      }
+      const parsed = await generateJSON({
+        system: sysMsg,
+        userText: baseUserText,
+        settings: callSettings,
+        content: buildContent,
+        validate: p => selectedFields.some(f => typeof p[f] === 'string' && p[f].trim()),
+      });
       const cleaned = {};
       selectedFields.forEach(f => { if (typeof parsed[f] === 'string' && parsed[f].trim()) cleaned[f] = parsed[f].trim(); });
       if (!Object.keys(cleaned).length) throw new Error('AI returned no usable fields. Try again.');
@@ -1047,23 +1063,13 @@ CRITICAL OUTPUT RULES:
 - Return ONLY raw JSON, no markdown fences, no commentary before or after.
 - All field values must be JSON strings with properly escaped quotes and newlines (\\n).`;
       const userTxt = `Persona name: ${form.name?.trim() || '(none yet — invent one)'}\n\nUser's concept: ${prompt.trim() || '(improve the existing description)'}\n${form.description?.trim() ? `\nExisting description to improve:\n${form.description}\n` : ''}\nReturn JSON only.`;
-      const fakeChar = { name: 'PersonaGen', description: '', personality: '', scenario: '', firstMessage: '', exampleDialogues: '', systemPrompt: sysMsg };
 
-      let parsed = null, lastResult = '';
-      for (let attempt = 0; attempt < 3; attempt++) {
-        const txt = attempt === 0
-          ? userTxt
-          : `${userTxt}\n\n[ATTEMPT ${attempt + 1} — your previous response could not be parsed as JSON. Output ONLY a single valid JSON object starting with { and ending with }.]`;
-        const result = await callAI([{ role: 'user', content: txt }], fakeChar, { ...S.settings(), temperature: attempt === 0 ? 0.8 : 0.4 });
-        lastResult = result;
-        parsed = robustParseJSON(result);
-        if (parsed && typeof parsed.description === 'string' && parsed.description.trim()) break;
-        parsed = null;
-      }
-      if (!parsed) {
-        console.warn('PersonaGen failed. Last AI response:', lastResult);
-        throw new Error('Could not parse AI response — try a shorter / clearer concept.');
-      }
+      const parsed = await generateJSON({
+        system: sysMsg,
+        userText: userTxt,
+        settings: S.settings(),
+        validate: p => typeof p.description === 'string' && p.description.trim(),
+      });
       if (!form.name?.trim() && typeof parsed.name === 'string' && parsed.name.trim()) set('name', parsed.name.trim());
       set('description', parsed.description.trim());
       ctx.addToast('Persona updated — review and save', 'success');

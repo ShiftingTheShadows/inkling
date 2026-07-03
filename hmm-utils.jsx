@@ -370,9 +370,13 @@ function buildSystemPrompt(char, settings, messages = []) {
 }
 
 // ── AI ───────────────────────────────────────────────────────────
-async function callAI(messages, char, settings, onChunk) {
+async function callAI(messages, char, settings, onChunk, opts = {}) {
   const resolvedSettings = settings || S.settings();
-  const system = buildSystemPrompt(char, resolvedSettings, messages);
+  // Structured mode: generator calls (AI assists) send their own clean system prompt.
+  // Skips the roleplay scaffolding (persona, lorebook, global prompt, "stay in
+  // character / use *asterisks*") that otherwise fights JSON output.
+  const structured = !!opts.structured;
+  const system = structured ? (opts.system || '') : buildSystemPrompt(char, resolvedSettings, messages);
 
   // Build clean API messages — preserve images (vision), handle narrator
   const apiMsgs = messages
@@ -427,10 +431,13 @@ async function callAI(messages, char, settings, onChunk) {
         model,
         messages: [{ role: 'system', content: system }, ...outMsgs],
         temperature: resolvedSettings.temperature || 0.8,
-        max_tokens: resolvedSettings.maxTokens || 1024,
+        // Structured JSON (all fields at once) needs more room than a chat turn —
+        // truncated JSON was the main cause of assist parse failures
+        max_tokens: structured ? Math.max(4096, resolvedSettings.maxTokens || 1024) : (resolvedSettings.maxTokens || 1024),
         top_p: resolvedSettings.topP,
         stream: !!onChunk,
       };
+      if (structured) body.response_format = { type: 'json_object' };
       const headers = { 'Content-Type': 'application/json' };
       if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
       if (resolvedSettings.provider === 'openrouter') {
@@ -438,7 +445,12 @@ async function callAI(messages, char, settings, onChunk) {
         headers['X-Title'] = 'HMM Roleplay';
       }
 
-      const resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+      let resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+      // Some models/endpoints reject response_format — retry once without it
+      if (!resp.ok && body.response_format && resp.status >= 400 && resp.status < 500) {
+        delete body.response_format;
+        resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+      }
       if (!resp.ok) {
         const errTxt = await resp.text().catch(() => '');
         throw new Error(`${resp.status} ${resp.statusText} ${errTxt.slice(0, 200)}`);
@@ -484,7 +496,9 @@ async function callAI(messages, char, settings, onChunk) {
     if (window.claude) {
       const fullMsgs = [
         { role: 'user',      content: `[System]\n${system}` },
-        { role: 'assistant', content: `Understood. I am ${char.name} and will stay in character.` },
+        { role: 'assistant', content: structured
+          ? 'Understood. I will respond with only the requested JSON — no commentary, no markdown fences.'
+          : `Understood. I am ${char.name} and will stay in character.` },
         ...apiMsgs.map(m => ({ role: m.role, content: m.content })),
       ];
       result = await window.claude.complete({ messages: fullMsgs });
