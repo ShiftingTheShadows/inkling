@@ -945,6 +945,7 @@ function ImportModal({ onClose }) {
   const ctx = useContext(AppCtx);
   const [drag, setDrag] = useState(false);
   const [processing, setProcessing] = useState(false);
+  const [progress, setProgress] = useState(null); // { done, total }
 
   const importCharData = (d, avatarDataUrl) => {
     const charData = {
@@ -959,56 +960,78 @@ function ImportModal({ onClose }) {
       tags: d.tags || [],
       avatar: avatarDataUrl || d.avatar || '',
     };
-    if (!charData.firstMessage) { ctx.addToast('Unrecognized format — missing first_mes', 'error'); return null; }
+    if (!charData.firstMessage) return null;
     const nc = { id: genId(), ...charData, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), favorite: false };
     ctx.setChars(prev => { const n = [...prev, nc]; S.saveChars(n); return n; });
     return nc;
   };
 
-  const process = async file => {
-    if (!file || processing) return;
-    setProcessing(true);
-    try {
-      const isPng = file.name.endsWith('.png') || file.type === 'image/png';
-      const isJson = file.name.endsWith('.json') || file.type === 'application/json';
+  // Import a single file; returns { char } | { backup: n } | { error }
+  const processOne = async file => {
+    const isPng = file.name.endsWith('.png') || file.type === 'image/png';
+    const isJson = file.name.endsWith('.json') || file.type === 'application/json';
 
-      if (isPng) {
-        // Extract embedded chara JSON + use PNG as avatar
-        const cardData = await parsePngCard(file);
-        if (!cardData) { ctx.addToast('No character data found in this PNG', 'error'); setProcessing(false); return; }
-        const d = cardData.data || cardData;
-        // Convert PNG to data URL for avatar (downscaled — cards are often multi-MB)
-        const rawUrl = await new Promise(res => {
-          const reader = new FileReader();
-          reader.onload = e => res(e.target.result);
-          reader.readAsDataURL(file);
-        });
-        const avatarUrl = await compressImage(rawUrl, 512, 0.85);
-        const nc = importCharData(d, avatarUrl);
-        if (nc) { ctx.addToast(`Imported "${nc.name}" from PNG card`, 'success'); ctx.selectChar(nc.id); onClose(); }
-      } else if (isJson) {
-        const raw = JSON.parse(await file.text());
-        // HMM multi-char backup
-        if (Array.isArray(raw.characters)) {
-          ctx.setChars(prev => {
-            const merged = [...prev];
-            raw.characters.forEach(c => { if (!merged.find(x => x.id === c.id)) merged.push(c); });
-            S.saveChars(merged);
-            return merged;
-          });
-          ctx.addToast(`Imported ${raw.characters.length} characters`, 'success');
-          onClose(); return;
-        }
-        const d = raw.data || raw;
-        const nc = importCharData(d, null);
-        if (nc) { ctx.addToast(`Imported "${nc.name}"`, 'success'); ctx.selectChar(nc.id); onClose(); }
-      } else {
-        ctx.addToast('Drop a PNG card or JSON file', 'warning');
-      }
-    } catch (e) {
-      ctx.addToast(`Import failed: ${e.message}`, 'error');
+    if (isPng) {
+      // Extract embedded chara JSON + use PNG as avatar
+      const cardData = await parsePngCard(file);
+      if (!cardData) return { error: `${file.name}: no character data in this PNG` };
+      const d = cardData.data || cardData;
+      // Convert PNG to data URL for avatar (downscaled — cards are often multi-MB)
+      const rawUrl = await new Promise(res => {
+        const reader = new FileReader();
+        reader.onload = e => res(e.target.result);
+        reader.readAsDataURL(file);
+      });
+      const avatarUrl = await compressImage(rawUrl, 512, 0.85);
+      const nc = importCharData(d, avatarUrl);
+      return nc ? { char: nc } : { error: `${file.name}: unrecognized format — missing first message` };
     }
+    if (isJson) {
+      const raw = JSON.parse(await file.text());
+      // HMM multi-char backup
+      if (Array.isArray(raw.characters)) {
+        let added = 0;
+        ctx.setChars(prev => {
+          const merged = [...prev];
+          raw.characters.forEach(c => { if (!merged.find(x => x.id === c.id)) { merged.push(c); added++; } });
+          S.saveChars(merged);
+          return merged;
+        });
+        return { backup: raw.characters.length };
+      }
+      const d = raw.data || raw;
+      const nc = importCharData(d, null);
+      return nc ? { char: nc } : { error: `${file.name}: unrecognized format — missing first message` };
+    }
+    return { error: `${file.name}: not a PNG card or JSON file` };
+  };
+
+  // Multi-file import: process sequentially, summarize in one toast
+  const process = async files => {
+    const list = Array.from(files || []).filter(Boolean);
+    if (!list.length || processing) return;
+    setProcessing(true);
+    const results = [];
+    for (let i = 0; i < list.length; i++) {
+      setProgress({ done: i, total: list.length });
+      try { results.push(await processOne(list[i])); }
+      catch (e) { results.push({ error: `${list[i].name}: ${e.message}` }); }
+    }
+    setProgress(null);
     setProcessing(false);
+
+    const chars = results.filter(r => r.char).map(r => r.char);
+    const backupCount = results.filter(r => r.backup).reduce((s, r) => s + r.backup, 0);
+    const errors = results.filter(r => r.error);
+    const total = chars.length + backupCount;
+
+    if (total === 1 && chars.length === 1) ctx.addToast(`Imported "${chars[0].name}"`, 'success');
+    else if (total) ctx.addToast(`Imported ${total} characters${errors.length ? ` — ${errors.length} file${errors.length === 1 ? '' : 's'} failed` : ''}`, errors.length ? 'warning' : 'success');
+    errors.slice(0, 3).forEach(r => ctx.addToast(r.error, 'error'));
+    if (errors.length > 3) ctx.addToast(`…and ${errors.length - 3} more failures`, 'error');
+
+    if (chars.length) ctx.selectChar(chars[chars.length - 1].id);
+    if (total && !errors.length) onClose();
   };
 
   return (
@@ -1024,22 +1047,20 @@ function ImportModal({ onClose }) {
             style={{ border: `2px dashed ${drag ? 'var(--accent)' : 'var(--border3)'}`, padding: '44px 24px', textAlign: 'center', background: drag ? 'var(--surface3)' : 'transparent' }}
             onDragOver={e => { e.preventDefault(); setDrag(true); }}
             onDragLeave={() => setDrag(false)}
-            onDrop={e => { e.preventDefault(); setDrag(false); process(e.dataTransfer.files[0]); }}
+            onDrop={e => { e.preventDefault(); setDrag(false); process(e.dataTransfer.files); }}
           >
             <div style={{ fontSize: 36, color: drag ? 'var(--accent)' : 'var(--text3)', marginBottom: 14, transition: 'color 0.15s' }}>⬆</div>
-            <div style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 6 }}>{processing ? 'Processing...' : 'Drop a file here'}</div>
+            <div style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 6 }}>
+              {processing ? (progress ? `Importing ${progress.done + 1} / ${progress.total}…` : 'Processing…') : 'Drop files here — multiple at once is fine'}
+            </div>
             <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 24, lineHeight: 1.8 }}>
               <span style={{ color: 'var(--accent2)' }}>PNG</span> — TavernAI / SillyTavern character cards (with embedded chara data)<br/>
               <span style={{ color: 'var(--accent2)' }}>JSON</span> — SillyTavern JSON export or HMM backup
             </div>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
               <label className="btn-primary" style={{ cursor: processing ? 'not-allowed' : 'pointer', display: 'inline-block', opacity: processing ? 0.5 : 1 }}>
-                CHOOSE PNG CARD
-                <input type="file" accept=".png,image/png" className="sr-only" onChange={e => process(e.target.files[0])} disabled={processing} />
-              </label>
-              <label className="btn-secondary" style={{ cursor: processing ? 'not-allowed' : 'pointer', display: 'inline-block', opacity: processing ? 0.5 : 1 }}>
-                CHOOSE JSON FILE
-                <input type="file" accept=".json,application/json" className="sr-only" onChange={e => process(e.target.files[0])} disabled={processing} />
+                CHOOSE FILES
+                <input type="file" multiple accept=".png,.json,image/png,application/json" className="sr-only" onChange={e => { process(e.target.files); e.target.value = ''; }} disabled={processing} />
               </label>
             </div>
           </div>
