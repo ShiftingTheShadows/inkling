@@ -803,7 +803,8 @@ async function parsePngCard(file) {
         const keyword = dec.decode(data.slice(0, nullIdx));
         if (keyword === 'chara') {
           const b64 = dec.decode(data.slice(nullIdx+1));
-          try { return JSON.parse(atob(b64)); } catch {}
+          // base64 → bytes → UTF-8 (plain atob() mangles non-ASCII names/messages)
+          try { return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(b64), c => c.charCodeAt(0)))); } catch {}
         }
       }
     }

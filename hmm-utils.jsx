@@ -629,9 +629,140 @@ const GistSync = {
   },
 };
 
+// ── Character card export (SillyTavern chara_card_v2 — JSON + PNG with 'chara' tEXt chunk) ──
+function charToCardV2(char) {
+  return {
+    spec: 'chara_card_v2',
+    spec_version: '2.0',
+    data: {
+      name: char.name || '',
+      description: char.description || '',
+      personality: char.personality || '',
+      scenario: char.scenario || '',
+      first_mes: char.firstMessage || '',
+      mes_example: char.exampleDialogues || '',
+      system_prompt: char.systemPrompt || '',
+      post_history_instructions: '',
+      alternate_greetings: char.alternateGreetings || [],
+      tags: char.tags || [],
+      creator: '',
+      character_version: '',
+      creator_notes: '',
+      extensions: {},
+    },
+  };
+}
+
+const __safeFilename = name => ((name || '').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_')) || 'character';
+
+function __downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  Object.assign(document.createElement('a'), { href: url, download: filename }).click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+function downloadCharJson(char) {
+  const blob = new Blob([JSON.stringify(charToCardV2(char), null, 2)], { type: 'application/json' });
+  __downloadBlob(blob, `${__safeFilename(char.name)}.json`);
+}
+
+const __crcTable = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+const __crc32 = bytes => {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < bytes.length; i++) c = __crcTable[(c ^ bytes[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+};
+
+// Insert tEXt chunk (keyword 'chara', base64 JSON) before IEND; drops any pre-existing chara chunk
+function embedCharaChunk(pngBytes, jsonStr) {
+  const utf8 = new TextEncoder().encode(jsonStr);
+  let bin = '';
+  for (let i = 0; i < utf8.length; i += 0x8000) bin += String.fromCharCode.apply(null, utf8.subarray(i, i + 0x8000));
+  const b64 = btoa(bin);
+  const keyword = 'chara';
+  const data = new Uint8Array(keyword.length + 1 + b64.length);
+  for (let i = 0; i < keyword.length; i++) data[i] = keyword.charCodeAt(i);
+  for (let i = 0; i < b64.length; i++) data[keyword.length + 1 + i] = b64.charCodeAt(i);
+
+  const typeAndData = new Uint8Array(4 + data.length);
+  typeAndData.set([0x74, 0x45, 0x58, 0x74]); // 'tEXt'
+  typeAndData.set(data, 4);
+
+  const chunk = new Uint8Array(12 + data.length);
+  const cv = new DataView(chunk.buffer);
+  cv.setUint32(0, data.length);
+  chunk.set(typeAndData, 4);
+  cv.setUint32(8 + data.length, __crc32(typeAndData));
+
+  const dec = new TextDecoder('latin1');
+  const parts = [pngBytes.slice(0, 8)];
+  let offset = 8;
+  while (offset < pngBytes.length - 11) {
+    const len = (pngBytes[offset]<<24)|(pngBytes[offset+1]<<16)|(pngBytes[offset+2]<<8)|pngBytes[offset+3];
+    const type = dec.decode(pngBytes.slice(offset + 4, offset + 8));
+    const whole = pngBytes.slice(offset, offset + 12 + len);
+    const isChara = type === 'tEXt' && dec.decode(whole.slice(8, 8 + Math.min(len, 6))).startsWith('chara\0');
+    if (type === 'IEND') parts.push(chunk);
+    if (!isChara) parts.push(whole);
+    offset += 12 + len;
+  }
+  const out = new Uint8Array(parts.reduce((s, p) => s + p.length, 0));
+  let pos = 0;
+  parts.forEach(p => { out.set(p, pos); pos += p.length; });
+  return out;
+}
+
+// Render avatar (or initials tile) to a 512×512 PNG blob
+function __renderCharPng(char) {
+  return new Promise(resolve => {
+    const SIZE = 512;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = SIZE;
+    const cx = canvas.getContext('2d');
+    const fallback = () => {
+      cx.fillStyle = charBg(char.name || 'X');
+      cx.fillRect(0, 0, SIZE, SIZE);
+      cx.fillStyle = charFg(char.name || 'X');
+      cx.font = `700 ${Math.round(SIZE * 0.34)}px sans-serif`;
+      cx.textAlign = 'center'; cx.textBaseline = 'middle';
+      cx.fillText((char.name || '?').slice(0, 2).toUpperCase(), SIZE / 2, SIZE / 2);
+      canvas.toBlob(resolve, 'image/png');
+    };
+    const src = char.avatar;
+    if (!src || src.startsWith('/assets/')) return fallback();
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const s = Math.max(SIZE / img.width, SIZE / img.height);
+        cx.drawImage(img, (SIZE - img.width * s) / 2, (SIZE - img.height * s) / 2, img.width * s, img.height * s);
+        canvas.toBlob(b => b ? resolve(b) : fallback(), 'image/png');
+      } catch { fallback(); } // tainted canvas (CORS-blocked remote avatar) → initials tile
+    };
+    img.onerror = fallback;
+    img.src = src;
+  });
+}
+
+async function downloadCharPng(char) {
+  const blob = await __renderCharPng(char);
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  const out = embedCharaChunk(bytes, JSON.stringify(charToCardV2(char)));
+  __downloadBlob(new Blob([out], { type: 'image/png' }), `${__safeFilename(char.name)}.png`);
+}
+
 Object.assign(window, {
   AppCtx, S, genId, estimateTokens, compressImage,
   formatTime, formatDate, renderMarkdown,
   charBg, charFg, buildSystemPrompt, callAI,
   summarizeMessages, GistSync,
+  downloadCharJson, downloadCharPng,
 });

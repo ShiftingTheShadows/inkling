@@ -1,6 +1,6 @@
 // hmm-chat.jsx — Chat view, messages, input
 const { useState, useContext, useEffect, useRef } = React;
-const { AppCtx, S, genId, estimateTokens, formatTime, renderMarkdown, charBg, charFg, callAI, buildSystemPrompt, summarizeMessages, compressImage } = window;
+const { AppCtx, S, genId, estimateTokens, formatTime, renderMarkdown, charBg, charFg, callAI, buildSystemPrompt, summarizeMessages, compressImage, downloadCharJson, downloadCharPng } = window;
 const { CharAvatar } = window;
 
 function UserAvatar({ persona, size = 32 }) {
@@ -833,6 +833,16 @@ function ChatView() {
           )}
           {iconBtn('Export Chat', false, false, exportChat,
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M21 15V19C21 20.1 20.1 21 19 21H5C3.9 21 3 20.1 3 19V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M7 10L12 15L17 10M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          )}
+          {iconBtn('Download PNG Card (SillyTavern-compatible)', false, false,
+            () => downloadCharPng(char)
+              .then(() => ctx.addToast('PNG card downloaded', 'success'))
+              .catch(e => ctx.addToast(`Export failed: ${e.message}`, 'error')),
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" stroke="currentColor" strokeWidth="2"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/><path d="M21 15L16 10L5 21" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>
+          )}
+          {iconBtn('Download JSON Card', false, false,
+            () => { downloadCharJson(char); ctx.addToast('JSON card downloaded', 'success'); },
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M8 3H7C5.9 3 5 3.9 5 5V9C5 10.1 4.1 11 3 11V13C4.1 13 5 13.9 5 15V19C5 20.1 5.9 21 7 21H8M16 3H17C18.1 3 19 3.9 19 5V9C19 10.1 19.9 11 21 11V13C19.9 13 19 13.9 19 15V19C19 20.1 18.1 21 17 21H16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
           )}
           {iconBtn('Delete Character', false, true, () => {
             if (!window.confirm(`Delete "${char.name}"? Cannot be undone.`)) return;
