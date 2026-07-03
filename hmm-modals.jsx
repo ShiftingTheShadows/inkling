@@ -946,8 +946,33 @@ function ImportModal({ onClose }) {
   const [drag, setDrag] = useState(false);
   const [processing, setProcessing] = useState(false);
   const [progress, setProgress] = useState(null); // { done, total }
+  const [dupPrompt, setDupPrompt] = useState(null); // { name, resolve }
+  const [dupApplyAll, setDupApplyAll] = useState(false);
+  // Working copy of the character list during a batch — React state updates are
+  // async, so duplicate checks against ctx.chars would go stale mid-batch
+  const charsRef = useRef(null);
+  const dupPolicyRef = useRef(null); // 'replace' | 'keep' | 'skip' once apply-to-all is chosen
 
-  const importCharData = (d, avatarDataUrl) => {
+  const commitChars = () => {
+    const next = charsRef.current;
+    S.saveChars(next);
+    ctx.setChars(next);
+  };
+
+  // Pause the batch and ask what to do with a duplicate (unless a batch-wide
+  // policy was already chosen via "apply to remaining")
+  const askDuplicate = name => {
+    if (dupPolicyRef.current) return Promise.resolve(dupPolicyRef.current);
+    return new Promise(resolve => setDupPrompt({ name, resolve }));
+  };
+
+  const answerDuplicate = choice => {
+    if (dupApplyAll) dupPolicyRef.current = choice;
+    dupPrompt?.resolve(choice);
+    setDupPrompt(null);
+  };
+
+  const importCharData = async (d, avatarDataUrl) => {
     const charData = {
       name: d.name || 'Unnamed',
       description: d.description || d.char_persona || '',
@@ -961,9 +986,25 @@ function ImportModal({ onClose }) {
       avatar: avatarDataUrl || d.avatar || '',
     };
     if (!charData.firstMessage) return null;
+
+    const existing = charsRef.current.find(c => (c.name || '').trim().toLowerCase() === charData.name.trim().toLowerCase());
+    if (existing) {
+      const choice = await askDuplicate(charData.name);
+      if (choice === 'skip') return { skipped: true };
+      if (choice === 'replace') {
+        // Keep the existing id — chats, history, and favorite survive
+        const updated = { ...existing, ...charData, updatedAt: new Date().toISOString() };
+        charsRef.current = charsRef.current.map(c => c.id === existing.id ? updated : c);
+        commitChars();
+        return { char: updated, replaced: true };
+      }
+      // 'keep' falls through and imports as a separate character
+    }
+
     const nc = { id: genId(), ...charData, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), favorite: false };
-    ctx.setChars(prev => { const n = [...prev, nc]; S.saveChars(n); return n; });
-    return nc;
+    charsRef.current = [...charsRef.current, nc];
+    commitChars();
+    return { char: nc };
   };
 
   // Import a single file; returns { char } | { backup: n } | { error }
@@ -983,25 +1024,23 @@ function ImportModal({ onClose }) {
         reader.readAsDataURL(file);
       });
       const avatarUrl = await compressImage(rawUrl, 512, 0.85);
-      const nc = importCharData(d, avatarUrl);
-      return nc ? { char: nc } : { error: `${file.name}: unrecognized format — missing first message` };
+      const r = await importCharData(d, avatarUrl);
+      return r || { error: `${file.name}: unrecognized format — missing first message` };
     }
     if (isJson) {
       const raw = JSON.parse(await file.text());
-      // HMM multi-char backup
+      // HMM multi-char backup — dedupe by id (same id = same character)
       if (Array.isArray(raw.characters)) {
         let added = 0;
-        ctx.setChars(prev => {
-          const merged = [...prev];
-          raw.characters.forEach(c => { if (!merged.find(x => x.id === c.id)) { merged.push(c); added++; } });
-          S.saveChars(merged);
-          return merged;
-        });
-        return { backup: raw.characters.length };
+        const merged = [...charsRef.current];
+        raw.characters.forEach(c => { if (!merged.find(x => x.id === c.id)) { merged.push(c); added++; } });
+        charsRef.current = merged;
+        commitChars();
+        return { backup: added };
       }
       const d = raw.data || raw;
-      const nc = importCharData(d, null);
-      return nc ? { char: nc } : { error: `${file.name}: unrecognized format — missing first message` };
+      const r = await importCharData(d, null);
+      return r || { error: `${file.name}: unrecognized format — missing first message` };
     }
     return { error: `${file.name}: not a PNG card or JSON file` };
   };
@@ -1011,6 +1050,9 @@ function ImportModal({ onClose }) {
     const list = Array.from(files || []).filter(Boolean);
     if (!list.length || processing) return;
     setProcessing(true);
+    charsRef.current = S.chars();
+    dupPolicyRef.current = null;
+    setDupApplyAll(false);
     const results = [];
     for (let i = 0; i < list.length; i++) {
       setProgress({ done: i, total: list.length });
@@ -1021,12 +1063,22 @@ function ImportModal({ onClose }) {
     setProcessing(false);
 
     const chars = results.filter(r => r.char).map(r => r.char);
+    const replaced = results.filter(r => r.replaced).length;
+    const skipped = results.filter(r => r.skipped).length;
     const backupCount = results.filter(r => r.backup).reduce((s, r) => s + r.backup, 0);
     const errors = results.filter(r => r.error);
     const total = chars.length + backupCount;
 
-    if (total === 1 && chars.length === 1) ctx.addToast(`Imported "${chars[0].name}"`, 'success');
-    else if (total) ctx.addToast(`Imported ${total} characters${errors.length ? ` — ${errors.length} file${errors.length === 1 ? '' : 's'} failed` : ''}`, errors.length ? 'warning' : 'success');
+    const details = [
+      replaced ? `${replaced} replaced` : null,
+      skipped ? `${skipped} skipped` : null,
+      errors.length ? `${errors.length} failed` : null,
+    ].filter(Boolean).join(', ');
+    if (total === 1 && chars.length === 1 && !details) {
+      ctx.addToast(`${results[0]?.replaced ? 'Replaced' : 'Imported'} "${chars[0].name}"`, 'success');
+    } else if (total || skipped) {
+      ctx.addToast(`Imported ${total} character${total === 1 ? '' : 's'}${details ? ` (${details})` : ''}`, errors.length ? 'warning' : 'success');
+    }
     errors.slice(0, 3).forEach(r => ctx.addToast(r.error, 'error'));
     if (errors.length > 3) ctx.addToast(`…and ${errors.length - 3} more failures`, 'error');
 
@@ -1064,6 +1116,23 @@ function ImportModal({ onClose }) {
               </label>
             </div>
           </div>
+          {dupPrompt && (
+            <div style={{ marginTop: 14, padding: '12px 14px', border: '1px solid var(--warning)', background: 'var(--surface3)' }}>
+              <div style={{ fontSize: 12, color: 'var(--text)', marginBottom: 10 }}>
+                <span style={{ color: 'var(--warning)', fontWeight: 700 }}>DUPLICATE:</span>{' '}
+                a character named "<span style={{ fontWeight: 700 }}>{dupPrompt.name}</span>" already exists.
+              </div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                <button className="btn-primary btn-sm" onClick={() => answerDuplicate('replace')} title="Overwrite the existing character's fields — its chats and history are kept">REPLACE (KEEPS CHATS)</button>
+                <button className="btn-secondary btn-sm" onClick={() => answerDuplicate('keep')} title="Import as a separate character with the same name">KEEP BOTH</button>
+                <button className="btn-secondary btn-sm" onClick={() => answerDuplicate('skip')} title="Don't import this file">SKIP</button>
+              </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 7, cursor: 'pointer', fontSize: 11, color: 'var(--text2)' }}>
+                <input type="checkbox" checked={dupApplyAll} onChange={e => setDupApplyAll(e.target.checked)} style={{ width: 13, height: 13, accentColor: 'var(--accent)', margin: 0 }} />
+                Apply my choice to all remaining duplicates in this batch
+              </label>
+            </div>
+          )}
         </div>
         <div className="modal-footer">
           <button className="btn-secondary" onClick={onClose}>CLOSE</button>
