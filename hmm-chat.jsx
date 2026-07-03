@@ -342,6 +342,10 @@ function ChatView() {
   const [messages, setMessages] = useState([]);
   const [streamingId, setStreamingId] = useState(null);
   const [generating, setGenerating] = useState(false);
+  const abortRef = useRef(null);
+  // Fresh AbortController per generation; pass as callAI opts
+  const startAbortable = () => { abortRef.current = new AbortController(); return { signal: abortRef.current.signal }; };
+  const stopGeneration = () => abortRef.current?.abort();
   const [inputVal, setInputVal] = useState('');
   const [pendingImage, setPendingImage] = useState(null);
   const [showVarPanel, setShowVarPanel] = useState(false);
@@ -469,9 +473,15 @@ function ChatView() {
         setMessages(prev => prev.map(m => m.id === streamMsgId ? { ...m, content: partial } : m));
         if (done) {
           setStreamingId(null);
-          setMessages(prev => { const f = prev.map(m => m.id === streamMsgId ? { ...m, content: partial } : m); saveAndSync(f); return f; });
+          // Stopped before any text arrived → drop the empty bubble
+          setMessages(prev => {
+            const f = partial
+              ? prev.map(m => m.id === streamMsgId ? { ...m, content: partial } : m)
+              : prev.filter(m => m.id !== streamMsgId);
+            saveAndSync(f); return f;
+          });
         }
-      });
+      }, startAbortable());
     } catch (e) {
       ctx.addToast(`Error: ${e.message}`, 'error');
       setStreamingId(null);
@@ -508,14 +518,16 @@ function ChatView() {
           setMessages(prev => {
             const f = prev.map(m => {
               if (m.id !== last.id) return m;
-              const branches = [...(m.branches || [m.content]), partial];
+              // Stopped before any text arrived → restore the original reply
+              if (!partial) return { ...m, content: last.content };
+              const branches = [...(m.branches || [last.content]), partial];
               return { ...m, content: partial, branches, currentBranch: branches.length - 1 };
             });
             saveAndSync(f);
             return f;
           });
         }
-      });
+      }, startAbortable());
     } catch (e) { ctx.addToast(`Error: ${e.message}`, 'error'); setStreamingId(null); }
     finally { setGenerating(false); }
   };
@@ -542,9 +554,14 @@ function ChatView() {
         setMessages(prev => prev.map(m => m.id === streamMsgId ? { ...m, content: partial } : m));
         if (done) {
           setStreamingId(null);
-          setMessages(prev => { const f = prev.map(m => m.id === streamMsgId ? { ...m, content: partial } : m); saveAndSync(f); return f; });
+          setMessages(prev => {
+            const f = partial
+              ? prev.map(m => m.id === streamMsgId ? { ...m, content: partial } : m)
+              : prev.filter(m => m.id !== streamMsgId);
+            saveAndSync(f); return f;
+          });
         }
-      });
+      }, startAbortable());
     } catch (e) { ctx.addToast(`Error: ${e.message}`, 'error'); setStreamingId(null); }
     finally { setGenerating(false); }
   };
@@ -576,9 +593,14 @@ function ChatView() {
         setMessages(prev => prev.map(m => m.id === streamMsgId ? { ...m, content: partial } : m));
         if (done) {
           setStreamingId(null);
-          setMessages(prev => { const f = prev.map(m => m.id === streamMsgId ? { ...m, content: partial } : m); saveAndSync(f); return f; });
+          setMessages(prev => {
+            const f = partial
+              ? prev.map(m => m.id === streamMsgId ? { ...m, content: partial } : m)
+              : prev.filter(m => m.id !== streamMsgId);
+            saveAndSync(f); return f;
+          });
         }
-      });
+      }, startAbortable());
     } catch (e) {
       ctx.addToast(`Error: ${e.message}`, 'error');
       setStreamingId(null);
@@ -1089,11 +1111,17 @@ function ChatView() {
               handleSlash(e);
               if (settings.sendOnEnter && e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) { e.preventDefault(); sendMessage(); }
               else if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); sendMessage(); }
+              else if (e.key === 'Escape' && generating) { e.preventDefault(); stopGeneration(); }
             }}
           />
-          <button className="btn-send" onClick={sendMessage} disabled={!inputVal.trim() || generating} title="Send (Ctrl+Enter)">
+          <button
+            className="btn-send"
+            onClick={generating ? stopGeneration : sendMessage}
+            disabled={!generating && !inputVal.trim()}
+            title={generating ? 'Stop generating (Esc)' : 'Send (Ctrl+Enter)'}
+          >
             {generating
-              ? <div className="typing" style={{ gap: 3 }}><div className="typing-dot"/><div className="typing-dot"/><div className="typing-dot"/></div>
+              ? <svg width="15" height="15" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" fill="currentColor" /></svg>
               : <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M22 2L15 22L11 13L2 9L22 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
             }
           </button>

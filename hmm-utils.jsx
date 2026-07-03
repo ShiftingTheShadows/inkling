@@ -446,11 +446,11 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
         headers['X-Title'] = 'HMM Roleplay';
       }
 
-      let resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+      let resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: opts.signal });
       // Some models/endpoints reject response_format — retry once without it
       if (!resp.ok && body.response_format && resp.status >= 400 && resp.status < 500) {
         delete body.response_format;
-        resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+        resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: opts.signal });
       }
       if (!resp.ok) {
         const errTxt = await resp.text().catch(() => '');
@@ -462,21 +462,26 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
         const decoder = new TextDecoder();
         let partial = '';
         let buffer = '';
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() || '';
-          for (const line of lines) {
-            const trimmed = line.replace(/^data: ?/, '').trim();
-            if (!trimmed || trimmed === '[DONE]') continue;
-            try {
-              const j = JSON.parse(trimmed);
-              const delta = j.choices?.[0]?.delta?.content;
-              if (delta) { partial += delta; onChunk(partial, false); }
-            } catch {}
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+            for (const line of lines) {
+              const trimmed = line.replace(/^data: ?/, '').trim();
+              if (!trimmed || trimmed === '[DONE]') continue;
+              try {
+                const j = JSON.parse(trimmed);
+                const delta = j.choices?.[0]?.delta?.content;
+                if (delta) { partial += delta; onChunk(partial, false); }
+              } catch {}
+            }
           }
+        } catch (err) {
+          // User pressed stop mid-stream — keep what was generated so far
+          if (err.name !== 'AbortError') throw err;
         }
         onChunk(partial, true);
         return partial;
@@ -485,6 +490,7 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
         result = j.choices?.[0]?.message?.content || '';
       }
     } catch(e) {
+      if (e.name === 'AbortError') { if (onChunk) onChunk('', true); return ''; }
       const providerName = resolvedSettings.provider === 'openrouter' ? 'OpenRouter' : resolvedSettings.provider === 'local' ? 'Local model' : 'Custom endpoint';
       result = `*${providerName} error: ${e.message}*\n\nCheck your endpoint URL, API key, and model ID in Settings.`;
     }
@@ -514,6 +520,7 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
       const resp = await fetch('/api/anthropic', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: opts.signal,
         body: JSON.stringify({
           apiKey: resolvedSettings.apiKey,
           model: resolvedSettings.model || 'claude-haiku-4-5',
@@ -531,22 +538,27 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
           const decoder = new TextDecoder();
           let partial = '';
           let buffer = '';
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-            for (const line of lines) {
-              if (!line.startsWith('data:')) continue;
-              try {
-                const j = JSON.parse(line.slice(5).trim());
-                if (j.type === 'content_block_delta' && j.delta?.type === 'text_delta') {
-                  partial += j.delta.text;
-                  onChunk(partial, false);
-                }
-              } catch {}
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n');
+              buffer = lines.pop() || '';
+              for (const line of lines) {
+                if (!line.startsWith('data:')) continue;
+                try {
+                  const j = JSON.parse(line.slice(5).trim());
+                  if (j.type === 'content_block_delta' && j.delta?.type === 'text_delta') {
+                    partial += j.delta.text;
+                    onChunk(partial, false);
+                  }
+                } catch {}
+              }
             }
+          } catch (err) {
+            // User pressed stop mid-stream — keep what was generated so far
+            if (err.name !== 'AbortError') throw err;
           }
           onChunk(partial, true);
           return partial;
@@ -561,7 +573,10 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
         result = `*Anthropic error: ${resp.status} ${errTxt.slice(0, 200)}*\n\nCheck your API key and model in Settings.`;
       }
       // 404 → functions not deployed here; fall through to the shim below
-    } catch (e) { console.error('Anthropic API error:', e); }
+    } catch (e) {
+      if (e.name === 'AbortError') { if (onChunk) onChunk('', true); return ''; }
+      console.error('Anthropic API error:', e);
+    }
   }
 
   // ── Claude (window.claude helper — artifact/shim fallback) ────
@@ -588,11 +603,13 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
     const tokens = result.split(/(\s+)/);
     let partial = '';
     for (const tok of tokens) {
+      if (opts.signal?.aborted) break;
       partial += tok;
       onChunk(partial, false);
       await new Promise(r => setTimeout(r, 9 + Math.random() * 12));
     }
     onChunk(partial, true);
+    return partial;
   }
   return result;
 }
