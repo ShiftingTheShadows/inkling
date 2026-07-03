@@ -81,7 +81,7 @@ async function generateJSON({ system, userText, settings, validate, content }) {
       const result = await callAI(
         [{ role: 'user', content: content ? content(txt) : txt }],
         genChar,
-        { ...settings, temperature: attempt === 0 ? 0.8 : 0.4 },
+        { ...settings, temperature: attempt === 0 ? (settings._genTemp ?? 0.8) : 0.4 },
         null,
         { structured: true, system },
       );
@@ -551,11 +551,23 @@ CRITICAL OUTPUT RULES:
       ? `\n\nAlready-generated fields (write the requested field to fit these — do NOT return them):\n${Object.entries(context).map(([k, v]) => `${fieldLabels[k] || k}: ${v}`).join('\n')}`
       : '';
     const baseUserText = (isImprove
-      ? `Character name: ${form.name || 'Unknown'}\n\nUser's concept: ${prompt || '(see attached image)'}\n\nExisting content to improve:\n${existing}\n\nImprove and enhance the selected fields while keeping the core concept. Return JSON only.`
+      ? `Character name: ${form.name || 'Unknown'}
+
+Existing content:
+${existing}
+
+Requested change: ${prompt || '(no specific request — polish the writing while keeping every detail)'}
+
+EDIT RULES — this is an edit, not a rewrite:
+- Make ONLY the changes the request requires. Everything the request does not touch must be preserved word-for-word.
+- Do not rephrase, embellish, trim, or reorganize untouched sentences.
+- If the request is broad (e.g. "make it more vivid"), rewrite the style as needed but keep every established fact and detail intact.
+- Return the COMPLETE updated field values as JSON (full text, with the edit applied).`
       : `Character name: ${form.name || 'Unknown'}\n\nUser's concept: ${prompt || '(base it on the attached image)'}\n\nGenerate the selected fields for this character. Return JSON only.`)
       + contextTxt;
 
-    const callSettings = { ...settingsNow, webSearch: webSearch && orActive };
+    // Edits run cooler — high temperature invites rewriting untouched content
+    const callSettings = { ...settingsNow, webSearch: webSearch && orActive, _genTemp: isImprove ? 0.4 : 0.8 };
 
     // Build message content (multimodal if a reference image is attached)
     const buildContent = (txt) => refImage
@@ -1282,12 +1294,21 @@ Rules:
 CRITICAL OUTPUT RULES:
 - Return ONLY raw JSON, no markdown fences, no commentary before or after.
 - All field values must be JSON strings with properly escaped quotes and newlines (\\n).`;
-      const userTxt = `Persona name: ${form.name?.trim() || '(none yet — invent one)'}\n\nUser's concept: ${prompt.trim() || '(improve the existing description)'}\n${form.description?.trim() ? `\nExisting description to improve:\n${form.description}\n` : ''}\nReturn JSON only.`;
+      const userTxt = form.description?.trim()
+        ? `Persona name: ${form.name?.trim() || '(none yet — invent one)'}
+
+Existing description:
+${form.description}
+
+Requested change: ${prompt.trim() || '(no specific request — polish the writing while keeping every detail)'}
+
+EDIT RULES — this is an edit, not a rewrite: make ONLY the changes the request requires and preserve everything else word-for-word. Return the complete updated description as JSON.`
+        : `Persona name: ${form.name?.trim() || '(none yet — invent one)'}\n\nUser's concept: ${prompt.trim()}\n\nReturn JSON only.`;
 
       const parsed = await generateJSON({
         system: sysMsg,
         userText: userTxt,
-        settings: S.settings(),
+        settings: { ...S.settings(), _genTemp: form.description?.trim() ? 0.4 : 0.8 },
         validate: p => typeof p.description === 'string' && p.description.trim(),
       });
       if (!form.name?.trim() && typeof parsed.name === 'string' && parsed.name.trim()) set('name', parsed.name.trim());
