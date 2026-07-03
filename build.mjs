@@ -15,6 +15,10 @@ for (const f of files) {
     loader: 'jsx',
     target: 'es2020',
     minify: true,
+    // Babel standalone evaluates each text/babel script in its own scope; plain
+    // classic scripts share the global scope, so the per-file `const {...} = window`
+    // headers collide without an IIFE wrapper.
+    format: 'iife',
   });
   writeFileSync(`dist/${f.replace(/\.jsx$/, '.js')}`, code);
   console.log(`built dist/${f.replace(/\.jsx$/, '.js')}`);
