@@ -43,7 +43,7 @@ function CharCard({ char, isActive, onSelect, onFav }) {
     >
       <CharAvatar char={char} size={48} />
       <div className="char-card-info">
-        <div className="char-card-name">{char.name}</div>
+        <div className="char-card-name">{char.isGroup ? '◈ ' : ''}{char.name}</div>
         <div className="char-card-preview">{preview || '—'}</div>
         {char.tags?.length > 0 && (
           <div className="char-tags">
@@ -64,6 +64,8 @@ function Sidebar() {
   const ctx = useContext(AppCtx);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
+  const [tagFilter, setTagFilter] = useState(null);
+  const allTags = [...new Set(ctx.chars.flatMap(c => c.tags || []))].sort();
 
   const toggleFav = id => {
     ctx.setChars(prev => {
@@ -84,6 +86,7 @@ function Sidebar() {
   }
   if (filter === 'fav') chars = chars.filter(c => c.favorite);
   if (filter === 'recent') chars = [...chars].sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+  if (tagFilter) chars = chars.filter(c => (c.tags || []).includes(tagFilter));
 
   return (
     <aside className="sidebar" style={{ width: ctx.sidebarWidth }}>
@@ -112,6 +115,17 @@ function Sidebar() {
             >{l}</button>
           ))}
         </div>
+        {allTags.length > 0 && (
+          <div style={{ display: 'flex', gap: 4, overflowX: 'auto', padding: '6px 10px 2px', scrollbarWidth: 'none' }}>
+            {allTags.map(t => (
+              <span
+                key={t} className="tag"
+                onClick={() => setTagFilter(tagFilter === t ? null : t)}
+                style={{ cursor: 'pointer', flexShrink: 0, ...(tagFilter === t ? { background: 'var(--accent3)', color: 'var(--accent)', fontWeight: 700 } : {}) }}
+              >{t}</span>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="char-list">
@@ -137,12 +151,17 @@ function Sidebar() {
         ))}
       </div>
 
-      <button className="btn-new-char" onClick={() => ctx.openModal('char-editor', null)}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
-          <path d="M12 5V19M5 12H19" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
-        </svg>
-        NEW CHARACTER
-      </button>
+      <div style={{ display: 'flex' }}>
+        <button className="btn-new-char" style={{ flex: 1.4 }} onClick={() => ctx.openModal('char-editor', null)}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none">
+            <path d="M12 5V19M5 12H19" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/>
+          </svg>
+          NEW CHAR
+        </button>
+        <button className="btn-new-char" style={{ flex: 1, borderLeft: '1px solid var(--border2)' }} onClick={() => ctx.openModal('group-editor', null)} title="Group chat — multiple characters in one scene">
+          ◈ GROUP
+        </button>
+      </div>
     </aside>
   );
 }

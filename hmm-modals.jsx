@@ -160,6 +160,7 @@ function CommandPalette() {
 
   const actions = [
     { label: 'New Character',    sub: 'Create a character',          icon: '+',  action: () => { ctx.openModal('char-editor', null); ctx.setCmdOpen(false); } },
+    { label: 'New Group Chat',   sub: 'Multiple characters, one scene', icon: '◈', action: () => { ctx.openModal('group-editor', null); ctx.setCmdOpen(false); } },
     { label: 'Import Character', sub: 'Import from JSON or PNG card', icon: '↑', action: () => { ctx.openModal('import');           ctx.setCmdOpen(false); } },
     { label: 'Sync to GitHub',   sub: 'Push/pull all data via Gist',  icon: '⟳', action: () => { ctx.openModal('sync');             ctx.setCmdOpen(false); } },
     { label: 'Scripts',          sub: 'Attachable keyword-triggered world info', icon: '📖', action: () => { ctx.openModal('lorebook');         ctx.setCmdOpen(false); } },
@@ -998,6 +999,69 @@ async function parsePngCard(file) {
   return null;
 }
 
+// ── Group chat editor — a group is a pseudo-character { isGroup, memberIds } ──
+function GroupEditorModal({ editId, onClose }) {
+  const ctx = useContext(AppCtx);
+  const existing = editId ? ctx.chars.find(c => c.id === editId) : null;
+  const [name, setName] = useState(existing?.name || '');
+  const [memberIds, setMemberIds] = useState(existing?.memberIds || []);
+  const candidates = ctx.chars.filter(c => !c.isGroup);
+  const toggle = id => setMemberIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]);
+
+  const save = () => {
+    if (!name.trim()) { ctx.addToast('Group name is required', 'error'); return; }
+    if (memberIds.length < 2) { ctx.addToast('Pick at least two members', 'error'); return; }
+    const data = { name: name.trim(), memberIds, isGroup: true, updatedAt: new Date().toISOString() };
+    ctx.setChars(prev => {
+      const next = editId
+        ? prev.map(c => c.id === editId ? { ...c, ...data } : c)
+        : [...prev, { id: genId(), ...data, avatar: '', tags: [], createdAt: new Date().toISOString(), favorite: false }];
+      S.saveChars(next);
+      return next;
+    });
+    if (editId && ctx.currentChar?.id === editId) ctx.setCurrentChar(prev => ({ ...prev, ...data }));
+    ctx.addToast(editId ? 'Group updated' : 'Group created', 'success');
+    onClose();
+  };
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal">
+        <div className="modal-header">
+          <span className="modal-title">{editId ? 'EDIT GROUP' : 'NEW GROUP CHAT'}</span>
+          <button className="modal-close" onClick={onClose}>×</button>
+        </div>
+        <div className="modal-body">
+          <div className="form-group">
+            <label className="form-label">GROUP NAME *</label>
+            <input className="form-input" value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Tavern Crew" />
+          </div>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="form-label">MEMBERS * (2+) — {memberIds.length} selected</label>
+            {candidates.length === 0 ? (
+              <div className="form-hint">No characters yet — create some first.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 300, overflowY: 'auto' }}>
+                {candidates.map(c => (
+                  <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', padding: '6px 8px', background: memberIds.includes(c.id) ? 'var(--accent3)' : 'var(--surface2)', border: `1px solid ${memberIds.includes(c.id) ? 'var(--accent3)' : 'var(--border2)'}` }}>
+                    <input type="checkbox" checked={memberIds.includes(c.id)} onChange={() => toggle(c.id)} style={{ width: 13, height: 13, accentColor: 'var(--accent)', margin: 0, flexShrink: 0 }} />
+                    <span style={{ fontSize: 12, color: memberIds.includes(c.id) ? 'var(--accent)' : 'var(--text)' }}>{c.name}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+            <div className="form-hint" style={{ marginTop: 8 }}>Members take turns replying — mention a name to make that character answer, or use the SPEAK buttons in chat.</div>
+          </div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn-secondary" onClick={onClose}>CANCEL</button>
+          <button className="btn-primary" onClick={save}>SAVE GROUP</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ImportModal({ onClose }) {
   const ctx = useContext(AppCtx);
   const [drag, setDrag] = useState(false);
@@ -1044,7 +1108,7 @@ function ImportModal({ onClose }) {
     };
     if (!charData.firstMessage) return null;
 
-    const existing = charsRef.current.find(c => (c.name || '').trim().toLowerCase() === charData.name.trim().toLowerCase());
+    const existing = charsRef.current.find(c => !c.isGroup && (c.name || '').trim().toLowerCase() === charData.name.trim().toLowerCase());
     if (existing) {
       const choice = await askDuplicate(charData.name);
       if (choice === 'skip') return { skipped: true };
@@ -2026,4 +2090,4 @@ function LorebookModal({ onClose }) {
   );
 }
 
-Object.assign(window, { ToastStack, CommandPalette, SettingsModal, CharEditorModal, ImportModal, HistoryModal, PersonasModal, SyncModal, LorebookModal });
+Object.assign(window, { ToastStack, CommandPalette, SettingsModal, CharEditorModal, GroupEditorModal, ImportModal, HistoryModal, PersonasModal, SyncModal, LorebookModal });

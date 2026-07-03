@@ -2,7 +2,7 @@
 const { useState, useEffect, useCallback } = React;
 const { AppCtx, S, genId } = window;
 const { Sidebar, WelcomeScreen, ChatView } = window;
-const { ToastStack, CommandPalette, SettingsModal, CharEditorModal, ImportModal, HistoryModal, PersonasModal, SyncModal, LorebookModal } = window;
+const { ToastStack, CommandPalette, SettingsModal, CharEditorModal, GroupEditorModal, ImportModal, HistoryModal, PersonasModal, SyncModal, LorebookModal } = window;
 
 function App() {
   const [chars, setChars]               = useState(() => S.chars());
@@ -242,6 +242,7 @@ function App() {
 
       {modal?.type === 'settings'    && <SettingsModal onClose={closeModal} />}
       {modal?.type === 'char-editor' && <CharEditorModal editId={modal.data} onClose={closeModal} />}
+      {modal?.type === 'group-editor' && <GroupEditorModal editId={modal.data} onClose={closeModal} />}
       {modal?.type === 'import'      && <ImportModal onClose={closeModal} />}
       {modal?.type === 'personas'    && <PersonasModal onClose={closeModal} />}
       {modal?.type === 'sync'        && <SyncModal onClose={closeModal} />}

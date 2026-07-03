@@ -346,6 +346,72 @@ function ChatView() {
   // Fresh AbortController per generation; pass as callAI opts
   const startAbortable = () => { abortRef.current = new AbortController(); return { signal: abortRef.current.signal }; };
   const stopGeneration = () => abortRef.current?.abort();
+
+  // ── Group chat support — char.isGroup with memberIds ──────────
+  const members = char?.isGroup
+    ? (char.memberIds || []).map(id => ctx.chars.find(c => c.id === id)).filter(Boolean)
+    : null;
+  const memberName = id => members?.find(m => m.id === id)?.name || char?.name || '?';
+
+  // Mentioned member answers; otherwise round-robin after the last speaker
+  const pickSpeaker = (userText, baseMsgs) => {
+    const t = (userText || '').toLowerCase();
+    const mentioned = members.filter(m => t.includes(m.name.toLowerCase()));
+    if (mentioned.length) return mentioned[0];
+    const lastId = [...baseMsgs].reverse().find(m => m.role === 'assistant' && m.charId)?.charId;
+    const idx = members.findIndex(m => m.id === lastId);
+    return members[(idx + 1) % members.length];
+  };
+
+  // Group history: other characters' lines carry a name prefix so the model
+  // can tell the speakers apart
+  const groupApiMsgs = baseMsgs => baseMsgs
+    .filter(m => m.role === 'user' || m.role === 'assistant')
+    .map(m => {
+      let t = typeof m.content === 'string' ? m.content : m.content?.find?.(c => c.type === 'text')?.text || '';
+      if (m.narrator) t = `[NARRATOR: ${t}]`;
+      if (m.role === 'assistant') return { role: 'assistant', content: `${memberName(m.charId)}: ${t}` };
+      return { role: 'user', content: t };
+    })
+    .filter(m => m.content);
+
+  const groupSystem = (speaker, baseMsgs) =>
+    buildSystemPrompt(speaker, aiSettings(), baseMsgs) +
+    `\n\n[GROUP SCENE]\nThis is a group roleplay with several characters. Also present:\n` +
+    members.filter(m => m.id !== speaker.id)
+      .map(m => `- ${m.name}: ${(m.personality || m.description || '').replace(/\s+/g, ' ').slice(0, 140)}`)
+      .join('\n') +
+    `\nIn the conversation, other characters' lines are prefixed with their name. Write the next reply ONLY as ${speaker.name}. Never speak, act, or decide for the other characters or for the user. Do NOT prefix your reply with your name.`;
+
+  // Generate a reply as one member; intoMsgId regenerates an existing message
+  const generateAs = async (speaker, baseMsgs, intoMsgId = null) => {
+    const streamMsgId = intoMsgId || genId();
+    if (!intoMsgId) {
+      setMessages([...baseMsgs, { id: streamMsgId, role: 'assistant', charId: speaker.id, content: '', timestamp: new Date().toISOString() }]);
+    }
+    setStreamingId(streamMsgId);
+    setGenerating(true);
+    try {
+      await callAI(groupApiMsgs(baseMsgs), speaker, aiSettings(), (partial, done) => {
+        setMessages(prev => prev.map(m => m.id === streamMsgId ? { ...m, content: partial, charId: speaker.id } : m));
+        if (done) {
+          setStreamingId(null);
+          setMessages(prev => {
+            const f = partial
+              ? prev.map(m => m.id === streamMsgId ? { ...m, content: partial, charId: speaker.id } : m)
+              : (intoMsgId ? prev : prev.filter(m => m.id !== streamMsgId)); // regen keeps the bubble for restore
+            saveAndSync(f); return f;
+          });
+        }
+      }, { ...startAbortable(), system: groupSystem(speaker, baseMsgs) });
+    } catch (e) {
+      ctx.addToast(`Error: ${e.message}`, 'error');
+      setStreamingId(null);
+      if (!intoMsgId) setMessages(prev => prev.filter(m => m.id !== streamMsgId));
+    } finally {
+      setGenerating(false);
+    }
+  };
   const [inputVal, setInputVal] = useState('');
   const [pendingImage, setPendingImage] = useState(null);
   const [showVarPanel, setShowVarPanel] = useState(false);
@@ -451,6 +517,14 @@ function ChatView() {
     setInputVal('');
     if (inputRef.current) inputRef.current.style.height = 'auto';
 
+    if (char.isGroup) {
+      if (!members?.length) { ctx.addToast('Group has no members — edit the group first', 'warning'); return; }
+      setPendingImage(null); // group scenes are text-only for now
+      const userMsg = { id: genId(), role: 'user', content: text, timestamp: new Date().toISOString() };
+      await generateAs(pickSpeaker(text, messages), [...messages, userMsg]);
+      return;
+    }
+
     let userContent = text;
     if (pendingImage) {
       userContent = [
@@ -497,6 +571,25 @@ function ChatView() {
     for (let i = messages.length - 1; i >= 0; i--) { if (messages[i].role === 'assistant') { lastIdx = i; break; } }
     if (lastIdx === -1) return;
 
+    if (char.isGroup) {
+      const gLast = messages[lastIdx];
+      const speaker = members.find(m => m.id === gLast.charId) || pickSpeaker('', messages.slice(0, lastIdx));
+      if (!speaker) return;
+      let base = messages.slice(0, lastIdx);
+      if (instruction && base.length && base[base.length - 1].role === 'user') {
+        base = [...base.slice(0, -1), { ...base[base.length - 1], content: `${base[base.length - 1].content}\n\n[Direction: ${instruction}]` }];
+      }
+      setMessages(prev => prev.map(m => m.id === gLast.id ? { ...m, content: '' } : m));
+      await generateAs(speaker, base, gLast.id);
+      // Stopped before any text arrived → put the original reply back
+      setMessages(prev => {
+        if (!prev.some(m => m.id === gLast.id && !(m.content || '').trim())) return prev;
+        const f = prev.map(m => m.id === gLast.id ? { ...m, content: gLast.content } : m);
+        saveAndSync(f); return f;
+      });
+      return;
+    }
+
     const last = messages[lastIdx];
     const apiMsgs = messages.slice(0, lastIdx).map(m => ({
       role: m.role,
@@ -538,6 +631,12 @@ function ChatView() {
     if (idx === -1) return;
     const edited = { ...messages[idx], content: newText, edited: true };
     const trimmed = [...messages.slice(0, idx), edited];
+    if (char.isGroup) {
+      if (!members?.length) return;
+      setMessages(trimmed);
+      await generateAs(pickSpeaker(newText, trimmed), trimmed);
+      return;
+    }
     const streamMsgId = genId();
     const streamMsg = { id: streamMsgId, role: 'assistant', content: '', timestamp: new Date().toISOString() };
     setMessages([...trimmed, streamMsg]);
@@ -582,6 +681,11 @@ function ChatView() {
 
     const narratorMsg = { id: genId(), role: 'user', content: text, timestamp: new Date().toISOString(), narrator: true };
     const withNarr = [...messages, narratorMsg];
+    if (char.isGroup) {
+      if (!members?.length) { ctx.addToast('Group has no members — edit the group first', 'warning'); return; }
+      await generateAs(pickSpeaker(text, withNarr), withNarr);
+      return;
+    }
     const streamMsgId = genId();
     const streamMsg = { id: streamMsgId, role: 'assistant', content: '', timestamp: new Date().toISOString() };
     setMessages([...withNarr, streamMsg]);
@@ -682,7 +786,7 @@ function ChatView() {
 
   const exportChat = () => {
     const text = messages.map(m => {
-      const a = m.role === 'user' ? (settings.userPersona || 'You') : char.name;
+      const a = m.role === 'user' ? (settings.userPersona || 'You') : (m.charId ? memberName(m.charId) : char.name);
       const c = typeof m.content === 'string' ? m.content : m.content?.find?.(x => x.type === 'text')?.text || '';
       return `[${new Date(m.timestamp).toLocaleString()}] ${a}:\n${c}`;
     }).join('\n\n---\n\n');
@@ -838,8 +942,15 @@ function ChatView() {
           {iconBtn('Favorite', char.favorite, false, toggleFav,
             <svg width="15" height="15" viewBox="0 0 24 24" fill={char.favorite ? 'currentColor' : 'none'}><path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>
           )}
-          {iconBtn('Edit Character', false, false, () => ctx.openModal('char-editor', char.id),
+          {iconBtn(char.isGroup ? 'Edit Group' : 'Edit Character', false, false, () => ctx.openModal(char.isGroup ? 'group-editor' : 'char-editor', char.id),
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M11 4H4C2.9 4 2 4.9 2 6V20C2 21.1 2.9 22 4 22H18C19.1 22 20 21.1 20 20V13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M18.5 2.5C19.3 1.7 20.7 1.7 21.5 2.5C22.3 3.3 22.3 4.7 21.5 5.5L12 15L8 16L9 12L18.5 2.5Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          )}
+          {!char.isGroup && iconBtn('Duplicate Character', false, false, () => {
+            const copy = { ...char, id: genId(), name: `${char.name} (copy)`, favorite: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+            ctx.setChars(prev => { const n = [...prev, copy]; S.saveChars(n); return n; });
+            ctx.addToast(`Duplicated as "${copy.name}"`, 'success');
+          },
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="9" y="9" width="12" height="12" stroke="currentColor" strokeWidth="2"/><path d="M5 15H4C2.9 15 2 14.1 2 13V4C2 2.9 2.9 2 4 2H13C14.1 2 15 2.9 15 4V5" stroke="currentColor" strokeWidth="2"/></svg>
           )}
           <span className="hdr-sep" />
           {iconBtn('Variations Panel', showVarPanel, false, () => setShowVarPanel(v => !v),
@@ -858,13 +969,13 @@ function ChatView() {
           {iconBtn('Export Chat', false, false, exportChat,
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M21 15V19C21 20.1 20.1 21 19 21H5C3.9 21 3 20.1 3 19V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M7 10L12 15L17 10M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
           )}
-          {iconBtn('Download PNG Card (SillyTavern-compatible)', false, false,
+          {!char.isGroup && iconBtn('Download PNG Card (SillyTavern-compatible)', false, false,
             () => downloadCharPng(char)
               .then(() => ctx.addToast('PNG card downloaded', 'success'))
               .catch(e => ctx.addToast(`Export failed: ${e.message}`, 'error')),
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" stroke="currentColor" strokeWidth="2"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/><path d="M21 15L16 10L5 21" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>
           )}
-          {iconBtn('Download JSON Card', false, false,
+          {!char.isGroup && iconBtn('Download JSON Card', false, false,
             () => { downloadCharJson(char); ctx.addToast('JSON card downloaded', 'success'); },
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M8 3H7C5.9 3 5 3.9 5 5V9C5 10.1 4.1 11 3 11V13C4.1 13 5 13.9 5 15V19C5 20.1 5.9 21 7 21H8M16 3H17C18.1 3 19 3.9 19 5V9C19 10.1 19.9 11 21 11V13C19.9 13 19 13.9 19 15V19C19 20.1 18.1 21 17 21H16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
           )}
@@ -916,7 +1027,9 @@ function ChatView() {
               (new Date(msg.timestamp) - new Date(prev.timestamp)) < 5 * 60 * 1000;
             return (
             <Message
-              key={msg.id} msg={msg} char={char} settings={settings}
+              key={msg.id} msg={msg}
+              char={msg.role === 'assistant' && msg.charId ? (members?.find(m => m.id === msg.charId) || char) : char}
+              settings={settings}
               isStreaming={msg.id === streamingId} grouped={grouped}
               onDelete={deleteMessage} onCopy={() => ctx.addToast('Copied', 'success')}
               onRegen={() => regenerate(null)}
@@ -933,6 +1046,19 @@ function ChatView() {
 
       {/* Input */}
       <div className="input-area">
+        {char.isGroup && members?.length > 0 && (
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '7px 16px 0', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 9, color: 'var(--text3)', letterSpacing: '0.12em', flexShrink: 0 }}>SPEAK ▸</span>
+            {members.map(m => (
+              <button
+                key={m.id} className="btn-secondary btn-sm" disabled={generating}
+                style={{ opacity: generating ? 0.5 : 1 }}
+                title={`${m.name} replies now (no user message)`}
+                onClick={() => generateAs(m, messages)}
+              >{m.name.toUpperCase()}</button>
+            ))}
+          </div>
+        )}
         <div className="input-statusbar">
           <div className="input-meta">
             <span className="token-count">~{totalTokens.toLocaleString()} tkns</span>
