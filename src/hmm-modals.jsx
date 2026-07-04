@@ -776,7 +776,7 @@ function CharEditorModal({ editId, onClose }) {
         avatarUrl = await compressImage(rawUrl, 512, 0.85);
       } else {
         const raw = JSON.parse(await file.text());
-        if (Array.isArray(raw.characters)) { ctx.addToast('That is a full HMM backup — use Import Character from the command palette instead', 'warning'); return; }
+        if (Array.isArray(raw.characters)) { ctx.addToast('That is a full Inkling backup — use Import Character from the command palette instead', 'warning'); return; }
         d = raw.data || raw;
       }
       if (!(d.first_mes || d.firstMessage || d.name)) { ctx.addToast('Unrecognized character format', 'error'); return; }
@@ -1150,7 +1150,7 @@ function ImportModal({ onClose }) {
     }
     if (isJson) {
       const raw = JSON.parse(await file.text());
-      // HMM multi-char backup — dedupe by id (same id = same character)
+      // Inkling multi-char backup — dedupe by id (same id = same character)
       if (Array.isArray(raw.characters)) {
         let added = 0;
         const merged = [...charsRef.current];
@@ -1230,7 +1230,7 @@ function ImportModal({ onClose }) {
             </div>
             <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 24, lineHeight: 1.8 }}>
               <span style={{ color: 'var(--accent2)' }}>PNG</span> — TavernAI / SillyTavern character cards (with embedded chara data)<br/>
-              <span style={{ color: 'var(--accent2)' }}>JSON</span> — SillyTavern JSON export or HMM backup
+              <span style={{ color: 'var(--accent2)' }}>JSON</span> — SillyTavern JSON export or Inkling backup
             </div>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'center', flexWrap: 'wrap' }}>
               <label className="btn-primary" style={{ cursor: processing ? 'not-allowed' : 'pointer', display: 'inline-block', opacity: processing ? 0.5 : 1 }}>
@@ -1633,7 +1633,7 @@ function SyncModal({ onClose }) {
     setBusy(true); setStatus(null);
     try {
       const list = await GistSync.listGists(token.trim());
-      if (list.length === 0) { setS('info', 'No HMM gists found on this account yet. Push first.'); }
+      if (list.length === 0) { setS('info', 'No Inkling gists found on this account yet. Push first.'); }
       else { setExistingGists(list); setShowGists(true); }
     } catch(e) { setS('error', e.message); }
     setBusy(false);
@@ -1717,7 +1717,7 @@ function SyncModal({ onClose }) {
           {/* Existing gists picker */}
           {showGists && existingGists.length > 0 && (
             <div style={{ marginTop: 16 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.14em', color: 'var(--text3)', marginBottom: 8 }}>FOUND {existingGists.length} HMM GIST{existingGists.length > 1 ? 'S' : ''} — CLICK TO USE</div>
+              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.14em', color: 'var(--text3)', marginBottom: 8 }}>FOUND {existingGists.length} INKLING GIST{existingGists.length > 1 ? 'S' : ''} — CLICK TO USE</div>
               {existingGists.map(g => (
                 <div
                   key={g.id}
@@ -1727,7 +1727,7 @@ function SyncModal({ onClose }) {
                   onMouseLeave={e => e.currentTarget.style.borderColor = 'var(--border2)'}
                 >
                   <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 11, color: 'var(--text)', marginBottom: 2 }}>{g.description || 'HMM Roleplay App — auto backup'}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text)', marginBottom: 2 }}>{g.description || 'Inkling Roleplay App — auto backup'}</div>
                     <div style={{ fontSize: 10, color: 'var(--text3)' }}>ID: {g.id} · Updated: {new Date(g.updated_at).toLocaleString()}</div>
                   </div>
                   <span style={{ color: 'var(--accent)', fontSize: 11 }}>USE →</span>

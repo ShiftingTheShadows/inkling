@@ -172,7 +172,7 @@ function App() {
                 <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
                 <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
               </svg>
-              <span className="logo-text">HMM</span>
+              <span className="logo-text">Inkling</span>
             </div>
           </div>
 
@@ -255,6 +255,6 @@ function App() {
 }
 
 // Wait for IndexedDB hydration before first render (fixes quota-era data loading)
-(window.HMMStorageReady || Promise.resolve()).then(() => {
+(window.InklingStorageReady || Promise.resolve()).then(() => {
   ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 });

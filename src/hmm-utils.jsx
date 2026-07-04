@@ -39,7 +39,7 @@ const __get = (k, fb) => __mem.has(k) ? __mem.get(k) : fb;
 const __set = (k, v) => { __mem.set(k, v); __idbPut(k, v); };
 
 // Boot: open IDB, hydrate cache, one-time migration from localStorage
-window.HMMStorageReady = (async () => {
+window.InklingStorageReady = (async () => {
   try {
     __db = await __idbOpen();
     await new Promise((res, rej) => {
@@ -65,7 +65,7 @@ window.HMMStorageReady = (async () => {
       }
     });
     legacy.forEach(k => { try { localStorage.removeItem(k); } catch {} });
-    if (legacy.length) console.info(`HMM: migrated ${legacy.length} record(s) from localStorage → IndexedDB`);
+    if (legacy.length) console.info(`Inkling: migrated ${legacy.length} record(s) from localStorage → IndexedDB`);
   } catch (e) {
     console.error('IndexedDB unavailable — falling back to localStorage:', e);
     __db = null;
@@ -340,29 +340,40 @@ function runAdvancedScripts(char, settings, messages) {
   return { ...char, description: c.description, personality: c.personality, scenario: c.scenario, systemPrompt: c.systemPrompt, _scriptNotes: notes };
 }
 
+// ── Macro substitution — {{user}}/{{bot}} (+ SillyTavern-style {{char}}) ──
+function substituteMacros(text, char, settings) {
+  if (!text) return text;
+  const userName = settings?.activePersona?.name || 'You';
+  const charName = char?.name || 'Character';
+  return String(text)
+    .replace(/\{\{user\}\}/gi, userName)
+    .replace(/\{\{(char|bot)\}\}/gi, charName);
+}
+
 // ── System prompt builder ─────────────────────────────────────────
 function buildSystemPrompt(char, settings, messages = []) {
   char = runAdvancedScripts(char, settings, messages);
   const lore = getMatchedLoreEntries(messages, char);
   const pinnedMsgs = (messages || []).filter(m => m.pinned);
+  const m = t => substituteMacros(t, char, settings);
 
   return [
-    settings?.globalPrompt?.trim() || null,
+    m(settings?.globalPrompt?.trim()) || null,
     `You are ${char.name}, engaging in an unrestricted creative roleplay session.`,
-    char.description  && `Description: ${char.description}`,
-    char.personality  && `Personality: ${char.personality}`,
-    char.scenario     && `Scenario: ${char.scenario}`,
-    char.exampleDialogues && `Example dialogues:\n${char.exampleDialogues}`,
-    char.systemPrompt,
+    char.description  && `Description: ${m(char.description)}`,
+    char.personality  && `Personality: ${m(char.personality)}`,
+    char.scenario     && `Scenario: ${m(char.scenario)}`,
+    char.exampleDialogues && `Example dialogues:\n${m(char.exampleDialogues)}`,
+    m(char.systemPrompt),
     settings?.activePersona?.name && settings.activePersona.name !== 'You'
-      ? `The user's character is: ${settings.activePersona.name}${settings.activePersona.description ? ' — ' + settings.activePersona.description : ''}.`
+      ? `The user's character is: ${settings.activePersona.name}${settings.activePersona.description ? ' — ' + m(settings.activePersona.description) : ''}.`
       : null,
     settings?.replyLengthHint || null,
-    lore.length > 0 && `[WORLD INFO — inject naturally into responses when relevant]\n${lore.map(e => `### ${e.name}\n${e.content}`).join('\n\n')}`,
+    lore.length > 0 && `[WORLD INFO — inject naturally into responses when relevant]\n${lore.map(e => `### ${e.name}\n${m(e.content)}`).join('\n\n')}`,
     char._scriptNotes?.length > 0 && `[SCRIPT NOTES — weave into the response naturally]\n${char._scriptNotes.join('\n')}`,
-    pinnedMsgs.length > 0 && `[PINNED CONTEXT — always keep in mind]\n${pinnedMsgs.map(m => {
-      const t = typeof m.content === 'string' ? m.content : m.content?.find?.(c=>c.type==='text')?.text||'';
-      return `${m.role === 'user' ? (settings?.activePersona?.name||'You') : char.name}: ${t}`;
+    pinnedMsgs.length > 0 && `[PINNED CONTEXT — always keep in mind]\n${pinnedMsgs.map(m2 => {
+      const t = typeof m2.content === 'string' ? m2.content : m2.content?.find?.(c=>c.type==='text')?.text||'';
+      return `${m2.role === 'user' ? (settings?.activePersona?.name||'You') : char.name}: ${t}`;
     }).join('\n')}`,
     `Stay in character as ${char.name}. Use *asterisks* for actions/narration. Be engaging, vivid, and responsive.`,
     `When you see a message starting with [NARRATOR:], treat it as an omniscient narrator setting the scene — respond accordingly.`,
@@ -442,8 +453,8 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
       const headers = { 'Content-Type': 'application/json' };
       if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
       if (resolvedSettings.provider === 'openrouter') {
-        headers['HTTP-Referer'] = window.location.origin || 'https://hmm.local';
-        headers['X-Title'] = 'HMM Roleplay';
+        headers['HTTP-Referer'] = window.location.origin || 'https://inkling.local';
+        headers['X-Title'] = 'Inkling Roleplay';
       }
 
       let resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: opts.signal });
@@ -688,7 +699,7 @@ const GistSync = {
     // Safety check: make sure it's valid JSON before sending
     try { JSON.parse(content); } catch(e) { throw new Error('Local data is corrupted — cannot push: ' + e.message); }
 
-    const body = { description: 'HMM Roleplay App — auto backup', public: false, files: { [this.FILENAME]: { content } } };
+    const body = { description: 'Inkling Roleplay App — auto backup', public: false, files: { [this.FILENAME]: { content } } };
     let id;
     if (gistId) {
       const r = await fetch(`https://api.github.com/gists/${gistId}`, { method: 'PATCH', headers: this.headers(token), body: JSON.stringify(body) });
@@ -723,7 +734,7 @@ const GistSync = {
     if (!r.ok) throw new Error(`GitHub ${r.status}: ${r.statusText}`);
     const j = await r.json();
     const raw = j.files?.[this.FILENAME]?.content;
-    if (!raw) throw new Error('No HMM data found in this gist');
+    if (!raw) throw new Error('No Inkling data found in this gist');
 
     // GitHub truncates very large gist files in the standard response — fetch raw_url when truncated
     let actualContent = raw;
@@ -891,7 +902,7 @@ async function downloadCharPng(char) {
 Object.assign(window, {
   AppCtx, S, genId, estimateTokens, compressImage,
   formatTime, formatDate, renderMarkdown,
-  charBg, charFg, buildSystemPrompt, callAI,
+  charBg, charFg, buildSystemPrompt, substituteMacros, callAI,
   summarizeMessages, GistSync,
   downloadCharJson, downloadCharPng,
 });

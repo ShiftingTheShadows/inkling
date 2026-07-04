@@ -233,7 +233,7 @@ function WelcomeScreen({ chars, onNewChar, onImport, onSelectChar }) {
             <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/>
           </svg>
           <div>
-            <h2 className="welcome-title" style={{ marginBottom: 2, fontSize: 22 }}>HMM<span style={{ color: 'var(--accent)' }}>.</span></h2>
+            <h2 className="welcome-title" style={{ marginBottom: 2, fontSize: 22 }}>Inkling<span style={{ color: 'var(--accent)' }}>.</span></h2>
             <p className="welcome-sub" style={{ marginBottom: 0, lineHeight: 1.6 }}>Unrestricted AI roleplay. Your characters, your rules.</p>
           </div>
         </div>
@@ -448,7 +448,9 @@ function ChatView() {
 
   // Build the opening message, wiring alternate greetings into the branch system for swiping
   const buildGreeting = () => {
-    const greetings = [char.firstMessage, ...(char.alternateGreetings || [])].filter(g => g && g.trim());
+    const greetings = [char.firstMessage, ...(char.alternateGreetings || [])]
+      .filter(g => g && g.trim())
+      .map(g => substituteMacros(g, char, settings));
     if (!greetings.length) return null;
     const msg = { id: genId(), role: 'assistant', content: greetings[0], timestamp: new Date().toISOString() };
     if (greetings.length > 1) { msg.branches = greetings; msg.currentBranch = 0; }

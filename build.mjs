@@ -11,7 +11,7 @@ const files = ['hmm-utils.jsx', 'hmm-sidebar.jsx', 'hmm-chat.jsx', 'hmm-modals.j
 mkdirSync('dist', { recursive: true });
 
 for (const f of files) {
-  const { code } = transformSync(readFileSync(f, 'utf8'), {
+  const { code } = transformSync(readFileSync(`src/${f}`, 'utf8'), {
     loader: 'jsx',
     target: 'es2020',
     minify: true,
@@ -27,7 +27,7 @@ for (const f of files) {
 let html = readFileSync('index.html', 'utf8');
 const before = html.length;
 html = html.replace(/<script src="https:\/\/unpkg\.com\/@babel\/standalone[^>]*><\/script>\s*/, '');
-html = html.replace(/<script type="text\/babel" src="(hmm-[a-z]+)\.jsx"><\/script>/g, '<script src="$1.js"></script>');
+html = html.replace(/<script type="text\/babel" src="src\/(hmm-[a-z]+)\.jsx"><\/script>/g, '<script src="$1.js"></script>');
 if (html.includes('text/babel') || html.includes('@babel/standalone')) {
   throw new Error('index.html rewrite incomplete — babel references remain');
 }
