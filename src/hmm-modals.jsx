@@ -2,6 +2,19 @@
 const { useState, useContext, useEffect, useRef } = React;
 const { AppCtx, S, genId, charBg, charFg, GistSync, callAI, compressImage } = window;
 
+// Shared stroke-icon set for the command palette — same visual language as the
+// topbar/sidebar icon buttons, instead of mismatched ASCII/unicode/emoji glyphs.
+const CMD_ICON = {
+  character: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 5V19M5 12H19" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/></svg>,
+  group: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/><path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/><path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></svg>,
+  import: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M21 15V19C21 20.1 20.1 21 19 21H5C3.9 21 3 20.1 3 19V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M17 8L12 3L7 8M12 3V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+  export: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M21 15V19C21 20.1 20.1 21 19 21H5C3.9 21 3 20.1 3 19V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M7 10L12 15L17 10M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+  sync: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z" stroke="currentColor" strokeWidth="2"/><path d="M12 8v4l3 3" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M16.24 7.76A6 6 0 1 0 7.76 16.24" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M22 12h-4M18 8l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+  scripts: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M4 4V20C4 20.5 4.5 21 5 21H19C19.5 21 20 20.5 20 20V8L14 2H5C4.5 2 4 2.5 4 3V4Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/><path d="M14 2V8H20" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/><path d="M8 13H16M8 17H13" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></svg>,
+  personas: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="currentColor" strokeWidth="2"/><path d="M4 21C4 17 7.6 15 12 15C16.4 15 20 17 20 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>,
+  settings: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/><path d="M12 1V3M12 21V23M4.22 4.22L5.64 5.64M18.36 18.36L19.78 19.78M1 12H3M21 12H23M4.22 19.78L5.64 18.36M18.36 5.64L19.78 4.22" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>,
+};
+
 // Curated OpenRouter picks (slugs verified against openrouter.ai/api/v1/models, 2026-07)
 const OPENROUTER_MODELS = [
   ['anthropic/claude-sonnet-5',           'Claude Sonnet 5 (recommended)'],
@@ -159,14 +172,14 @@ function CommandPalette() {
   }, [ctx.cmdOpen]);
 
   const actions = [
-    { label: 'New Character',    sub: 'Create a character',          icon: '+',  action: () => { ctx.openModal('char-editor', null); ctx.setCmdOpen(false); } },
-    { label: 'New Group Chat',   sub: 'Multiple characters, one scene', icon: '◈', action: () => { ctx.openModal('group-editor', null); ctx.setCmdOpen(false); } },
-    { label: 'Import Character', sub: 'Import from JSON or PNG card', icon: '↑', action: () => { ctx.openModal('import');           ctx.setCmdOpen(false); } },
-    { label: 'Sync to GitHub',   sub: 'Push/pull all data via Gist',  icon: '⟳', action: () => { ctx.openModal('sync');             ctx.setCmdOpen(false); } },
-    { label: 'Scripts',          sub: 'Attachable keyword-triggered world info', icon: '📖', action: () => { ctx.openModal('lorebook');         ctx.setCmdOpen(false); } },
-    { label: 'Manage Personas',  sub: 'Add, edit, switch personas',   icon: '◈', action: () => { ctx.openModal('personas');         ctx.setCmdOpen(false); } },
-    { label: 'Settings',         sub: 'API key, model, jailbreak',    icon: '⚙', action: () => { ctx.openModal('settings');          ctx.setCmdOpen(false); } },
-    { label: 'Export All Data',  sub: 'Download JSON backup',         icon: '↓', action: () => { ctx.exportAll();                   ctx.setCmdOpen(false); } },
+    { label: 'New Character',    sub: 'Create a character',          icon: CMD_ICON.character, action: () => { ctx.openModal('char-editor', null); ctx.setCmdOpen(false); } },
+    { label: 'New Group Chat',   sub: 'Multiple characters, one scene', icon: CMD_ICON.group, action: () => { ctx.openModal('group-editor', null); ctx.setCmdOpen(false); } },
+    { label: 'Import Character', sub: 'Import from JSON or PNG card', icon: CMD_ICON.import, action: () => { ctx.openModal('import');           ctx.setCmdOpen(false); } },
+    { label: 'Sync to GitHub',   sub: 'Push/pull all data via Gist',  icon: CMD_ICON.sync, action: () => { ctx.openModal('sync');             ctx.setCmdOpen(false); } },
+    { label: 'Scripts',          sub: 'Attachable keyword-triggered world info', icon: CMD_ICON.scripts, action: () => { ctx.openModal('lorebook');         ctx.setCmdOpen(false); } },
+    { label: 'Manage Personas',  sub: 'Add, edit, switch personas',   icon: CMD_ICON.personas, action: () => { ctx.openModal('personas');         ctx.setCmdOpen(false); } },
+    { label: 'Settings',         sub: 'API key, model, jailbreak',    icon: CMD_ICON.settings, action: () => { ctx.openModal('settings');          ctx.setCmdOpen(false); } },
+    { label: 'Export Full Backup', sub: 'Characters, chats, lorebook, personas', icon: CMD_ICON.export, action: () => { ctx.exportAll();                   ctx.setCmdOpen(false); } },
     ...ctx.chars.map(c => ({
       label: c.name,
       sub: (c.tags || []).join(', ') || (c.description || '').slice(0, 48),

@@ -178,7 +178,10 @@
 [data-theme="win98"] .form-input:focus, [data-theme="win98"] .form-textarea:focus, [data-theme="win98"] .form-select:focus { outline: 1px dotted #000000 !important; box-shadow: none !important; }
 [data-theme="win98"] .form-label { color: #000000 !important; font-weight: bold !important; }
 [data-theme="win98"] .form-hint { color: #404040 !important; }
-[data-theme="win98"] .form-range { accent-color: #000080 !important; }
+[data-theme="win98"] .form-range { accent-color: #000080 !important; appearance: auto !important; -webkit-appearance: auto !important; height: auto !important; background: none !important; }
+[data-theme="win98"] .form-select { appearance: auto !important; -webkit-appearance: auto !important; background-image: none !important; padding-right: 10px !important; }
+[data-theme="win98"] input[type="checkbox"] { appearance: auto !important; -webkit-appearance: auto !important; accent-color: #000080 !important; width: auto !important; height: auto !important; }
+[data-theme="win98"] input[type="checkbox"]:checked::after { content: none !important; }
 [data-theme="win98"] .settings-section-title { color: #000080 !important; border-bottom: 1px solid #808080 !important; }
 [data-theme="win98"] .btn-primary { background: #c0c0c0 !important; color: #000000 !important; border-top: 2px solid #ffffff !important; border-left: 2px solid #ffffff !important; border-bottom: 2px solid #808080 !important; border-right: 2px solid #808080 !important; }
 [data-theme="win98"] .btn-primary:hover { background: #d4d0c8 !important; }
@@ -423,6 +426,27 @@ button { font-family: var(--font); cursor: pointer; border: none; background: no
 input,textarea,select { font-family: var(--font); font-size: 12px; background: var(--surface3); border: 1px solid var(--border2); color: var(--text); outline: none; }
 input:focus,textarea:focus,select:focus { border-color: var(--accent3); box-shadow: 0 0 0 1px var(--accent3); }
 input::placeholder,textarea::placeholder { color: var(--text3); }
+
+/* Flat, no-radius select chevron matching the rest of the interface instead of
+   the OS-native dropdown arrow */
+select { appearance: none; -webkit-appearance: none; -moz-appearance: none; padding-right: 26px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23767676' fill='none' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 10px center; background-size: 10px 6px; }
+[data-theme="light"] select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%23555555' fill='none' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+
+/* Flat square checkbox instead of the OS-native rounded checkbox */
+input[type="checkbox"] { appearance: none; -webkit-appearance: none; -moz-appearance: none;
+  position: relative; background: var(--surface3); border: 1px solid var(--border2); cursor: pointer; }
+input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+input[type="checkbox"]:checked::after { content: ''; position: absolute; left: 28%; top: 8%; width: 25%; height: 55%;
+  border: solid var(--surface); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+
+/* Flat square range thumb instead of the OS-native rounded slider */
+input[type="range"] { appearance: none; -webkit-appearance: none; height: 2px; background: var(--border3); cursor: pointer; }
+input[type="range"]::-webkit-slider-thumb { appearance: none; -webkit-appearance: none; width: 12px; height: 12px; background: var(--accent); border: none; cursor: pointer; }
+input[type="range"]::-moz-range-thumb { width: 12px; height: 12px; background: var(--accent); border: none; border-radius: 0; cursor: pointer; }
+input[type="range"]::-moz-range-track { height: 2px; background: var(--border3); }
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border3); }
@@ -486,6 +510,13 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .chat-header-left { display: flex; align-items: center; gap: 10px; }
 .chat-header-right { display: flex; align-items: center; gap: 2px; }
 .hdr-sep { width: 1px; height: 18px; background: var(--border2); margin: 0 5px; flex-shrink: 0; }
+.hdr-menu { position: absolute; top: 100%; right: 0; margin-top: 6px; width: 220px; background: var(--surface); border: 1px solid var(--border3); box-shadow: 0 8px 32px rgba(0,0,0,0.6); z-index: 200; padding: 4px; }
+.hdr-menu-item { display: flex; align-items: center; gap: 10px; padding: 8px 10px; font-size: 12px; color: var(--text); cursor: pointer; }
+.hdr-menu-item:hover { background: var(--surface2); }
+.hdr-menu-icon { width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; color: var(--text2); flex-shrink: 0; }
+.hdr-menu-item.danger { color: var(--danger); }
+.hdr-menu-item.danger .hdr-menu-icon { color: var(--danger); }
+.hdr-menu-sep { height: 1px; background: var(--border2); margin: 4px 6px; }
 .chat-name { font-size: 13px; font-weight: 600; color: var(--text); }
 .chat-status { font-size: 10px; color: var(--accent); letter-spacing: 0.04em; }
 .context-bar { height: 2px; background: var(--border); flex-shrink: 0; }
@@ -621,7 +652,8 @@ body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after 
 .cmd-results { max-height: 340px; overflow-y: auto; }
 .cmd-result { display: flex; align-items: center; gap: 12px; padding: 10px 16px; cursor: pointer; transition: background 0.08s; }
 .cmd-result:hover,.cmd-result.sel { background: var(--surface2); }
-.cmd-icon { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; background: var(--surface3); border: 1px solid var(--border2); color: var(--text2); font-size: 11px; font-weight: 700; flex-shrink: 0; font-family: var(--font); }
+.cmd-result.sel .cmd-icon { border-color: var(--accent); color: var(--accent); }
+.cmd-icon { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; background: var(--surface3); border: 1px solid var(--border2); color: var(--text); font-size: 11px; font-weight: 700; flex-shrink: 0; font-family: var(--font); transition: border-color 0.08s, color 0.08s; }
 .cmd-label { font-size: 12px; color: var(--text); }
 .cmd-sub { font-size: 10px; color: var(--text3); }
 .cmd-footer { padding: 6px 16px; border-top: 1px solid var(--border); display: flex; gap: 16px; font-size: 10px; color: var(--text3); }
@@ -679,9 +711,12 @@ body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after 
   .input-statusbar { padding: 5px 10px; }
   .input-meta { gap: 6px; }
 
-  /* Message action buttons are always visible on touch (no hover) */
-  .msg-actions { opacity: 1 !important; }
-  .msg-action-btn { width: 30px; height: 28px; }
+  /* Message action buttons are always visible on touch (no hover) — kept
+     borderless/transparent by default so a wall of button chrome doesn't
+     compete with the message text; border/bg only shows on tap feedback */
+  .msg-actions { opacity: 1 !important; gap: 0; }
+  .msg-action-btn { width: 27px; height: 24px; background: transparent; border-color: transparent; }
+  .msg-action-btn:active { background: var(--surface3); border-color: var(--border2); }
   .msg { gap: 10px; }
 
   /* Embeds fit the narrow column */

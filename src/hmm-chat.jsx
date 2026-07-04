@@ -416,6 +416,7 @@ function ChatView() {
   const [pendingImage, setPendingImage] = useState(null);
   const [showVarPanel, setShowVarPanel] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
+  const [showHeaderMenu, setShowHeaderMenu] = useState(false);
   const [searchQ, setSearchQ] = useState('');
   const [regenModal, setRegenModal] = useState({ open: false });
   const [tempPreset, setTempPreset] = useState('balanced');
@@ -927,6 +928,13 @@ function ChatView() {
     <button key={title} className={`btn-icon${active ? ' active' : ''}${danger ? ' danger' : ''}`} onClick={onClick} title={title}>{icon}</button>
   );
 
+  const headerMenuItem = (label, icon, onClick, danger = false) => (
+    <div key={label} className={`hdr-menu-item${danger ? ' danger' : ''}`} onClick={() => { onClick(); setShowHeaderMenu(false); }}>
+      <span className="hdr-menu-icon">{icon}</span>
+      <span>{label}</span>
+    </div>
+  );
+
   return (
     <div className="chat-view">
       {/* Header */}
@@ -947,17 +955,7 @@ function ChatView() {
           {iconBtn(char.isGroup ? 'Edit Group' : 'Edit Character', false, false, () => ctx.openModal(char.isGroup ? 'group-editor' : 'char-editor', char.id),
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M11 4H4C2.9 4 2 4.9 2 6V20C2 21.1 2.9 22 4 22H18C19.1 22 20 21.1 20 20V13" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M18.5 2.5C19.3 1.7 20.7 1.7 21.5 2.5C22.3 3.3 22.3 4.7 21.5 5.5L12 15L8 16L9 12L18.5 2.5Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
           )}
-          {!char.isGroup && iconBtn('Duplicate Character', false, false, () => {
-            const copy = { ...char, id: genId(), name: `${char.name} (copy)`, favorite: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
-            ctx.setChars(prev => { const n = [...prev, copy]; S.saveChars(n); return n; });
-            ctx.addToast(`Duplicated as "${copy.name}"`, 'success');
-          },
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="9" y="9" width="12" height="12" stroke="currentColor" strokeWidth="2"/><path d="M5 15H4C2.9 15 2 14.1 2 13V4C2 2.9 2.9 2 4 2H13C14.1 2 15 2.9 15 4V5" stroke="currentColor" strokeWidth="2"/></svg>
-          )}
           <span className="hdr-sep" />
-          {iconBtn('Variations Panel', showVarPanel, false, () => setShowVarPanel(v => !v),
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="18" stroke="currentColor" strokeWidth="2"/><path d="M8 3V21M16 3V21" stroke="currentColor" strokeWidth="2"/></svg>
-          )}
           {iconBtn('Search Messages (Ctrl+F)', showSearch, false, () => setShowSearch(v => !v),
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/><path d="M21 21L16.65 16.65" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
           )}
@@ -968,29 +966,49 @@ function ChatView() {
           {iconBtn('New Chat', false, false, newChat,
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M12 5V19M5 12H19" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"/></svg>
           )}
-          {iconBtn('Export Chat', false, false, exportChat,
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M21 15V19C21 20.1 20.1 21 19 21H5C3.9 21 3 20.1 3 19V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M7 10L12 15L17 10M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          )}
-          {!char.isGroup && iconBtn('Download PNG Card (SillyTavern-compatible)', false, false,
-            () => downloadCharPng(char)
-              .then(() => ctx.addToast('PNG card downloaded', 'success'))
-              .catch(e => ctx.addToast(`Export failed: ${e.message}`, 'error')),
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" stroke="currentColor" strokeWidth="2"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/><path d="M21 15L16 10L5 21" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>
-          )}
-          {!char.isGroup && iconBtn('Download JSON Card', false, false,
-            () => { downloadCharJson(char); ctx.addToast('JSON card downloaded', 'success'); },
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M8 3H7C5.9 3 5 3.9 5 5V9C5 10.1 4.1 11 3 11V13C4.1 13 5 13.9 5 15V19C5 20.1 5.9 21 7 21H8M16 3H17C18.1 3 19 3.9 19 5V9C19 10.1 19.9 11 21 11V13C19.9 13 19 13.9 19 15V19C19 20.1 18.1 21 17 21H16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
-          )}
-          <span className="hdr-sep" />
-          {iconBtn('Delete Character', false, true, () => {
-            if (!window.confirm(`Delete "${char.name}"? Cannot be undone.`)) return;
-            ctx.setChars(prev => { const n = prev.filter(c => c.id !== char.id); S.saveChars(n); return n; });
-            S.deleteCharData(char.id);
-            ctx.setCurrentChar(null);
-            ctx.addToast('Character deleted', 'info');
-          },
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M3 6H21M8 6V4C8 2.9 8.9 2 10 2H14C15.1 2 16 2.9 16 4V6M19 6V20C19 21.1 18.1 22 17 22H7C5.9 22 5 21.1 5 20V6H19Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
-          )}
+          <div style={{ position: 'relative' }}>
+            {iconBtn('More actions', showHeaderMenu, false, () => setShowHeaderMenu(v => !v),
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="5" cy="12" r="1.8" fill="currentColor"/><circle cx="12" cy="12" r="1.8" fill="currentColor"/><circle cx="19" cy="12" r="1.8" fill="currentColor"/></svg>
+            )}
+            {showHeaderMenu && (
+              <>
+                <div style={{ position: 'fixed', inset: 0, zIndex: 190 }} onClick={() => setShowHeaderMenu(false)} />
+                <div className="hdr-menu" onClick={e => e.stopPropagation()}>
+                  {headerMenuItem('Variations Panel',
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="18" stroke="currentColor" strokeWidth="2"/><path d="M8 3V21M16 3V21" stroke="currentColor" strokeWidth="2"/></svg>,
+                    () => setShowVarPanel(v => !v))}
+                  {headerMenuItem('Export Chat',
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M21 15V19C21 20.1 20.1 21 19 21H5C3.9 21 3 20.1 3 19V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M7 10L12 15L17 10M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+                    exportChat)}
+                  {!char.isGroup && headerMenuItem('Duplicate Character',
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="9" y="9" width="12" height="12" stroke="currentColor" strokeWidth="2"/><path d="M5 15H4C2.9 15 2 14.1 2 13V4C2 2.9 2.9 2 4 2H13C14.1 2 15 2.9 15 4V5" stroke="currentColor" strokeWidth="2"/></svg>,
+                    () => {
+                      const copy = { ...char, id: genId(), name: `${char.name} (copy)`, favorite: false, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+                      ctx.setChars(prev => { const n = [...prev, copy]; S.saveChars(n); return n; });
+                      ctx.addToast(`Duplicated as "${copy.name}"`, 'success');
+                    })}
+                  {!char.isGroup && headerMenuItem('Download PNG Card',
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" stroke="currentColor" strokeWidth="2"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/><path d="M21 15L16 10L5 21" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>,
+                    () => downloadCharPng(char)
+                      .then(() => ctx.addToast('PNG card downloaded', 'success'))
+                      .catch(e => ctx.addToast(`Export failed: ${e.message}`, 'error')))}
+                  {!char.isGroup && headerMenuItem('Download JSON Card',
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M8 3H7C5.9 3 5 3.9 5 5V9C5 10.1 4.1 11 3 11V13C4.1 13 5 13.9 5 15V19C5 20.1 5.9 21 7 21H8M16 3H17C18.1 3 19 3.9 19 5V9C19 10.1 19.9 11 21 11V13C19.9 13 19 13.9 19 15V19C19 20.1 18.1 21 17 21H16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>,
+                    () => { downloadCharJson(char); ctx.addToast('JSON card downloaded', 'success'); })}
+                  <div className="hdr-menu-sep" />
+                  {headerMenuItem('Delete Character',
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M3 6H21M8 6V4C8 2.9 8.9 2 10 2H14C15.1 2 16 2.9 16 4V6M19 6V20C19 21.1 18.1 22 17 22H7C5.9 22 5 21.1 5 20V6H19Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>,
+                    () => {
+                      if (!window.confirm(`Delete "${char.name}"? Cannot be undone.`)) return;
+                      ctx.setChars(prev => { const n = prev.filter(c => c.id !== char.id); S.saveChars(n); return n; });
+                      S.deleteCharData(char.id);
+                      ctx.setCurrentChar(null);
+                      ctx.addToast('Character deleted', 'info');
+                    }, true)}
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1155,10 +1173,10 @@ function ChatView() {
           {/* Assist buttons */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flexShrink: 0, position: 'relative' }}>
             {[
-              ['write',       '✍',  'Write for me',  'Generate a message for you'],
-              ['enhance',     '✦',  'Enhance draft', 'Improve what you\'ve typed'],
-              ['continue',    '→',  'Continue',      'AI continues its last message'],
-              ['impersonate', '◈',  'Impersonate',   'AI writes as your persona'],
+              ['write',       <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 20H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M16.5 3.5L20.5 7.5L9 19L4 20L5 15L16.5 3.5Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>,  'Write for me',  'Generate a message for you'],
+              ['enhance',     <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 3L13.5 9.5L20 11L13.5 12.5L12 19L10.5 12.5L4 11L10.5 9.5L12 3Z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round"/></svg>, 'Enhance draft', 'Improve what you\'ve typed'],
+              ['continue',    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 12H19M13 6L19 12L13 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>,      'Continue',      'AI continues its last message'],
+              ['impersonate', <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="currentColor" strokeWidth="2"/><path d="M4 21C4 17 7.6 15 12 15C16.4 15 20 17 20 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>, 'Impersonate',   'AI writes as your persona'],
             ].map(([mode, icon, label, tip]) => (
               <button
                 key={mode}
@@ -1183,7 +1201,7 @@ function ChatView() {
                   ? <div className="typing" style={{ gap: 2 }}><div className="typing-dot"/><div className="typing-dot"/></div>
                   : <span>{icon}</span>
                 }
-                <span style={{ fontSize: 7, letterSpacing: '0.04em', lineHeight: 1, opacity: 0.7 }}>{label.split(' ')[0].toUpperCase()}</span>
+                <span style={{ fontSize: 7, letterSpacing: '0.03em', lineHeight: 1, opacity: 0.85 }}>{label.split(' ')[0].toUpperCase()}</span>
               </button>
             ))}
 
@@ -1195,7 +1213,7 @@ function ChatView() {
               >
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
                   <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.12em', color: 'var(--accent)' }}>
-                    {assistPopover === 'write' ? '✍ WRITE FOR ME' : assistPopover === 'enhance' ? '✦ ENHANCE DRAFT' : assistPopover === 'continue' ? '→ CONTINUE' : '◈ IMPERSONATE'}
+                    {assistPopover === 'write' ? 'WRITE FOR ME' : assistPopover === 'enhance' ? 'ENHANCE DRAFT' : assistPopover === 'continue' ? 'CONTINUE' : 'IMPERSONATE'}
                   </span>
                   <button className="btn-icon" style={{ width: 20, height: 20, fontSize: 15 }} onClick={() => setAssistPopover(null)}>×</button>
                 </div>
