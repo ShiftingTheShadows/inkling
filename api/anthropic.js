@@ -3,6 +3,8 @@
 // persisted server-side. Exists so the "Claude (built-in)" provider works as a
 // real API call with model choice, sampling, and SSE streaming.
 
+export const config = { runtime: 'edge' };
+
 export default async (req) => {
   if (req.method !== 'POST') {
     return new Response('Method not allowed', { status: 405 });
@@ -53,5 +55,3 @@ export default async (req) => {
     },
   });
 };
-
-export const config = { path: '/api/anthropic' };
