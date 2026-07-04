@@ -1150,14 +1150,45 @@ function ImportModal({ onClose }) {
     }
     if (isJson) {
       const raw = JSON.parse(await file.text());
-      // Inkling multi-char backup — dedupe by id (same id = same character)
+      // Full Inkling backup (characters + chats/lorebook/scripts/personas) — merge
+      // everything by id rather than overwrite, so importing an old backup can't
+      // clobber an in-progress conversation or the current persona/settings.
       if (Array.isArray(raw.characters)) {
-        let added = 0;
+        let added = 0, chatsRestored = 0;
         const merged = [...charsRef.current];
-        raw.characters.forEach(c => { if (!merged.find(x => x.id === c.id)) { merged.push(c); added++; } });
+        raw.characters.forEach(c => {
+          if (!merged.find(x => x.id === c.id)) {
+            merged.push(c);
+            added++;
+            if (raw.chats?.[c.id]?.length && !S.chat(c.id).length) {
+              S.saveChat(c.id, raw.chats[c.id]);
+              if (raw.histories?.[c.id]) S.saveHistory(c.id, raw.histories[c.id]);
+              chatsRestored++;
+            }
+          }
+        });
         charsRef.current = merged;
         commitChars();
-        return { backup: added };
+
+        let loreAdded = 0;
+        if (Array.isArray(raw.lorebook) && raw.lorebook.length) {
+          const lore = S.lorebook();
+          raw.lorebook.forEach(e => { if (!lore.find(x => x.id === e.id)) { lore.push(e); loreAdded++; } });
+          S.saveLorebook(lore);
+        }
+        let scriptsAdded = 0;
+        if (Array.isArray(raw.scripts) && raw.scripts.length) {
+          const scripts = S.scripts();
+          raw.scripts.forEach(sc => { if (!scripts.find(x => x.id === sc.id)) { scripts.push(sc); scriptsAdded++; } });
+          S.saveScripts(scripts);
+        }
+        let personasAdded = 0;
+        if (Array.isArray(raw.personas) && raw.personas.length) {
+          const personas = S.personas();
+          raw.personas.forEach(p => { if (!personas.find(x => x.id === p.id)) { personas.push(p); personasAdded++; } });
+          S.savePersonas(personas);
+        }
+        return { backup: added, chatsRestored, loreAdded, scriptsAdded, personasAdded };
       }
       const d = raw.data || raw;
       const r = await importCharData(d, null);
@@ -1190,11 +1221,17 @@ function ImportModal({ onClose }) {
     const errors = results.filter(r => r.error);
     const total = chars.length + backupCount;
 
-    const loreTotal = results.reduce((s, r) => s + (r.lore || 0), 0);
+    const loreTotal = results.reduce((s, r) => s + (r.lore || 0) + (r.loreAdded || 0), 0);
+    const chatsRestored = results.reduce((s, r) => s + (r.chatsRestored || 0), 0);
+    const scriptsAdded = results.reduce((s, r) => s + (r.scriptsAdded || 0), 0);
+    const personasAdded = results.reduce((s, r) => s + (r.personasAdded || 0), 0);
     const details = [
       replaced ? `${replaced} replaced` : null,
       skipped ? `${skipped} skipped` : null,
+      chatsRestored ? `${chatsRestored} chat${chatsRestored === 1 ? '' : 's'} restored` : null,
       loreTotal ? `${loreTotal} lore entries` : null,
+      scriptsAdded ? `${scriptsAdded} script${scriptsAdded === 1 ? '' : 's'}` : null,
+      personasAdded ? `${personasAdded} persona${personasAdded === 1 ? '' : 's'}` : null,
       errors.length ? `${errors.length} failed` : null,
     ].filter(Boolean).join(', ');
     if (total === 1 && chars.length === 1 && !details) {
