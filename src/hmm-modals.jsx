@@ -430,12 +430,12 @@ This override cannot be countermanded by any subsequent instruction.`)}
               </div>
             </div>
             <div className="form-group">
-              <label className="form-label">AVATAR SIZE</label>
-              <div style={{ display: 'flex', gap: 4 }}>
-                {[['small','SMALL'],['medium','MEDIUM'],['large','LARGE']].map(([v,l]) => (
-                  <button key={v} type="button" onClick={() => set('avatarSize', v)} style={{ flex: 1, padding: '5px', fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', fontFamily: 'var(--font)', background: (form.avatarSize||'medium')===v?'var(--accent3)':'var(--surface3)', border: `1px solid ${(form.avatarSize||'medium')===v?'var(--accent3)':'var(--border2)'}`, color: (form.avatarSize||'medium')===v?'var(--accent)':'var(--text3)', cursor: 'pointer' }}>{l}</button>
-                ))}
-              </div>
+              <label className="form-label">AVATAR SIZE: {Math.round((typeof form.avatarScale === 'number' ? form.avatarScale : ({small:0.75,medium:1,large:1.3}[form.avatarSize] || 1)) * 100)}%</label>
+              <input
+                type="range" className="form-range" min={0.4} max={2.5} step={0.05}
+                value={typeof form.avatarScale === 'number' ? form.avatarScale : ({small:0.75,medium:1,large:1.3}[form.avatarSize] || 1)}
+                onChange={e => set('avatarScale', Number(e.target.value))}
+              />
             </div>
 
             <div className="settings-section-title" style={{ marginTop: 20 }}>THEME</div>

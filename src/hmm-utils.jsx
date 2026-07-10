@@ -130,7 +130,7 @@ const S = {
       autoScroll: true,
       showTokens: true,
       theme: 'terminal',
-      avatarSize: 'medium', // 'small' | 'medium' | 'large'
+      avatarScale: 1, // 0.4 (tiny) – 2.5 (huge)
       provider: 'claude', // 'claude' | 'openrouter' | 'local'
       openrouterKey: '',
       openrouterModel: 'anthropic/claude-sonnet-5',
@@ -150,10 +150,15 @@ const S = {
 // ── Utilities ────────────────────────────────────────────────────
 const genId = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36);
 
-// Character/persona avatar size — user-configurable scale applied on top of
-// each call site's base size (sidebar list, message row, chat header).
-const AVATAR_SCALE = { small: 0.75, medium: 1, large: 1.3 };
-const avatarPx = (settings, base) => Math.round(base * (AVATAR_SCALE[settings?.avatarSize] || 1));
+// Character/persona avatar size — user-configurable scale (slider, 0.4-2.5x)
+// applied on top of each call site's base size (sidebar list, message row,
+// chat header). Legacy small/medium/large presets map to a scale for
+// settings saved before the slider replaced them.
+const AVATAR_SIZE_PRESET = { small: 0.75, medium: 1, large: 1.3 };
+const avatarPx = (settings, base) => {
+  const scale = typeof settings?.avatarScale === 'number' ? settings.avatarScale : (AVATAR_SIZE_PRESET[settings?.avatarSize] || 1);
+  return Math.round(base * scale);
+};
 
 // Downscale + re-encode an image data-URL so stored avatars/attachments stay small
 function compressImage(dataUrl, maxDim = 512, quality = 0.85) {
