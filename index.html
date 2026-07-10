@@ -600,8 +600,11 @@ body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after 
 .image-preview-bar img { width: 60px; height: 60px; object-fit: cover; border: 1px solid var(--border2); }
 .img-info { flex: 1; }
 .input-main { display: flex; gap: 10px; padding: 10px 16px; align-items: flex-end; }
-.msg-input { flex: 1; padding: 8px 12px; background: var(--surface2); border: 1px solid var(--border2); color: var(--text); font-family: var(--font); font-size: 13px; resize: none; min-height: 44px; max-height: 160px; line-height: 1.55; transition: border-color 0.1s; }
+.input-wrap { flex: 1; position: relative; }
+.msg-input { width: 100%; padding: 8px 28px 8px 12px; background: var(--surface2); border: 1px solid var(--border2); color: var(--text); font-family: var(--font); font-size: 13px; resize: none; min-height: 44px; max-height: 160px; line-height: 1.55; transition: border-color 0.1s; }
 .msg-input:focus { border-color: var(--accent3); box-shadow: 0 0 0 1px var(--accent3); }
+.input-clear-btn { position: absolute; top: 6px; right: 6px; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; color: var(--text3); background: transparent; border: none; cursor: pointer; }
+.input-clear-btn:hover { color: var(--danger); }
 .btn-send { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; background: var(--accent); border: 1px solid var(--accent); color: var(--bg); flex-shrink: 0; transition: background 0.1s, border-color 0.1s; }
 .btn-send:hover:not(:disabled) { background: var(--accent2); border-color: var(--accent2); transform: scale(1.05); }
 .btn-send:active:not(:disabled) { transform: scale(0.95); }

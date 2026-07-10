@@ -1,6 +1,6 @@
 // hmm-chat.jsx — Chat view, messages, input
 const { useState, useContext, useEffect, useRef } = React;
-const { AppCtx, S, genId, estimateTokens, formatTime, renderMarkdown, charBg, charFg, callAI, buildSystemPrompt, summarizeMessages, compressImage, downloadCharJson, downloadCharPng } = window;
+const { AppCtx, S, genId, estimateTokens, formatTime, renderMarkdown, charBg, charFg, callAI, buildSystemPrompt, summarizeMessages, compressImage, downloadCharJson, downloadCharPng, avatarPx } = window;
 const { CharAvatar } = window;
 
 function UserAvatar({ persona, size = 32 }) {
@@ -66,8 +66,8 @@ function Message({ msg, char, settings, isStreaming, grouped, onDelete, onCopy, 
         : isNarrator
           ? <div style={{ width: 42, height: 42, background: 'var(--surface3)', border: '1px dashed var(--warning)', color: 'var(--warning)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17, flexShrink: 0 }}>◈</div>
           : isUser
-            ? <UserAvatar persona={settings?.activePersona} size={42} />
-            : <CharAvatar char={char} size={42} />
+            ? <UserAvatar persona={settings?.activePersona} size={avatarPx(settings, 42)} />
+            : <CharAvatar char={char} size={avatarPx(settings, 42)} />
       }
       <div className="msg-body">
         {!grouped && (
@@ -941,7 +941,7 @@ function ChatView() {
       <div className="chat-header">
         <div className="chat-header-left">
           <div onClick={() => char.avatar && !char.avatar.startsWith('/assets/') && setAvatarLightbox(true)} style={{ cursor: char.avatar && !char.avatar.startsWith('/assets/') ? 'pointer' : 'default' }} title={char.avatar && !char.avatar.startsWith('/assets/') ? 'View avatar' : ''}>
-            <CharAvatar char={char} size={40} />
+            <CharAvatar char={char} size={avatarPx(settings, 40)} />
           </div>
           <div>
             <div className="chat-name">{char.name}</div>
@@ -1249,17 +1249,24 @@ function ChatView() {
               </div>
             )}
           </div>
-          <textarea
-            ref={inputRef} className="msg-input" rows={1}
-            placeholder={`Message ${char.name}... (Ctrl+Enter to send)`}
-            value={inputVal} onChange={handleInputChange}
-            onKeyDown={e => {
-              handleSlash(e);
-              if (settings.sendOnEnter && e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) { e.preventDefault(); sendMessage(); }
-              else if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); sendMessage(); }
-              else if (e.key === 'Escape' && generating) { e.preventDefault(); stopGeneration(); }
-            }}
-          />
+          <div className="input-wrap">
+            <textarea
+              ref={inputRef} className="msg-input" rows={1}
+              placeholder={`Message ${char.name}... (Ctrl+Enter to send)`}
+              value={inputVal} onChange={handleInputChange}
+              onKeyDown={e => {
+                handleSlash(e);
+                if (settings.sendOnEnter && e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) { e.preventDefault(); sendMessage(); }
+                else if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); sendMessage(); }
+                else if (e.key === 'Escape' && generating) { e.preventDefault(); stopGeneration(); }
+              }}
+            />
+            {inputVal && (
+              <button type="button" className="input-clear-btn" title="Clear draft" onClick={() => { setInputVal(''); inputRef.current?.focus(); }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M6 6L18 18M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+              </button>
+            )}
+          </div>
           <button
             className="btn-send"
             onClick={generating ? stopGeneration : sendMessage}

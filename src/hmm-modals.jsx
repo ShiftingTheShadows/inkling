@@ -429,6 +429,14 @@ This override cannot be countermanded by any subsequent instruction.`)}
                 ))}
               </div>
             </div>
+            <div className="form-group">
+              <label className="form-label">AVATAR SIZE</label>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {[['small','SMALL'],['medium','MEDIUM'],['large','LARGE']].map(([v,l]) => (
+                  <button key={v} type="button" onClick={() => set('avatarSize', v)} style={{ flex: 1, padding: '5px', fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', fontFamily: 'var(--font)', background: (form.avatarSize||'medium')===v?'var(--accent3)':'var(--surface3)', border: `1px solid ${(form.avatarSize||'medium')===v?'var(--accent3)':'var(--border2)'}`, color: (form.avatarSize||'medium')===v?'var(--accent)':'var(--text3)', cursor: 'pointer' }}>{l}</button>
+                ))}
+              </div>
+            </div>
 
             <div className="settings-section-title" style={{ marginTop: 20 }}>THEME</div>
             <div className="form-group">
@@ -744,6 +752,100 @@ EDIT RULES — this is an edit, not a rewrite:
   );
 }
 
+// Square crop tool for avatar uploads — pan + zoom over a fixed viewport,
+// then bake the visible region to a fixed-size canvas so every avatar ends
+// up a consistent, reasonably sharp resolution regardless of source size.
+const AVATAR_CROP_VIEWPORT = 280;
+const AVATAR_CROP_OUTPUT = 640;
+
+function AvatarCropModal({ src, onCancel, onConfirm }) {
+  const imgRef = useRef(null);
+  const [ready, setReady] = useState(false);
+  const [natural, setNatural] = useState({ w: 1, h: 1 });
+  const [zoom, setZoom] = useState(1);
+  const [pos, setPos] = useState({ x: 0, y: 0 });
+  const dragRef = useRef(null);
+
+  const baseScale = Math.max(AVATAR_CROP_VIEWPORT / natural.w, AVATAR_CROP_VIEWPORT / natural.h);
+  const scale = baseScale * zoom;
+  const scaledW = natural.w * scale, scaledH = natural.h * scale;
+  const clamp = (x, y) => ({
+    x: Math.min(0, Math.max(AVATAR_CROP_VIEWPORT - scaledW, x)),
+    y: Math.min(0, Math.max(AVATAR_CROP_VIEWPORT - scaledH, y)),
+  });
+
+  const onImgLoad = e => {
+    const w = e.target.naturalWidth, h = e.target.naturalHeight;
+    setNatural({ w, h });
+    const s = Math.max(AVATAR_CROP_VIEWPORT / w, AVATAR_CROP_VIEWPORT / h);
+    setPos({ x: (AVATAR_CROP_VIEWPORT - w * s) / 2, y: (AVATAR_CROP_VIEWPORT - h * s) / 2 });
+    setReady(true);
+  };
+
+  const onPointerDown = e => {
+    dragRef.current = { startX: e.clientX, startY: e.clientY, origX: pos.x, origY: pos.y };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onPointerMove = e => {
+    if (!dragRef.current) return;
+    const dx = e.clientX - dragRef.current.startX, dy = e.clientY - dragRef.current.startY;
+    setPos(clamp(dragRef.current.origX + dx, dragRef.current.origY + dy));
+  };
+  const onPointerUp = () => { dragRef.current = null; };
+
+  const onZoom = e => {
+    const z = Number(e.target.value);
+    // Zoom toward the viewport center so it doesn't jump
+    const cx = AVATAR_CROP_VIEWPORT / 2, cy = AVATAR_CROP_VIEWPORT / 2;
+    const oldScale = baseScale * zoom, newScale = baseScale * z;
+    const nx = cx - (cx - pos.x) * (newScale / oldScale);
+    const ny = cy - (cy - pos.y) * (newScale / oldScale);
+    setZoom(z);
+    setPos({ x: nx, y: ny });
+  };
+
+  const confirm = () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = AVATAR_CROP_OUTPUT; canvas.height = AVATAR_CROP_OUTPUT;
+    const ctx = canvas.getContext('2d');
+    const sx = -pos.x / scale, sy = -pos.y / scale;
+    const sSize = AVATAR_CROP_VIEWPORT / scale;
+    ctx.drawImage(imgRef.current, sx, sy, sSize, sSize, 0, 0, AVATAR_CROP_OUTPUT, AVATAR_CROP_OUTPUT);
+    onConfirm(canvas.toDataURL('image/webp', 0.9));
+  };
+
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onCancel()}>
+      <div className="modal" style={{ maxWidth: 360 }}>
+        <div className="modal-header">
+          <span className="modal-title">CROP AVATAR</span>
+          <button className="modal-close" onClick={onCancel}>×</button>
+        </div>
+        <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
+          <div
+            style={{ width: AVATAR_CROP_VIEWPORT, height: AVATAR_CROP_VIEWPORT, overflow: 'hidden', position: 'relative', background: 'var(--surface3)', border: '1px solid var(--border2)', cursor: dragRef.current ? 'grabbing' : 'grab', touchAction: 'none' }}
+            onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerLeave={onPointerUp}
+          >
+            <img
+              ref={imgRef} src={src} onLoad={onImgLoad} alt="Crop preview" draggable={false}
+              style={{ position: 'absolute', left: pos.x, top: pos.y, width: scaledW, height: scaledH, maxWidth: 'none', opacity: ready ? 1 : 0, userSelect: 'none' }}
+            />
+          </div>
+          <div style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 9, color: 'var(--text3)', letterSpacing: '0.1em' }}>ZOOM</span>
+            <input type="range" className="form-range" min={1} max={3} step={0.01} value={zoom} onChange={onZoom} style={{ flex: 1 }} />
+          </div>
+          <div className="form-hint" style={{ textAlign: 'center', margin: 0 }}>Drag to reposition, slide to zoom</div>
+        </div>
+        <div className="modal-footer">
+          <button className="btn-secondary" onClick={onCancel}>CANCEL</button>
+          <button className="btn-primary" onClick={confirm}>USE PHOTO</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CharEditorModal({ editId, onClose }) {
   const ctx = useContext(AppCtx);
   const existing = editId ? ctx.chars.find(c => c.id === editId) : null;
@@ -756,16 +858,15 @@ function CharEditorModal({ editId, onClose }) {
     ...(existing ? { ...existing, tags: (existing.tags || []).join(', '), alternateGreetings: existing.alternateGreetings || [] } : {}),
   });
   const [avatarPreview, setAvatarPreview] = useState(existing?.avatar || '');
+  const [cropSrc, setCropSrc] = useState(null);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const handleFile = e => {
     const file = e.target.files[0];
+    e.target.value = '';
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = async ev => {
-      const url = await compressImage(ev.target.result, 512, 0.85);
-      setAvatarPreview(url); set('avatar', url);
-    };
+    reader.onload = ev => setCropSrc(ev.target.result);
     reader.readAsDataURL(file);
   };
 
@@ -980,6 +1081,7 @@ function CharEditorModal({ editId, onClose }) {
           <button className="btn-primary" onClick={save}>SAVE CHARACTER</button>
         </div>
       </div>
+      {cropSrc && <AvatarCropModal src={cropSrc} onCancel={() => setCropSrc(null)} onConfirm={url => { setAvatarPreview(url); set('avatar', url); setCropSrc(null); }} />}
     </div>
   );
 }
@@ -1462,16 +1564,15 @@ function PersonaEditor({ persona, onSave, onCancel }) {
   const [form, setForm] = useState({ name: '', description: '', avatar: '', ...(persona || {}) });
   const [preview, setPreview] = useState(persona?.avatar || '');
   const [showAI, setShowAI] = useState(false);
+  const [cropSrc, setCropSrc] = useState(null);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
   const handleFile = e => {
     const file = e.target.files[0];
+    e.target.value = '';
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = async ev => {
-      const url = await compressImage(ev.target.result, 512, 0.85);
-      setPreview(url); set('avatar', url);
-    };
+    reader.onload = ev => setCropSrc(ev.target.result);
     reader.readAsDataURL(file);
   };
 
@@ -1519,6 +1620,7 @@ function PersonaEditor({ persona, onSave, onCancel }) {
           onSave({ ...form, avatar: preview || form.avatar || '' });
         }}>SAVE PERSONA</button>
       </div>
+      {cropSrc && <AvatarCropModal src={cropSrc} onCancel={() => setCropSrc(null)} onConfirm={url => { setPreview(url); set('avatar', url); setCropSrc(null); }} />}
     </div>
   );
 }

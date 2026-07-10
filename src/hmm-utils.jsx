@@ -130,6 +130,7 @@ const S = {
       autoScroll: true,
       showTokens: true,
       theme: 'terminal',
+      avatarSize: 'medium', // 'small' | 'medium' | 'large'
       provider: 'claude', // 'claude' | 'openrouter' | 'local'
       openrouterKey: '',
       openrouterModel: 'anthropic/claude-sonnet-5',
@@ -148,6 +149,11 @@ const S = {
 
 // ── Utilities ────────────────────────────────────────────────────
 const genId = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36);
+
+// Character/persona avatar size — user-configurable scale applied on top of
+// each call site's base size (sidebar list, message row, chat header).
+const AVATAR_SCALE = { small: 0.75, medium: 1, large: 1.3 };
+const avatarPx = (settings, base) => Math.round(base * (AVATAR_SCALE[settings?.avatarSize] || 1));
 
 // Downscale + re-encode an image data-URL so stored avatars/attachments stay small
 function compressImage(dataUrl, maxDim = 512, quality = 0.85) {
@@ -902,7 +908,7 @@ async function downloadCharPng(char) {
 Object.assign(window, {
   AppCtx, S, genId, estimateTokens, compressImage,
   formatTime, formatDate, renderMarkdown,
-  charBg, charFg, buildSystemPrompt, substituteMacros, callAI,
+  charBg, charFg, buildSystemPrompt, substituteMacros, callAI, avatarPx,
   summarizeMessages, GistSync,
   downloadCharJson, downloadCharPng,
 });

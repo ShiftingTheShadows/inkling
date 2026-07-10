@@ -1,6 +1,6 @@
 // hmm-sidebar.jsx — Character list sidebar
 const { useState, useContext } = React;
-const { AppCtx, S, charBg, charFg } = window;
+const { AppCtx, S, charBg, charFg, avatarPx } = window;
 
 function CharAvatar({ char, size = 40 }) {
   const [failed, setFailed] = useState(false);
@@ -29,6 +29,7 @@ function CharAvatar({ char, size = 40 }) {
 }
 
 function CharCard({ char, isActive, onSelect, onFav }) {
+  const ctx = useContext(AppCtx);
   const msgs = S.chat(char.id);
   const last = msgs[msgs.length - 1];
   const rawPreview = last
@@ -41,7 +42,7 @@ function CharCard({ char, isActive, onSelect, onFav }) {
       className={`char-card${isActive ? ' active' : ''}`}
       onClick={() => onSelect(char.id)}
     >
-      <CharAvatar char={char} size={48} />
+      <CharAvatar char={char} size={avatarPx(ctx.settings, 48)} />
       <div className="char-card-info">
         <div className="char-card-name">{char.isGroup ? '◈ ' : ''}{char.name}</div>
         <div className="char-card-preview">{preview || '—'}</div>
