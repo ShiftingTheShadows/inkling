@@ -1,6 +1,6 @@
 // hmm-app.jsx — Root App
 const { useState, useEffect, useCallback } = React;
-const { AppCtx, S, genId, GistSync, CHANGELOG } = window;
+const { AppCtx, S, genId, GistSync, RailwaySync, CHANGELOG } = window;
 const { Sidebar, WelcomeScreen, ChatView } = window;
 const { ToastStack, CommandPalette, SettingsModal, CharEditorModal, GroupEditorModal, ImportModal, HistoryModal, PersonasModal, SyncModal, LorebookModal, ChangelogModal } = window;
 
@@ -94,6 +94,74 @@ function App() {
     const id = genId();
     setToasts(prev => [...prev, { id, message, type }]);
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3000);
+  }, []);
+
+  // Railway auto-sync: push shortly after any local data change (see
+  // __notifyDataChange in hmm-utils.jsx), and pull-then-reload when another
+  // device has pushed something newer. Opt-in via Settings → Sync → Railway.
+  // Config lives in localStorage (not React state) since SyncModal owns it;
+  // it dispatches 'hmm-railway-config-changed' whenever it's edited so this
+  // restarts with the new url/token/enabled without needing a page reload.
+  useEffect(() => {
+    let pushTimer = null;
+    let pushInFlight = false;
+    let pollTimer = null;
+
+    const stop = () => {
+      clearTimeout(pushTimer); pushTimer = null;
+      clearInterval(pollTimer); pollTimer = null;
+      delete window.__hmmOnDataChange;
+    };
+
+    const doPush = async (url, token) => {
+      pushInFlight = true;
+      try {
+        const updatedAt = await RailwaySync.push(url, token);
+        localStorage.setItem('hmm_railway_last_sync', updatedAt);
+      } catch (e) {
+        console.warn('Auto-sync push failed:', e);
+      } finally {
+        pushInFlight = false;
+      }
+    };
+
+    const poll = async (url, token) => {
+      if (pushInFlight || pushTimer) return; // local changes pending, don't clobber them
+      try {
+        const remoteUpdatedAt = await RailwaySync.meta(url, token);
+        const lastSync = localStorage.getItem('hmm_railway_last_sync');
+        if (remoteUpdatedAt && (!lastSync || new Date(remoteUpdatedAt) > new Date(lastSync))) {
+          const data = await RailwaySync.pull(url, token);
+          GistSync.restorePayload(data);
+          // Store the server's updated_at (from the meta check above), not
+          // data.exportedAt: that's the *other* device's client clock, which
+          // would make this device think its own pull is instantly stale again.
+          localStorage.setItem('hmm_railway_last_sync', remoteUpdatedAt);
+          addToast('Synced newer data from another device, reloading...', 'success');
+          setTimeout(() => window.location.reload(), 1400);
+        }
+      } catch (e) {
+        console.warn('Auto-sync poll failed:', e);
+      }
+    };
+
+    const start = () => {
+      stop();
+      const url = localStorage.getItem('hmm_railway_url');
+      const token = localStorage.getItem('hmm_railway_token');
+      const enabled = localStorage.getItem('hmm_railway_autosync') === 'true';
+      if (!enabled || !url || !token) return;
+      window.__hmmOnDataChange = () => {
+        clearTimeout(pushTimer);
+        pushTimer = setTimeout(() => { pushTimer = null; doPush(url, token); }, 4000);
+      };
+      poll(url, token); // catch up on load
+      pollTimer = setInterval(() => poll(url, token), 60000);
+    };
+
+    start();
+    window.addEventListener('hmm-railway-config-changed', start);
+    return () => { window.removeEventListener('hmm-railway-config-changed', start); stop(); };
   }, []);
 
   const openModal  = useCallback((type, data = null) => setModal({ type, data }), []);

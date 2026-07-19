@@ -40,6 +40,20 @@ app.use(express.json({ limit: '50mb' })); // avatars/backgrounds are embedded as
 
 app.get('/', (req, res) => res.send('Inkling sync server is running.'));
 
+// Cheap polling endpoint for auto-sync: just the timestamp, not the whole
+// (potentially multi-MB, avatars-and-backgrounds-included) blob.
+app.get('/api/sync/meta', async (req, res) => {
+  const token = String(req.query.token || '');
+  if (token.length < MIN_TOKEN_LEN) return res.status(400).json({ error: `token must be at least ${MIN_TOKEN_LEN} characters` });
+  try {
+    const { rows } = await pool.query('SELECT updated_at FROM backups WHERE token_hash = $1', [hashToken(token)]);
+    res.json({ updatedAt: rows.length ? rows[0].updated_at : null });
+  } catch (e) {
+    console.error('GET /api/sync/meta failed:', e);
+    res.status(500).json({ error: 'internal error' });
+  }
+});
+
 app.get('/api/sync', async (req, res) => {
   const token = String(req.query.token || '');
   if (token.length < MIN_TOKEN_LEN) return res.status(400).json({ error: `token must be at least ${MIN_TOKEN_LEN} characters` });
@@ -57,12 +71,18 @@ app.post('/api/sync', async (req, res) => {
   if (typeof token !== 'string' || token.length < MIN_TOKEN_LEN) return res.status(400).json({ error: `token must be at least ${MIN_TOKEN_LEN} characters` });
   if (!data || typeof data !== 'object') return res.status(400).json({ error: 'missing data' });
   try {
-    await pool.query(
+    // Return the server-assigned updated_at (Postgres now(), not the client's
+    // payload timestamp) so the client's auto-sync poll can compare against
+    // the exact value it'll see on GET /api/sync/meta later. Using the
+    // client's own clock here would make every push look "outdated" the
+    // moment it lands, since now() is always a beat after the payload was built.
+    const { rows } = await pool.query(
       `INSERT INTO backups (token_hash, data, updated_at) VALUES ($1, $2, now())
-       ON CONFLICT (token_hash) DO UPDATE SET data = $2, updated_at = now()`,
+       ON CONFLICT (token_hash) DO UPDATE SET data = $2, updated_at = now()
+       RETURNING updated_at`,
       [hashToken(token), data]
     );
-    res.json({ ok: true });
+    res.json({ ok: true, updatedAt: rows[0].updated_at });
   } catch (e) {
     console.error('POST /api/sync failed:', e);
     res.status(500).json({ error: 'internal error' });

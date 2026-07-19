@@ -36,7 +36,10 @@ function __idbDel(key) {
   try { __db.transaction('kv', 'readwrite').objectStore('kv').delete(key); } catch {}
 }
 const __get = (k, fb) => __mem.has(k) ? __mem.get(k) : fb;
-const __set = (k, v) => { __mem.set(k, v); __idbPut(k, v); };
+// Drafts are intentionally excluded, they're not part of GistSync.buildPayload(),
+// so writing them shouldn't schedule an auto-sync push (see hmm-app.jsx).
+const __notifyDataChange = k => { if (!k.startsWith('hmm_draft_') && window.__hmmOnDataChange) window.__hmmOnDataChange(); };
+const __set = (k, v) => { __mem.set(k, v); __idbPut(k, v); __notifyDataChange(k); };
 
 // Boot: open IDB, hydrate cache, one-time migration from localStorage
 window.InklingStorageReady = (async () => {
@@ -146,24 +149,25 @@ const S = {
   personas: () => __get('hmm_personas', null) || [{ id: 'default', name: 'You', description: '', avatar: '' }],
   savePersonas: v => __set('hmm_personas', v),
   activePersonaId: () => localStorage.getItem('hmm_active_persona') || 'default',
-  setActivePersonaId: id => localStorage.setItem('hmm_active_persona', id),
+  setActivePersonaId: id => { localStorage.setItem('hmm_active_persona', id); __notifyDataChange('hmm_active_persona'); },
   lastSeenChangelog: () => localStorage.getItem('hmm_changelog_seen') || '',
   setLastSeenChangelog: v => localStorage.setItem('hmm_changelog_seen', v),
 };
 
-// ── Changelog — newest entry first. Bump the top `version` (a date works
+// Changelog: newest entry first. Bump the top `version` (a date works
 // fine) whenever entries are added so returning users get an auto-popup.
 const CHANGELOG = [
   {
     version: '2026-07-19',
     date: 'Jul 19, 2026',
     items: [
-      'New: "What\'s New" changelog — opens automatically after an update, or any time from the command palette.',
-      'New: Drag-and-drop or pick an image on a greeting to auto-upload it to Catbox and embed it — no more manual upload-then-paste.',
+      'New: "What\'s New" changelog, opens automatically after an update, or any time from the command palette.',
+      'New: Drag-and-drop or pick an image on a greeting to auto-upload it to Catbox and embed it, no more manual upload-then-paste.',
       'New: Paste raw JSON directly into the character editor instead of only importing from a file.',
       'New: Custom chat background image (animated GIFs supported) and custom CSS injection, in Settings → Theme.',
       'New: The message box now remembers your draft per-character across refreshes and character switches, and can be manually resized.',
-      'New: Railway sync — an alternative to GitHub Gist sync backed by your own Postgres database (Settings → Sync → Railway tab). See server/README.md to deploy it.',
+      'New: Railway sync, an alternative to GitHub Gist sync backed by your own Postgres database (Settings → Sync → Railway tab). See server/README.md to deploy it.',
+      'New: Railway auto-sync, pushes a few seconds after any change and pulls automatically when another device has pushed something newer.',
       'Fixed: group chat messages from different characters replying back-to-back no longer hide each other\'s avatar/name.',
       'Fixed: a restored draft now resizes the message box to fit instead of staying cramped at minimum height.',
     ],
@@ -203,7 +207,7 @@ function compressImage(dataUrl, maxDim = 512, quality = 0.85) {
     img.src = dataUrl;
   });
 }
-// Uploads an image to Catbox and returns its public URL — used to auto-embed
+// Uploads an image to Catbox and returns its public URL, used to auto-embed
 // images in greetings instead of a manual upload-then-paste-the-link workflow.
 async function uploadToCatbox(file) {
   const fd = new FormData();
@@ -803,27 +807,36 @@ const GistSync = {
   },
 };
 
-// ── Railway sync — a self-hosted alternative to Gist sync (see server/).
+// Railway sync: a self-hosted alternative to Gist sync (see server/).
 // Same payload shape (GistSync.buildPayload/restorePayload), just pushed to
 // your own Postgres-backed endpoint instead of a GitHub gist.
 const RailwaySync = {
   async push(baseUrl, token) {
     const payload = GistSync.buildPayload();
     const content = JSON.stringify(payload);
-    try { JSON.parse(content); } catch (e) { throw new Error('Local data is corrupted — cannot push: ' + e.message); }
+    try { JSON.parse(content); } catch (e) { throw new Error('Local data is corrupted, cannot push: ' + e.message); }
     const r = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/sync`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ token, data: payload }),
     });
     if (!r.ok) throw new Error(`Sync server ${r.status}: ${(await r.text().catch(() => '')) || r.statusText}`);
+    // The server's own updated_at, not payload.exportedAt: auto-sync compares
+    // this against GET /api/sync/meta's updatedAt, which is server-clocked too.
+    return (await r.json()).updatedAt;
   },
   async pull(baseUrl, token) {
     const r = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/sync?token=${encodeURIComponent(token)}`);
     if (!r.ok) throw new Error(`Sync server ${r.status}: ${(await r.text().catch(() => '')) || r.statusText}`);
     const j = await r.json();
-    if (!j.data) throw new Error('No backup found for this token yet — push from another device first.');
+    if (!j.data) throw new Error('No backup found for this token yet, push from another device first.');
     return j.data;
+  },
+  // Lightweight poll for auto-sync, just the remote's last-updated timestamp
+  async meta(baseUrl, token) {
+    const r = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/sync/meta?token=${encodeURIComponent(token)}`);
+    if (!r.ok) throw new Error(`Sync server ${r.status}: ${(await r.text().catch(() => '')) || r.statusText}`);
+    return (await r.json()).updatedAt;
   },
 };
 
