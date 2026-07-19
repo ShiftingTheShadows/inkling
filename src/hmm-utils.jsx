@@ -209,15 +209,17 @@ function compressImage(dataUrl, maxDim = 512, quality = 0.85) {
 }
 // Uploads an image to Catbox and returns its public URL, used to auto-embed
 // images in greetings instead of a manual upload-then-paste-the-link workflow.
+// Routed through /api/catbox (see api/catbox.js) rather than calling
+// catbox.moe directly — Catbox sends no CORS headers on any response, so a
+// browser fetch() straight to it always fails with "Failed to fetch".
 async function uploadToCatbox(file) {
   const fd = new FormData();
-  fd.append('reqtype', 'fileupload');
-  fd.append('fileToUpload', file);
-  const res = await fetch('https://catbox.moe/user/api.php', { method: 'POST', body: fd });
-  if (!res.ok) throw new Error(`Catbox upload failed (${res.status})`);
-  const text = (await res.text()).trim();
-  if (!/^https?:\/\//.test(text)) throw new Error(text || 'Unexpected response from Catbox');
-  return text;
+  fd.append('file', file);
+  const res = await fetch('/api/catbox', { method: 'POST', body: fd });
+  let j = null;
+  try { j = await res.json(); } catch {}
+  if (!res.ok || !j?.url) throw new Error(j?.error || `Upload failed (${res.status})`);
+  return j.url;
 }
 
 const estimateTokens = text => Math.ceil((text || '').length / 4);
