@@ -1,6 +1,7 @@
 {
   "name": "inkling",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "build": "node build.mjs"
