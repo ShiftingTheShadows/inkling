@@ -1,6 +1,6 @@
 // hmm-modals.jsx — Modals, toasts, command palette
 const { useState, useContext, useEffect, useRef } = React;
-const { AppCtx, S, genId, charBg, charFg, GistSync, callAI, compressImage, uploadToCatbox, CHANGELOG } = window;
+const { AppCtx, S, genId, charBg, charFg, GistSync, RailwaySync, callAI, compressImage, uploadToCatbox, CHANGELOG } = window;
 
 // Shared stroke-icon set for the command palette — same visual language as the
 // topbar/sidebar icon buttons, instead of mismatched ASCII/unicode/emoji glyphs.
@@ -176,7 +176,7 @@ function CommandPalette() {
     { label: 'New Character',    sub: 'Create a character',          icon: CMD_ICON.character, action: () => { ctx.openModal('char-editor', null); ctx.setCmdOpen(false); } },
     { label: 'New Group Chat',   sub: 'Multiple characters, one scene', icon: CMD_ICON.group, action: () => { ctx.openModal('group-editor', null); ctx.setCmdOpen(false); } },
     { label: 'Import Character', sub: 'Import from JSON or PNG card', icon: CMD_ICON.import, action: () => { ctx.openModal('import');           ctx.setCmdOpen(false); } },
-    { label: 'Sync to GitHub',   sub: 'Push/pull all data via Gist',  icon: CMD_ICON.sync, action: () => { ctx.openModal('sync');             ctx.setCmdOpen(false); } },
+    { label: 'Sync',              sub: 'Push/pull all data via Gist or Railway', icon: CMD_ICON.sync, action: () => { ctx.openModal('sync');             ctx.setCmdOpen(false); } },
     { label: 'Scripts',          sub: 'Attachable keyword-triggered world info', icon: CMD_ICON.scripts, action: () => { ctx.openModal('lorebook');         ctx.setCmdOpen(false); } },
     { label: 'Manage Personas',  sub: 'Add, edit, switch personas',   icon: CMD_ICON.personas, action: () => { ctx.openModal('personas');         ctx.setCmdOpen(false); } },
     { label: 'Settings',         sub: 'API key, model, jailbreak',    icon: CMD_ICON.settings, action: () => { ctx.openModal('settings');          ctx.setCmdOpen(false); } },
@@ -1906,6 +1906,9 @@ function PersonasModal({ onClose }) {
 
 function SyncModal({ onClose }) {
   const ctx = useContext(AppCtx);
+  const [provider, setProvider] = useState(() => localStorage.getItem('hmm_sync_provider') || 'gist');
+  const setProviderPersist = p => { setProvider(p); localStorage.setItem('hmm_sync_provider', p); setStatus(null); };
+
   const [token, setToken] = useState(() => localStorage.getItem('hmm_gh_token') || '');
   const [gistId, setGistId] = useState(() => localStorage.getItem('hmm_gh_gist') || '');
   const [status, setStatus] = useState(null); // {type:'success'|'error'|'info', msg}
@@ -1913,10 +1916,40 @@ function SyncModal({ onClose }) {
   const [existingGists, setExistingGists] = useState([]);
   const [showGists, setShowGists] = useState(false);
 
+  const [railwayUrl, setRailwayUrl] = useState(() => localStorage.getItem('hmm_railway_url') || '');
+  const [railwayToken, setRailwayToken] = useState(() => localStorage.getItem('hmm_railway_token') || '');
+  const saveRailwayUrl = u => { setRailwayUrl(u); localStorage.setItem('hmm_railway_url', u); };
+  const saveRailwayToken = t => { setRailwayToken(t); localStorage.setItem('hmm_railway_token', t); };
+
   const setS = (type, msg) => setStatus({ type, msg });
 
   const saveToken = (t) => { setToken(t); localStorage.setItem('hmm_gh_token', t); };
   const saveGist  = (g) => { setGistId(g); localStorage.setItem('hmm_gh_gist', g); };
+
+  const doRailwayPush = async () => {
+    if (!railwayUrl.trim() || railwayToken.trim().length < 8) { setS('error', 'Need a service URL and an 8+ character sync token'); return; }
+    setBusy(true); setStatus(null);
+    try {
+      await RailwaySync.push(railwayUrl.trim(), railwayToken.trim());
+      setS('success', 'Pushed to your Railway sync server ✓');
+      ctx.addToast('Synced to Railway', 'success');
+    } catch (e) { setS('error', e.message); }
+    setBusy(false);
+  };
+
+  const doRailwayPull = async () => {
+    if (!railwayUrl.trim() || railwayToken.trim().length < 8) { setS('error', 'Need a service URL and an 8+ character sync token'); return; }
+    if (!window.confirm('This will OVERWRITE all local data with the Railway backup. Continue?')) return;
+    setBusy(true); setStatus(null);
+    try {
+      const data = await RailwaySync.pull(railwayUrl.trim(), railwayToken.trim());
+      GistSync.restorePayload(data);
+      setS('success', `Restored from ${new Date(data.exportedAt).toLocaleString()} — reload to apply`);
+      ctx.addToast('Data restored — reloading...', 'success');
+      setTimeout(() => window.location.reload(), 1400);
+    } catch (e) { setS('error', e.message); }
+    setBusy(false);
+  };
 
   const doPush = async () => {
     if (!token.trim()) { setS('error', 'Paste your GitHub token first'); return; }
@@ -1961,11 +1994,17 @@ function SyncModal({ onClose }) {
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
       <div className="modal modal-lg">
         <div className="modal-header">
-          <span className="modal-title">GITHUB GIST SYNC</span>
+          <span className="modal-title">SYNC</span>
           <button className="modal-close" onClick={onClose}>×</button>
+        </div>
+        <div className="modal-tabs">
+          <button className={`modal-tab${provider === 'gist' ? ' active' : ''}`} onClick={() => setProviderPersist('gist')}>GITHUB GIST</button>
+          <button className={`modal-tab${provider === 'railway' ? ' active' : ''}`} onClick={() => setProviderPersist('railway')}>RAILWAY</button>
         </div>
         <div className="modal-body">
 
+          {provider === 'gist' && (
+          <>
           {/* How it works */}
           <div style={{ background: 'var(--surface2)', border: '1px solid var(--border2)', padding: '12px 16px', marginBottom: 20, fontSize: 11, color: 'var(--text2)', lineHeight: 1.8 }}>
             <div style={{ fontWeight: 700, color: 'var(--text)', marginBottom: 6, fontSize: 10, letterSpacing: '0.1em' }}>HOW IT WORKS</div>
@@ -2022,6 +2061,63 @@ function SyncModal({ onClose }) {
               </div>
             </div>
           </div>
+          </>
+          )}
+
+          {provider === 'railway' && (
+          <>
+          <div style={{ background: 'var(--surface2)', border: '1px solid var(--border2)', padding: '12px 16px', marginBottom: 20, fontSize: 11, color: 'var(--text2)', lineHeight: 1.8 }}>
+            <div style={{ fontWeight: 700, color: 'var(--text)', marginBottom: 6, fontSize: 10, letterSpacing: '0.1em' }}>HOW IT WORKS</div>
+            Syncs to your own small sync server on Railway (see <code>server/</code> in the repo) backed by Postgres, instead of a GitHub gist.
+            Same data, same token on every device.<br/>
+            <span style={{ color: 'var(--accent2)' }}>API keys &amp; your jailbreak prompt are NEVER synced — they stay only on this device.</span>
+          </div>
+
+          <div className="form-2col" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
+            <div>
+              <div className="form-group">
+                <label className="form-label">RAILWAY SERVICE URL</label>
+                <input
+                  className="form-input"
+                  value={railwayUrl} onChange={e => saveRailwayUrl(e.target.value)}
+                  placeholder="https://your-service.up.railway.app"
+                />
+                <div className="form-hint">The public domain of the sync server deployed from <code>server/</code> — see <code>server/README.md</code> for setup steps.</div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">SYNC TOKEN</label>
+                <input
+                  type="password" className="form-input"
+                  value={railwayToken} onChange={e => saveRailwayToken(e.target.value)}
+                  placeholder="A secret you make up — 8+ characters"
+                />
+                <div className="form-hint">Your own secret, not a Railway credential. Use the same one on every device.</div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ background: 'var(--surface2)', border: '1px solid var(--border2)', padding: 16, flex: 1 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.14em', color: 'var(--text3)', marginBottom: 12 }}>SYNC ACTIONS</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <button className="btn-primary" onClick={doRailwayPush} disabled={busy} style={{ width: '100%', padding: '10px 16px' }}>
+                    {busy ? '⟳ WORKING...' : '↑  PUSH — SAVE TO RAILWAY'}
+                  </button>
+                  <div style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'center', lineHeight: 1.5 }}>
+                    Saves all characters, chats, personas,<br/>settings &amp; jailbreak to your sync server
+                  </div>
+                  <div style={{ borderTop: '1px solid var(--border2)', margin: '4px 0' }} />
+                  <button className="btn-secondary" onClick={doRailwayPull} disabled={busy} style={{ width: '100%', padding: '10px 16px' }}>
+                    {busy ? '⟳ WORKING...' : '↓  PULL — RESTORE FROM RAILWAY'}
+                  </button>
+                  <div style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'center', lineHeight: 1.5 }}>
+                    Overwrites local data with the Railway backup.
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          </>
+          )}
 
           {/* Status */}
           {status && (
@@ -2031,7 +2127,7 @@ function SyncModal({ onClose }) {
           )}
 
           {/* Existing gists picker */}
-          {showGists && existingGists.length > 0 && (
+          {provider === 'gist' && showGists && existingGists.length > 0 && (
             <div style={{ marginTop: 16 }}>
               <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.14em', color: 'var(--text3)', marginBottom: 8 }}>FOUND {existingGists.length} INKLING GIST{existingGists.length > 1 ? 'S' : ''} — CLICK TO USE</div>
               {existingGists.map(g => (
@@ -2054,7 +2150,7 @@ function SyncModal({ onClose }) {
         </div>
         <div className="modal-footer">
           <button className="btn-secondary" onClick={onClose}>CLOSE</button>
-          <button className="btn-primary" onClick={doPush} disabled={busy}>
+          <button className="btn-primary" onClick={provider === 'gist' ? doPush : doRailwayPush} disabled={busy}>
             {busy ? 'SYNCING...' : 'PUSH NOW'}
           </button>
         </div>

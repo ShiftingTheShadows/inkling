@@ -163,7 +163,9 @@ const CHANGELOG = [
       'New: Paste raw JSON directly into the character editor instead of only importing from a file.',
       'New: Custom chat background image (animated GIFs supported) and custom CSS injection, in Settings → Theme.',
       'New: The message box now remembers your draft per-character across refreshes and character switches, and can be manually resized.',
+      'New: Railway sync — an alternative to GitHub Gist sync backed by your own Postgres database (Settings → Sync → Railway tab). See server/README.md to deploy it.',
       'Fixed: group chat messages from different characters replying back-to-back no longer hide each other\'s avatar/name.',
+      'Fixed: a restored draft now resizes the message box to fit instead of staying cramped at minimum height.',
     ],
   },
 ];
@@ -801,6 +803,30 @@ const GistSync = {
   },
 };
 
+// ── Railway sync — a self-hosted alternative to Gist sync (see server/).
+// Same payload shape (GistSync.buildPayload/restorePayload), just pushed to
+// your own Postgres-backed endpoint instead of a GitHub gist.
+const RailwaySync = {
+  async push(baseUrl, token) {
+    const payload = GistSync.buildPayload();
+    const content = JSON.stringify(payload);
+    try { JSON.parse(content); } catch (e) { throw new Error('Local data is corrupted — cannot push: ' + e.message); }
+    const r = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/sync`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, data: payload }),
+    });
+    if (!r.ok) throw new Error(`Sync server ${r.status}: ${(await r.text().catch(() => '')) || r.statusText}`);
+  },
+  async pull(baseUrl, token) {
+    const r = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/sync?token=${encodeURIComponent(token)}`);
+    if (!r.ok) throw new Error(`Sync server ${r.status}: ${(await r.text().catch(() => '')) || r.statusText}`);
+    const j = await r.json();
+    if (!j.data) throw new Error('No backup found for this token yet — push from another device first.');
+    return j.data;
+  },
+};
+
 // ── Character card export (SillyTavern chara_card_v2 — JSON + PNG with 'chara' tEXt chunk) ──
 function charToCardV2(char) {
   // Round-trip an imported card lorebook back into the exported card
@@ -948,6 +974,6 @@ Object.assign(window, {
   AppCtx, S, genId, estimateTokens, compressImage, uploadToCatbox, CHANGELOG,
   formatTime, formatDate, renderMarkdown,
   charBg, charFg, buildSystemPrompt, substituteMacros, callAI, avatarPx,
-  summarizeMessages, GistSync,
+  summarizeMessages, GistSync, RailwaySync,
   downloadCharJson, downloadCharPng,
 });
