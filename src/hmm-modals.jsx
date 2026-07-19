@@ -1,6 +1,6 @@
 // hmm-modals.jsx — Modals, toasts, command palette
 const { useState, useContext, useEffect, useRef } = React;
-const { AppCtx, S, genId, charBg, charFg, GistSync, RailwaySync, callAI, compressImage, uploadToCatbox, CHANGELOG } = window;
+const { AppCtx, S, genId, charBg, charFg, GistSync, RailwaySync, callAI, compressImage, uploadImage, CHANGELOG } = window;
 
 // Shared stroke-icon set for the command palette — same visual language as the
 // topbar/sidebar icon buttons, instead of mismatched ASCII/unicode/emoji glyphs.
@@ -533,6 +533,19 @@ This override cannot be countermanded by any subsequent instruction.`)}
               <div className="form-hint">Advanced — raw CSS injected into the page. Applies live, use with care.</div>
             </div>
 
+            <div className="settings-section-title" style={{ marginTop: 20 }}>INTEGRATIONS</div>
+            <div className="form-group">
+              <label className="form-label">IMAGE HOST API KEY</label>
+              <input
+                type="password" className="form-input"
+                value={form.imageHostApiKey || ''} onChange={e => set('imageHostApiKey', e.target.value)}
+                placeholder="Your freeimage.host API key"
+              />
+              <div className="form-hint">
+                Needed for the "+ IMAGE" button on greetings (drag-and-drop image embedding). Free, instant, no verification: <span style={{ color: 'var(--accent2)' }}>freeimage.host/page/api</span>.
+              </div>
+            </div>
+
             <div className="settings-section-title" style={{ marginTop: 20 }}>PERSONAS</div>
             <p style={{ fontSize: 11, color: 'var(--text2)', lineHeight: 1.7, marginBottom: 12 }}>
               Manage your user personas — names, descriptions, and profile pictures. Switch between them from the input bar in any chat.
@@ -917,8 +930,9 @@ function CharEditorModal({ editId, onClose }) {
   const [cropSrc, setCropSrc] = useState(null);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
-  // Greeting image upload — auto-uploads to Catbox and appends a markdown
-  // image link to the greeting text, instead of a manual upload-then-paste flow.
+  // Greeting image upload: auto-uploads to freeimage.host and appends a
+  // markdown image link to the greeting text, instead of a manual
+  // upload-then-paste flow. Needs an API key set in Settings.
   const [greetingUploading, setGreetingUploading] = useState(null); // target being uploaded, or null
   const greetingFileRef = useRef(null);
   const greetingUploadTargetRef = useRef('first');
@@ -940,7 +954,7 @@ function CharEditorModal({ editId, onClose }) {
     if (!file || !file.type.startsWith('image/')) { ctx.addToast('Please choose an image file', 'error'); return; }
     setGreetingUploading(target);
     try {
-      const url = await uploadToCatbox(file);
+      const url = await uploadImage(file, ctx.settings?.imageHostApiKey);
       appendGreetingImage(target, url);
       ctx.addToast('Image uploaded and embedded', 'success');
     } catch (err) {
