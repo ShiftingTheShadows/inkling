@@ -1918,8 +1918,11 @@ function SyncModal({ onClose }) {
 
   const [railwayUrl, setRailwayUrl] = useState(() => localStorage.getItem('hmm_railway_url') || '');
   const [railwayToken, setRailwayToken] = useState(() => localStorage.getItem('hmm_railway_token') || '');
-  const saveRailwayUrl = u => { setRailwayUrl(u); localStorage.setItem('hmm_railway_url', u); };
-  const saveRailwayToken = t => { setRailwayToken(t); localStorage.setItem('hmm_railway_token', t); };
+  const [railwayAutoSync, setRailwayAutoSync] = useState(() => localStorage.getItem('hmm_railway_autosync') === 'true');
+  const notifyRailwayConfigChanged = () => window.dispatchEvent(new Event('hmm-railway-config-changed'));
+  const saveRailwayUrl = u => { setRailwayUrl(u); localStorage.setItem('hmm_railway_url', u); notifyRailwayConfigChanged(); };
+  const saveRailwayToken = t => { setRailwayToken(t); localStorage.setItem('hmm_railway_token', t); notifyRailwayConfigChanged(); };
+  const saveRailwayAutoSync = v => { setRailwayAutoSync(v); localStorage.setItem('hmm_railway_autosync', String(v)); notifyRailwayConfigChanged(); };
 
   const setS = (type, msg) => setStatus({ type, msg });
 
@@ -2092,6 +2095,16 @@ function SyncModal({ onClose }) {
                   placeholder="A secret you make up — 8+ characters"
                 />
                 <div className="form-hint">Your own secret, not a Railway credential. Use the same one on every device.</div>
+              </div>
+              <div className="form-group">
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12 }}>
+                  <input type="checkbox" checked={railwayAutoSync} onChange={e => saveRailwayAutoSync(e.target.checked)} style={{ width: 14, height: 14, accentColor: 'var(--accent)', flexShrink: 0 }} />
+                  Auto-sync
+                </label>
+                <div className="form-hint">
+                  Pushes a few seconds after any change, and pulls (then reloads) when another device has pushed something newer.
+                  Checked every 60s while the app is open. Requires the URL and token above.
+                </div>
               </div>
             </div>
 
