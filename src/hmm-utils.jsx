@@ -85,6 +85,8 @@ const S = {
   saveChat: (id, v) => __set(`hmm_chat_${id}`, v),
   history: id => __get(`hmm_hist_${id}`, []),
   saveHistory: (id, v) => __set(`hmm_hist_${id}`, v),
+  draft: id => __get(`hmm_draft_${id}`, ''),
+  saveDraft: (id, v) => v ? __set(`hmm_draft_${id}`, v) : (__mem.delete(`hmm_draft_${id}`), __idbDel(`hmm_draft_${id}`)),
   lorebook: () => __get('hmm_lorebook', []),
   saveLorebook: v => __set('hmm_lorebook', v),
   // Scripts — attachable lorebooks with advanced trigger rules.
@@ -102,8 +104,8 @@ const S = {
   },
   saveScripts: v => __set('hmm_scripts', v),
   deleteCharData: id => {
-    __mem.delete(`hmm_chat_${id}`); __mem.delete(`hmm_hist_${id}`);
-    __idbDel(`hmm_chat_${id}`); __idbDel(`hmm_hist_${id}`);
+    __mem.delete(`hmm_chat_${id}`); __mem.delete(`hmm_hist_${id}`); __mem.delete(`hmm_draft_${id}`);
+    __idbDel(`hmm_chat_${id}`); __idbDel(`hmm_hist_${id}`); __idbDel(`hmm_draft_${id}`);
   },
   clearAll: () => new Promise(res => {
     __mem.clear();
@@ -180,6 +182,19 @@ function compressImage(dataUrl, maxDim = 512, quality = 0.85) {
     img.src = dataUrl;
   });
 }
+// Uploads an image to Catbox and returns its public URL — used to auto-embed
+// images in greetings instead of a manual upload-then-paste-the-link workflow.
+async function uploadToCatbox(file) {
+  const fd = new FormData();
+  fd.append('reqtype', 'fileupload');
+  fd.append('fileToUpload', file);
+  const res = await fetch('https://catbox.moe/user/api.php', { method: 'POST', body: fd });
+  if (!res.ok) throw new Error(`Catbox upload failed (${res.status})`);
+  const text = (await res.text()).trim();
+  if (!/^https?:\/\//.test(text)) throw new Error(text || 'Unexpected response from Catbox');
+  return text;
+}
+
 const estimateTokens = text => Math.ceil((text || '').length / 4);
 const formatTime = ts => ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 const formatDate = ts => {
@@ -911,7 +926,7 @@ async function downloadCharPng(char) {
 }
 
 Object.assign(window, {
-  AppCtx, S, genId, estimateTokens, compressImage,
+  AppCtx, S, genId, estimateTokens, compressImage, uploadToCatbox,
   formatTime, formatDate, renderMarkdown,
   charBg, charFg, buildSystemPrompt, substituteMacros, callAI, avatarPx,
   summarizeMessages, GistSync,

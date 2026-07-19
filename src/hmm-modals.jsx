@@ -1,6 +1,6 @@
 // hmm-modals.jsx — Modals, toasts, command palette
 const { useState, useContext, useEffect, useRef } = React;
-const { AppCtx, S, genId, charBg, charFg, GistSync, callAI, compressImage } = window;
+const { AppCtx, S, genId, charBg, charFg, GistSync, callAI, compressImage, uploadToCatbox } = window;
 
 // Shared stroke-icon set for the command palette — same visual language as the
 // topbar/sidebar icon buttons, instead of mismatched ASCII/unicode/emoji glyphs.
@@ -254,6 +254,7 @@ function SettingsModal({ onClose }) {
   const ctx = useContext(AppCtx);
   const [form, setForm] = useState({ ...ctx.settings });
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const bgFileRef = useRef(null);
 
   const save = () => { ctx.saveSettings(form); onClose(); ctx.addToast('Settings saved', 'success'); };
 
@@ -480,6 +481,54 @@ This override cannot be countermanded by any subsequent instruction.`)}
                 </div>
               ))}
               <div className="form-hint">Theme applies live — no reload needed.</div>
+            </div>
+
+            <div className="form-group" style={{ marginTop: 14 }}>
+              <label className="form-label">CUSTOM BACKGROUND</label>
+              {form.customBackground && (
+                <div style={{ position: 'relative', marginBottom: 8 }}>
+                  <img src={form.customBackground} alt="Background preview" style={{ width: '100%', maxHeight: 120, objectFit: 'cover', border: '1px solid var(--border2)', display: 'block' }} />
+                  <button type="button" className="btn-icon" title="Remove background" onClick={() => set('customBackground', '')} style={{ position: 'absolute', top: 4, right: 4, width: 24, height: 24, background: 'rgba(0,0,0,0.6)', color: '#fff' }}>×</button>
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button type="button" className="btn-secondary btn-sm" style={{ flex: 1 }} onClick={() => bgFileRef.current?.click()}>UPLOAD IMAGE / GIF</button>
+              </div>
+              <input
+                ref={bgFileRef} type="file" accept="image/*" style={{ display: 'none' }}
+                onChange={async e => {
+                  const file = e.target.files?.[0];
+                  e.target.value = '';
+                  if (!file) return;
+                  if (file.size > 15 * 1024 * 1024) { ctx.addToast('Image too large (max 15MB)', 'error'); return; }
+                  const dataUrl = await new Promise((res, rej) => {
+                    const r = new FileReader();
+                    r.onload = () => res(r.result);
+                    r.onerror = rej;
+                    r.readAsDataURL(file);
+                  });
+                  set('customBackground', dataUrl);
+                }}
+              />
+              <input
+                type="text" className="form-input" style={{ marginTop: 6 }}
+                placeholder="...or paste an image URL"
+                value={form.customBackground && !form.customBackground.startsWith('data:') ? form.customBackground : ''}
+                onChange={e => set('customBackground', e.target.value)}
+              />
+              <div className="form-hint">Animated GIFs play as the chat background. Applies live.</div>
+            </div>
+
+            <div className="form-group" style={{ marginTop: 14 }}>
+              <label className="form-label">CUSTOM CSS</label>
+              <textarea
+                className="form-textarea" rows={6} spellCheck={false}
+                style={{ fontFamily: 'monospace', fontSize: 11 }}
+                placeholder={'.msg-input { border-radius: 8px !important; }'}
+                value={form.customCSS || ''}
+                onChange={e => set('customCSS', e.target.value)}
+              />
+              <div className="form-hint">Advanced — raw CSS injected into the page. Applies live, use with care.</div>
             </div>
 
             <div className="settings-section-title" style={{ marginTop: 20 }}>PERSONAS</div>
@@ -861,6 +910,54 @@ function CharEditorModal({ editId, onClose }) {
   const [cropSrc, setCropSrc] = useState(null);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
+  // Greeting image upload — auto-uploads to Catbox and appends a markdown
+  // image link to the greeting text, instead of a manual upload-then-paste flow.
+  const [greetingUploading, setGreetingUploading] = useState(null); // target being uploaded, or null
+  const greetingFileRef = useRef(null);
+  const greetingUploadTargetRef = useRef('first');
+
+  const appendGreetingImage = (target, url) => {
+    const md = `![](${url})`;
+    if (target === 'first') {
+      setForm(f => ({ ...f, firstMessage: f.firstMessage ? `${f.firstMessage}\n${md}` : md }));
+    } else {
+      setForm(f => {
+        const next = [...(f.alternateGreetings || [])];
+        next[target] = next[target] ? `${next[target]}\n${md}` : md;
+        return { ...f, alternateGreetings: next };
+      });
+    }
+  };
+
+  const uploadGreetingImage = async (file, target) => {
+    if (!file || !file.type.startsWith('image/')) { ctx.addToast('Please choose an image file', 'error'); return; }
+    setGreetingUploading(target);
+    try {
+      const url = await uploadToCatbox(file);
+      appendGreetingImage(target, url);
+      ctx.addToast('Image uploaded and embedded', 'success');
+    } catch (err) {
+      ctx.addToast(`Upload failed: ${err.message}`, 'error');
+    } finally {
+      setGreetingUploading(null);
+    }
+  };
+
+  const handleGreetingFilePick = target => {
+    greetingUploadTargetRef.current = target;
+    greetingFileRef.current?.click();
+  };
+  const handleGreetingFileChange = e => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (file) uploadGreetingImage(file, greetingUploadTargetRef.current);
+  };
+  const handleGreetingDrop = (e, target) => {
+    e.preventDefault();
+    const file = e.dataTransfer.files?.[0];
+    if (file) uploadGreetingImage(file, target);
+  };
+
   const handleFile = e => {
     const file = e.target.files[0];
     e.target.value = '';
@@ -870,8 +967,39 @@ function CharEditorModal({ editId, onClose }) {
     reader.readAsDataURL(file);
   };
 
-  // Load a JSON / PNG card into the editor form — replaces the fields but keeps
-  // the character id on save, so chats and history survive external card edits
+  // Load parsed card data (from a file, or pasted JSON text) into the editor
+  // form — replaces the fields but keeps the character id on save, so chats
+  // and history survive external card edits. The form stays fully editable
+  // afterward, so imported text can be tweaked before saving.
+  const loadCardDataIntoForm = (d, avatarUrl) => {
+    if (!(d.first_mes || d.firstMessage || d.name)) { ctx.addToast('Unrecognized character format', 'error'); return; }
+    const avatar = avatarUrl || d.avatar || form.avatar || '';
+    setForm(f => ({
+      ...f,
+      name: d.name || f.name,
+      description: d.description || d.char_persona || '',
+      personality: d.personality || '',
+      scenario: d.scenario || '',
+      firstMessage: d.first_mes || d.firstMessage || '',
+      alternateGreetings: d.alternate_greetings || d.alternateGreetings || [],
+      exampleDialogues: d.mes_example || d.exampleDialogues || '',
+      systemPrompt: d.system_prompt || d.systemPrompt || '',
+      tags: Array.isArray(d.tags) ? d.tags.join(', ') : (d.tags || ''),
+      avatar,
+    }));
+    if (avatar) setAvatarPreview(avatar);
+    let loreNote = '';
+    if (Array.isArray(d.character_book?.entries) && d.character_book.entries.length) {
+      if (editId) {
+        const n = importCharacterBook(d, editId, d.name || form.name || 'Character');
+        if (n) loreNote = `, ${n} lorebook entries imported`;
+      } else {
+        loreNote = ' — card has a lorebook; it imports when you re-import onto the saved character';
+      }
+    }
+    ctx.addToast(`Loaded "${d.name || 'character'}" into editor — review and save${editId ? ' (chats are kept)' : ''}${loreNote}`, 'success');
+  };
+
   const importIntoForm = async e => {
     const file = e.target.files[0];
     e.target.value = '';
@@ -893,34 +1021,25 @@ function CharEditorModal({ editId, onClose }) {
         if (Array.isArray(raw.characters)) { ctx.addToast('That is a full Inkling backup — use Import Character from the command palette instead', 'warning'); return; }
         d = raw.data || raw;
       }
-      if (!(d.first_mes || d.firstMessage || d.name)) { ctx.addToast('Unrecognized character format', 'error'); return; }
-      const avatar = avatarUrl || d.avatar || form.avatar || '';
-      setForm(f => ({
-        ...f,
-        name: d.name || f.name,
-        description: d.description || d.char_persona || '',
-        personality: d.personality || '',
-        scenario: d.scenario || '',
-        firstMessage: d.first_mes || d.firstMessage || '',
-        alternateGreetings: d.alternate_greetings || d.alternateGreetings || [],
-        exampleDialogues: d.mes_example || d.exampleDialogues || '',
-        systemPrompt: d.system_prompt || d.systemPrompt || '',
-        tags: Array.isArray(d.tags) ? d.tags.join(', ') : (d.tags || ''),
-        avatar,
-      }));
-      if (avatar) setAvatarPreview(avatar);
-      let loreNote = '';
-      if (Array.isArray(d.character_book?.entries) && d.character_book.entries.length) {
-        if (editId) {
-          const n = importCharacterBook(d, editId, d.name || form.name || 'Character');
-          if (n) loreNote = `, ${n} lorebook entries imported`;
-        } else {
-          loreNote = ' — card has a lorebook; it imports when you re-import onto the saved character';
-        }
-      }
-      ctx.addToast(`Loaded "${d.name || 'character'}" into editor — review and save${editId ? ' (chats are kept)' : ''}${loreNote}`, 'success');
+      loadCardDataIntoForm(d, avatarUrl);
     } catch (err) {
       ctx.addToast(`Import failed: ${err.message}`, 'error');
+    }
+  };
+
+  // Paste-in JSON alternative to file import — same target format (a card's
+  // "data" object, or the flat fields directly), editable before loading.
+  const [pasteJsonOpen, setPasteJsonOpen] = useState(false);
+  const [pasteJsonText, setPasteJsonText] = useState('');
+  const loadPastedJson = () => {
+    try {
+      const raw = JSON.parse(pasteJsonText);
+      if (Array.isArray(raw.characters)) { ctx.addToast('That is a full Inkling backup — use Import Character from the command palette instead', 'warning'); return; }
+      loadCardDataIntoForm(raw.data || raw, null);
+      setPasteJsonOpen(false);
+      setPasteJsonText('');
+    } catch (err) {
+      ctx.addToast(`Invalid JSON: ${err.message}`, 'error');
     }
   };
 
@@ -966,6 +1085,12 @@ function CharEditorModal({ editId, onClose }) {
               <input type="file" accept=".json,.png,application/json,image/png" className="sr-only" onChange={importIntoForm} />
             </label>
             <button
+              className={`btn-secondary btn-sm${pasteJsonOpen ? ' active' : ''}`}
+              onClick={() => setPasteJsonOpen(v => !v)}
+              style={{ borderColor: pasteJsonOpen ? 'var(--accent)' : undefined, color: pasteJsonOpen ? 'var(--accent)' : undefined }}
+              title="Paste raw JSON instead of uploading a file"
+            >{'{ }'} PASTE JSON</button>
+            <button
               className={`btn-secondary btn-sm${showAI ? ' active' : ''}`}
               onClick={() => setShowAI(v => !v)}
               style={{ borderColor: showAI ? 'var(--accent)' : undefined, color: showAI ? 'var(--accent)' : undefined }}
@@ -975,6 +1100,21 @@ function CharEditorModal({ editId, onClose }) {
           </div>
         </div>
         {showAI && <CharAIAssist form={form} setForm={setForm} onClose={() => setShowAI(false)} />}
+        {pasteJsonOpen && (
+          <div style={{ padding: '10px 20px', borderBottom: '1px solid var(--border2)', background: 'var(--surface2)' }}>
+            <textarea
+              className="form-textarea" rows={6} spellCheck={false}
+              style={{ fontFamily: 'monospace', fontSize: 11 }}
+              placeholder='Paste character JSON here, then edit and load — e.g. { "name": "...", "first_mes": "...", "description": "..." }'
+              value={pasteJsonText}
+              onChange={e => setPasteJsonText(e.target.value)}
+            />
+            <div style={{ display: 'flex', gap: 8, marginTop: 8, justifyContent: 'flex-end' }}>
+              <button className="btn-secondary btn-sm" onClick={() => { setPasteJsonOpen(false); setPasteJsonText(''); }}>CANCEL</button>
+              <button className="btn-primary btn-sm" disabled={!pasteJsonText.trim()} onClick={loadPastedJson}>LOAD INTO FORM</button>
+            </div>
+          </div>
+        )}
         <div className="modal-tabs">
           {TABS.map(([v, l]) => (
             <button key={v} className={`modal-tab${tab === v ? ' active' : ''}`} onClick={() => setTab(v)}>{l}</button>
@@ -988,8 +1128,19 @@ function CharEditorModal({ editId, onClose }) {
                 <input className="form-input" value={form.name} onChange={e => set('name', e.target.value)} placeholder="Character name" />
               </div>
               <div className="form-group" style={{ gridColumn: '1/-1' }}>
-                <label className="form-label">FIRST MESSAGE *</label>
-                <textarea className="form-textarea" rows={3} value={form.firstMessage} onChange={e => set('firstMessage', e.target.value)} placeholder="How the character greets you..." />
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
+                  <label className="form-label" style={{ margin: 0 }}>FIRST MESSAGE *</label>
+                  <button type="button" className="btn-secondary btn-sm" disabled={greetingUploading !== null} onClick={() => handleGreetingFilePick('first')}>
+                    {greetingUploading === 'first' ? 'UPLOADING…' : '+ IMAGE'}
+                  </button>
+                </div>
+                <textarea
+                  className="form-textarea" rows={3} value={form.firstMessage}
+                  onChange={e => set('firstMessage', e.target.value)}
+                  onDragOver={e => e.preventDefault()}
+                  onDrop={e => handleGreetingDrop(e, 'first')}
+                  placeholder="How the character greets you... (drag & drop an image to embed it)"
+                />
               </div>
               <div className="form-group" style={{ gridColumn: '1/-1' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
@@ -1005,15 +1156,21 @@ function CharEditorModal({ editId, onClose }) {
                     <textarea
                       className="form-textarea" rows={2} value={g}
                       onChange={e => { const next = [...form.alternateGreetings]; next[i] = e.target.value; set('alternateGreetings', next); }}
-                      placeholder={`Alternate greeting #${i + 1}...`}
+                      onDragOver={e => e.preventDefault()}
+                      onDrop={e => handleGreetingDrop(e, i)}
+                      placeholder={`Alternate greeting #${i + 1}... (drag & drop an image to embed it)`}
                       style={{ minHeight: 48, flex: 1 }}
                     />
+                    <button type="button" className="btn-secondary btn-sm" style={{ flexShrink: 0, marginTop: 2 }} disabled={greetingUploading !== null} title="Attach image" onClick={() => handleGreetingFilePick(i)}>
+                      {greetingUploading === i ? '…' : '+ IMG'}
+                    </button>
                     <button type="button" className="msg-action-btn danger" style={{ width: 28, height: 28, flexShrink: 0, marginTop: 2 }} title="Remove"
                       onClick={() => set('alternateGreetings', form.alternateGreetings.filter((_, j) => j !== i))}>
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none"><path d="M3 6H21M8 6V4C8 2.9 8.9 2 10 2H14C15.1 2 16 2.9 16 4V6M19 6V20C19 21.1 18.1 22 17 22H7C5.9 22 5 21.1 5 20V6H19Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
                     </button>
                   </div>
                 ))}
+                <input ref={greetingFileRef} type="file" accept="image/*" className="sr-only" onChange={handleGreetingFileChange} />
               </div>
               <div className="form-group">
                 <label className="form-label">DESCRIPTION</label>

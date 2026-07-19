@@ -437,6 +437,10 @@ function ChatView() {
   const inputRef = useRef(null);
   const fileRef = useRef(null);
   const regenInstrRef = useRef(null);
+  // Tracks whether the user dragged the textarea's own resize handle, so
+  // typing afterward doesn't fight their chosen height.
+  const manualResized = useRef(false);
+  const lastAutoHeight = useRef('');
 
   const getTempVal = () => tempPreset === 'precise' ? 0.3 : tempPreset === 'creative' ? 1.0 : 0.7;
   const REPLY_HINTS = {
@@ -470,7 +474,9 @@ function ChatView() {
     } else {
       setMessages(saved);
     }
-    setInputVal('');
+    setInputVal(S.draft(char.id));
+    manualResized.current = false;
+    if (inputRef.current) inputRef.current.style.height = 'auto';
     setShowSearch(false);
     setSearchQ('');
     setShowVarPanel(false);
@@ -492,11 +498,19 @@ function ChatView() {
     return () => window.removeEventListener('keydown', fn);
   }, [ctx.currentChar]);
 
+  const updateInput = v => { setInputVal(v); if (char) S.saveDraft(char.id, v); };
+
   const handleInputChange = e => {
-    setInputVal(e.target.value);
+    updateInput(e.target.value);
     const ta = e.target;
-    ta.style.height = 'auto';
-    ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
+    if (!manualResized.current && ta.style.height && ta.style.height !== lastAutoHeight.current) {
+      manualResized.current = true; // height changed since we last set it — a manual drag-resize
+    }
+    if (!manualResized.current) {
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(ta.scrollHeight, 320) + 'px';
+      lastAutoHeight.current = ta.style.height;
+    }
   };
 
   const totalTokens = messages.reduce((s, m) => {
@@ -517,7 +531,7 @@ function ChatView() {
   const sendMessage = async () => {
     if (!inputVal.trim() || !char || generating) return;
     const text = inputVal.trim();
-    setInputVal('');
+    updateInput('');
     if (inputRef.current) inputRef.current.style.height = 'auto';
 
     if (char.isGroup) {
@@ -679,7 +693,7 @@ function ChatView() {
   const sendAsNarrator = async () => {
     if (!inputVal.trim() || !char || generating) return;
     const text = inputVal.trim();
-    setInputVal('');
+    updateInput('');
     if (inputRef.current) inputRef.current.style.height = 'auto';
 
     const narratorMsg = { id: genId(), role: 'user', content: text, timestamp: new Date().toISOString(), narrator: true };
@@ -901,7 +915,7 @@ function ChatView() {
 
       if (result) {
         const clean = result.trim().replace(/^["']|["']$/g, '');
-        setInputVal(clean);
+        updateInput(clean);
         if (inputRef.current) {
           inputRef.current.style.height = 'auto';
           inputRef.current.style.height = Math.min(inputRef.current.scrollHeight, 160) + 'px';
@@ -917,10 +931,10 @@ function ChatView() {
     if (e.key === 'Tab' && inputVal.startsWith('/')) {
       e.preventDefault();
       const cmd = inputVal.toLowerCase().trim();
-      if (cmd === '/write' || cmd === '/w') { setInputVal(''); assist('write'); }
+      if (cmd === '/write' || cmd === '/w') { updateInput(''); assist('write'); }
       else if (cmd === '/enhance' || cmd === '/e') { assist('enhance'); }
-      else if (cmd === '/continue' || cmd === '/c') { setInputVal(''); assist('continue'); }
-      else if (cmd === '/imp' || cmd === '/impersonate') { setInputVal(''); assist('impersonate'); }
+      else if (cmd === '/continue' || cmd === '/c') { updateInput(''); assist('continue'); }
+      else if (cmd === '/imp' || cmd === '/impersonate') { updateInput(''); assist('impersonate'); }
     }
   };
 
@@ -1043,7 +1057,7 @@ function ChatView() {
           )}
           {filtered.map((msg, i) => {
             const prev = filtered[i - 1];
-            const grouped = !!prev && prev.role === msg.role && !msg.narrator && !prev.narrator && !msg.pinned && !prev.pinned &&
+            const grouped = !!prev && prev.role === msg.role && prev.charId === msg.charId && !msg.narrator && !prev.narrator && !msg.pinned && !prev.pinned &&
               (new Date(msg.timestamp) - new Date(prev.timestamp)) < 5 * 60 * 1000;
             return (
             <Message
@@ -1148,7 +1162,7 @@ function ChatView() {
             <button className="btn-icon" style={{ width: 26, height: 26 }} title='Format dialogue "quotes"' onClick={() => {
               if (inputRef.current?.value) {
                 const v = inputRef.current.value.replace(/(?<!")\"([^\"]+)\"/g, '\u201c$1\u201d');
-                setInputVal(v);
+                updateInput(v);
               }
             }}><span style={{ fontSize: 13, fontWeight: 700 }}>"</span></button>
             <button className="btn-icon" style={{ width: 26, height: 26 }} title="Attach image" onClick={() => fileRef.current?.click()}>
@@ -1262,7 +1276,7 @@ function ChatView() {
               }}
             />
             {inputVal && (
-              <button type="button" className="input-clear-btn" title="Clear draft" onClick={() => { setInputVal(''); inputRef.current?.focus(); }}>
+              <button type="button" className="input-clear-btn" title="Clear draft" onClick={() => { updateInput(''); inputRef.current?.focus(); }}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M6 6L18 18M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
               </button>
             )}

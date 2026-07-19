@@ -36,6 +36,34 @@ function App() {
     document.body.classList.toggle('reduce-motion', !!settings.reduceMotion);
   }, [settings.theme, settings.fontSize, settings.density, settings.reduceMotion]);
 
+  // Custom background image (GIFs animate natively) + custom CSS injection
+  useEffect(() => {
+    document.documentElement.classList.toggle('has-custom-bg', !!settings.customBackground);
+    if (settings.customBackground) {
+      document.body.style.backgroundImage = `url("${settings.customBackground}")`;
+      document.body.style.backgroundSize = 'cover';
+      document.body.style.backgroundPosition = 'center';
+      document.body.style.backgroundAttachment = 'fixed';
+      document.body.style.backgroundRepeat = 'no-repeat';
+    } else {
+      document.body.style.backgroundImage = '';
+      document.body.style.backgroundSize = '';
+      document.body.style.backgroundPosition = '';
+      document.body.style.backgroundAttachment = '';
+      document.body.style.backgroundRepeat = '';
+    }
+  }, [settings.customBackground]);
+
+  useEffect(() => {
+    let styleTag = document.getElementById('hmm-custom-css');
+    if (!styleTag) {
+      styleTag = document.createElement('style');
+      styleTag.id = 'hmm-custom-css';
+      document.head.appendChild(styleTag);
+    }
+    styleTag.textContent = settings.customCSS || '';
+  }, [settings.customCSS]);
+
   // Restore last character on mount
   useEffect(() => {
     const lastId = localStorage.getItem('hmm_current');
