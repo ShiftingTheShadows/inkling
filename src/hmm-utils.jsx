@@ -85,6 +85,8 @@ const S = {
   saveChat: (id, v) => __set(`hmm_chat_${id}`, v),
   history: id => __get(`hmm_hist_${id}`, []),
   saveHistory: (id, v) => __set(`hmm_hist_${id}`, v),
+  draft: id => __get(`hmm_draft_${id}`, ''),
+  saveDraft: (id, v) => v ? __set(`hmm_draft_${id}`, v) : (__mem.delete(`hmm_draft_${id}`), __idbDel(`hmm_draft_${id}`)),
   lorebook: () => __get('hmm_lorebook', []),
   saveLorebook: v => __set('hmm_lorebook', v),
   // Scripts — attachable lorebooks with advanced trigger rules.
@@ -102,8 +104,8 @@ const S = {
   },
   saveScripts: v => __set('hmm_scripts', v),
   deleteCharData: id => {
-    __mem.delete(`hmm_chat_${id}`); __mem.delete(`hmm_hist_${id}`);
-    __idbDel(`hmm_chat_${id}`); __idbDel(`hmm_hist_${id}`);
+    __mem.delete(`hmm_chat_${id}`); __mem.delete(`hmm_hist_${id}`); __mem.delete(`hmm_draft_${id}`);
+    __idbDel(`hmm_chat_${id}`); __idbDel(`hmm_hist_${id}`); __idbDel(`hmm_draft_${id}`);
   },
   clearAll: () => new Promise(res => {
     __mem.clear();
@@ -145,7 +147,26 @@ const S = {
   savePersonas: v => __set('hmm_personas', v),
   activePersonaId: () => localStorage.getItem('hmm_active_persona') || 'default',
   setActivePersonaId: id => localStorage.setItem('hmm_active_persona', id),
+  lastSeenChangelog: () => localStorage.getItem('hmm_changelog_seen') || '',
+  setLastSeenChangelog: v => localStorage.setItem('hmm_changelog_seen', v),
 };
+
+// ── Changelog — newest entry first. Bump the top `version` (a date works
+// fine) whenever entries are added so returning users get an auto-popup.
+const CHANGELOG = [
+  {
+    version: '2026-07-19',
+    date: 'Jul 19, 2026',
+    items: [
+      'New: "What\'s New" changelog — opens automatically after an update, or any time from the command palette.',
+      'New: Drag-and-drop or pick an image on a greeting to auto-upload it to Catbox and embed it — no more manual upload-then-paste.',
+      'New: Paste raw JSON directly into the character editor instead of only importing from a file.',
+      'New: Custom chat background image (animated GIFs supported) and custom CSS injection, in Settings → Theme.',
+      'New: The message box now remembers your draft per-character across refreshes and character switches, and can be manually resized.',
+      'Fixed: group chat messages from different characters replying back-to-back no longer hide each other\'s avatar/name.',
+    ],
+  },
+];
 
 // ── Utilities ────────────────────────────────────────────────────
 const genId = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36);
@@ -180,6 +201,19 @@ function compressImage(dataUrl, maxDim = 512, quality = 0.85) {
     img.src = dataUrl;
   });
 }
+// Uploads an image to Catbox and returns its public URL — used to auto-embed
+// images in greetings instead of a manual upload-then-paste-the-link workflow.
+async function uploadToCatbox(file) {
+  const fd = new FormData();
+  fd.append('reqtype', 'fileupload');
+  fd.append('fileToUpload', file);
+  const res = await fetch('https://catbox.moe/user/api.php', { method: 'POST', body: fd });
+  if (!res.ok) throw new Error(`Catbox upload failed (${res.status})`);
+  const text = (await res.text()).trim();
+  if (!/^https?:\/\//.test(text)) throw new Error(text || 'Unexpected response from Catbox');
+  return text;
+}
+
 const estimateTokens = text => Math.ceil((text || '').length / 4);
 const formatTime = ts => ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 const formatDate = ts => {
@@ -911,7 +945,7 @@ async function downloadCharPng(char) {
 }
 
 Object.assign(window, {
-  AppCtx, S, genId, estimateTokens, compressImage,
+  AppCtx, S, genId, estimateTokens, compressImage, uploadToCatbox, CHANGELOG,
   formatTime, formatDate, renderMarkdown,
   charBg, charFg, buildSystemPrompt, substituteMacros, callAI, avatarPx,
   summarizeMessages, GistSync,
