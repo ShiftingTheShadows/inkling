@@ -162,7 +162,7 @@ const CHANGELOG = [
     date: 'Jul 19, 2026',
     items: [
       'New: "What\'s New" changelog, opens automatically after an update, or any time from the command palette.',
-      'New: Drag-and-drop or pick an image on a greeting to auto-upload it to Catbox and embed it, no more manual upload-then-paste.',
+      'New: Drag-and-drop or pick an image on a greeting to auto-upload it and embed it, no more manual upload-then-paste. Needs a free freeimage.host API key in Settings → Integrations.',
       'New: Paste raw JSON directly into the character editor instead of only importing from a file.',
       'New: Custom chat background image (animated GIFs supported) and custom CSS injection, in Settings → Theme.',
       'New: The message box now remembers your draft per-character across refreshes and character switches, and can be manually resized.',
@@ -207,15 +207,17 @@ function compressImage(dataUrl, maxDim = 512, quality = 0.85) {
     img.src = dataUrl;
   });
 }
-// Uploads an image to Catbox and returns its public URL, used to auto-embed
-// images in greetings instead of a manual upload-then-paste-the-link workflow.
-// Routed through /api/catbox (see api/catbox.js) rather than calling
-// catbox.moe directly — Catbox sends no CORS headers on any response, so a
-// browser fetch() straight to it always fails with "Failed to fetch".
-async function uploadToCatbox(file) {
+// Uploads an image (via freeimage.host — see api/imgupload.js for why not
+// Catbox) and returns its public URL, used to auto-embed images in greetings
+// instead of a manual upload-then-paste-the-link workflow. Routed through
+// /api/imgupload rather than calling the host directly since it, like
+// Catbox, sends no CORS headers a browser fetch() could work with.
+async function uploadImage(file, apiKey) {
+  if (!apiKey?.trim()) throw new Error('Add an image host API key in Settings first');
   const fd = new FormData();
   fd.append('file', file);
-  const res = await fetch('/api/catbox', { method: 'POST', body: fd });
+  fd.append('apiKey', apiKey.trim());
+  const res = await fetch('/api/imgupload', { method: 'POST', body: fd });
   let j = null;
   try { j = await res.json(); } catch {}
   if (!res.ok || !j?.url) throw new Error(j?.error || `Upload failed (${res.status})`);
@@ -986,7 +988,7 @@ async function downloadCharPng(char) {
 }
 
 Object.assign(window, {
-  AppCtx, S, genId, estimateTokens, compressImage, uploadToCatbox, CHANGELOG,
+  AppCtx, S, genId, estimateTokens, compressImage, uploadImage, CHANGELOG,
   formatTime, formatDate, renderMarkdown,
   charBg, charFg, buildSystemPrompt, substituteMacros, callAI, avatarPx,
   summarizeMessages, GistSync, RailwaySync,
