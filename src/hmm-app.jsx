@@ -1,8 +1,8 @@
 // hmm-app.jsx — Root App
 const { useState, useEffect, useCallback } = React;
-const { AppCtx, S, genId, GistSync } = window;
+const { AppCtx, S, genId, GistSync, CHANGELOG } = window;
 const { Sidebar, WelcomeScreen, ChatView } = window;
-const { ToastStack, CommandPalette, SettingsModal, CharEditorModal, GroupEditorModal, ImportModal, HistoryModal, PersonasModal, SyncModal, LorebookModal } = window;
+const { ToastStack, CommandPalette, SettingsModal, CharEditorModal, GroupEditorModal, ImportModal, HistoryModal, PersonasModal, SyncModal, LorebookModal, ChangelogModal } = window;
 
 function App() {
   const [chars, setChars]               = useState(() => S.chars());
@@ -71,6 +71,18 @@ function App() {
       const c = S.chars().find(x => x.id === lastId);
       if (c) setCurrentChar(c);
     }
+  }, []);
+
+  // Auto-popup "What's New" for returning users after an update — skip on a
+  // totally fresh install, since there's nothing to have missed yet
+  useEffect(() => {
+    const latest = CHANGELOG[0]?.version;
+    if (!latest) return;
+    const seen = S.lastSeenChangelog();
+    if (seen === latest) return;
+    if (!seen && S.chars().length === 0) { S.setLastSeenChangelog(latest); return; }
+    setModal({ type: 'changelog' });
+    S.setLastSeenChangelog(latest);
   }, []);
 
   useEffect(() => {
@@ -276,6 +288,7 @@ function App() {
       {modal?.type === 'personas'    && <PersonasModal onClose={closeModal} />}
       {modal?.type === 'sync'        && <SyncModal onClose={closeModal} />}
       {modal?.type === 'lorebook'    && <LorebookModal onClose={closeModal} />}
+      {modal?.type === 'changelog'   && <ChangelogModal onClose={closeModal} />}
       {modal?.type === 'history' && currentChar && (
         <HistoryModal char={currentChar} onRestore={restoreHistory} onClose={closeModal} />
       )}

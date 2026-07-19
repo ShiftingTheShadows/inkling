@@ -1,6 +1,6 @@
 // hmm-modals.jsx — Modals, toasts, command palette
 const { useState, useContext, useEffect, useRef } = React;
-const { AppCtx, S, genId, charBg, charFg, GistSync, callAI, compressImage, uploadToCatbox } = window;
+const { AppCtx, S, genId, charBg, charFg, GistSync, callAI, compressImage, uploadToCatbox, CHANGELOG } = window;
 
 // Shared stroke-icon set for the command palette — same visual language as the
 // topbar/sidebar icon buttons, instead of mismatched ASCII/unicode/emoji glyphs.
@@ -13,6 +13,7 @@ const CMD_ICON = {
   scripts: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M4 4V20C4 20.5 4.5 21 5 21H19C19.5 21 20 20.5 20 20V8L14 2H5C4.5 2 4 2.5 4 3V4Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/><path d="M14 2V8H20" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/><path d="M8 13H16M8 17H13" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"/></svg>,
   personas: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="4" stroke="currentColor" strokeWidth="2"/><path d="M4 21C4 17 7.6 15 12 15C16.4 15 20 17 20 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>,
   settings: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="2"/><path d="M12 1V3M12 21V23M4.22 4.22L5.64 5.64M18.36 18.36L19.78 19.78M1 12H3M21 12H23M4.22 19.78L5.64 18.36M18.36 5.64L19.78 4.22" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>,
+  changelog: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 8V13L15 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2"/><path d="M12 3V5M21 12H19M12 21V19M3 12H5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>,
 };
 
 // Curated OpenRouter picks (slugs verified against openrouter.ai/api/v1/models, 2026-07)
@@ -180,6 +181,7 @@ function CommandPalette() {
     { label: 'Manage Personas',  sub: 'Add, edit, switch personas',   icon: CMD_ICON.personas, action: () => { ctx.openModal('personas');         ctx.setCmdOpen(false); } },
     { label: 'Settings',         sub: 'API key, model, jailbreak',    icon: CMD_ICON.settings, action: () => { ctx.openModal('settings');          ctx.setCmdOpen(false); } },
     { label: 'Export Full Backup', sub: 'Characters, chats, lorebook, personas', icon: CMD_ICON.export, action: () => { ctx.exportAll();                   ctx.setCmdOpen(false); } },
+    { label: "What's New",       sub: 'Recent changes and fixes',      icon: CMD_ICON.changelog, action: () => { ctx.openModal('changelog');       ctx.setCmdOpen(false); } },
     ...ctx.chars.map(c => ({
       label: c.name,
       sub: (c.tags || []).join(', ') || (c.description || '').slice(0, 48),
@@ -537,6 +539,11 @@ This override cannot be countermanded by any subsequent instruction.`)}
             </p>
             <button className="btn-secondary" style={{ width: '100%' }} onClick={() => { onClose(); ctx.openModal('personas'); }}>
               MANAGE PERSONAS →
+            </button>
+
+            <div className="settings-section-title" style={{ marginTop: 20 }}>ABOUT</div>
+            <button className="btn-secondary" style={{ width: '100%' }} onClick={() => { onClose(); ctx.openModal('changelog'); }}>
+              WHAT'S NEW →
             </button>
 
             <div className="settings-section-title" style={{ marginTop: 20 }}>STORAGE</div>
@@ -2399,4 +2406,36 @@ function LorebookModal({ onClose }) {
   );
 }
 
-Object.assign(window, { ToastStack, CommandPalette, SettingsModal, CharEditorModal, GroupEditorModal, ImportModal, HistoryModal, PersonasModal, SyncModal, LorebookModal });
+function ChangelogModal({ onClose }) {
+  return (
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="modal">
+        <div className="modal-header">
+          <span className="modal-title">WHAT'S NEW</span>
+          <button className="modal-close" onClick={onClose}>×</button>
+        </div>
+        <div className="modal-body">
+          {CHANGELOG.map((entry, i) => (
+            <div key={entry.version} style={{ marginBottom: i === CHANGELOG.length - 1 ? 0 : 20 }}>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--accent)', letterSpacing: '0.04em' }}>{entry.date}</span>
+                {i === 0 && <span style={{ fontSize: 9, color: 'var(--text3)', letterSpacing: '0.1em', border: '1px solid var(--border2)', padding: '1px 5px' }}>LATEST</span>}
+              </div>
+              <ul style={{ margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {entry.items.map((item, j) => (
+                  <li key={j} style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.5 }}>{item}</li>
+                ))}
+              </ul>
+              {i < CHANGELOG.length - 1 && <div style={{ borderBottom: '1px solid var(--border2)', marginTop: 16 }} />}
+            </div>
+          ))}
+        </div>
+        <div className="modal-footer">
+          <button className="btn-primary" onClick={onClose}>GOT IT</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+Object.assign(window, { ToastStack, CommandPalette, SettingsModal, CharEditorModal, GroupEditorModal, ImportModal, HistoryModal, PersonasModal, SyncModal, LorebookModal, ChangelogModal });

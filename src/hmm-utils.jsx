@@ -147,7 +147,26 @@ const S = {
   savePersonas: v => __set('hmm_personas', v),
   activePersonaId: () => localStorage.getItem('hmm_active_persona') || 'default',
   setActivePersonaId: id => localStorage.setItem('hmm_active_persona', id),
+  lastSeenChangelog: () => localStorage.getItem('hmm_changelog_seen') || '',
+  setLastSeenChangelog: v => localStorage.setItem('hmm_changelog_seen', v),
 };
+
+// ── Changelog — newest entry first. Bump the top `version` (a date works
+// fine) whenever entries are added so returning users get an auto-popup.
+const CHANGELOG = [
+  {
+    version: '2026-07-19',
+    date: 'Jul 19, 2026',
+    items: [
+      'New: "What\'s New" changelog — opens automatically after an update, or any time from the command palette.',
+      'New: Drag-and-drop or pick an image on a greeting to auto-upload it to Catbox and embed it — no more manual upload-then-paste.',
+      'New: Paste raw JSON directly into the character editor instead of only importing from a file.',
+      'New: Custom chat background image (animated GIFs supported) and custom CSS injection, in Settings → Theme.',
+      'New: The message box now remembers your draft per-character across refreshes and character switches, and can be manually resized.',
+      'Fixed: group chat messages from different characters replying back-to-back no longer hide each other\'s avatar/name.',
+    ],
+  },
+];
 
 // ── Utilities ────────────────────────────────────────────────────
 const genId = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36);
@@ -926,7 +945,7 @@ async function downloadCharPng(char) {
 }
 
 Object.assign(window, {
-  AppCtx, S, genId, estimateTokens, compressImage, uploadToCatbox,
+  AppCtx, S, genId, estimateTokens, compressImage, uploadToCatbox, CHANGELOG,
   formatTime, formatDate, renderMarkdown,
   charBg, charFg, buildSystemPrompt, substituteMacros, callAI, avatarPx,
   summarizeMessages, GistSync,
