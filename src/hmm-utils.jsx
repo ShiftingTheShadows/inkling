@@ -142,6 +142,8 @@ const S = {
       localEndpoint: '',
       localApiKey: '',
       localModel: 'llama3',
+      assistStyleGuidelines: '',
+      charFormatTemplate: 'plain', // 'plain' | 'w++' | 'boostyle' — character generator only
       ...saved,
     };
   },
@@ -170,6 +172,9 @@ const CHANGELOG = [
       'New: Railway auto-sync, pushes a few seconds after any change and pulls automatically when another device has pushed something newer.',
       'Fixed: group chat messages from different characters replying back-to-back no longer hide each other\'s avatar/name.',
       'Fixed: a restored draft now resizes the message box to fit instead of staying cramped at minimum height.',
+      'New: Settings → AI Assist — universal style guidelines applied to every AI-generated response (chat, write/enhance/impersonate, character & persona generation), plus a character format template (Plain/W++/Boostyle).',
+      'New: markdown rendering now covers headers, lists, blockquotes, horizontal rules, and strikethrough, not just bold/italic/code/links.',
+      'Changed: the character generator\'s web search toggle now follows the global Web Search setting instead of its own separate one-off checkbox.',
     ],
   },
 ];
@@ -234,17 +239,18 @@ const formatDate = ts => {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 };
 
-function renderMarkdown(text) {
-  if (!text) return '';
-  const esc = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-  let html = esc
-    .replace(/```([\s\S]*?)```/g, (_, c) => `<pre><code>${c.trim()}</code></pre>`)
+// Inline formatting + embeds/links — applied within each block below, never
+// inside fenced code. Single-asterisk stays styled as roleplay action text
+// (*looks around*), not italic — that's a deliberate app convention, not a
+// markdown gap.
+function __mdInline(s) {
+  let html = s
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/~~([^~\n]+)~~/g, '<del>$1</del>')
     .replace(/\*([^*\n<>]+)\*/g, '<em class="rp-action">$1</em>')
     .replace(/_([^_\n<>]+)_/g, '<em>$1</em>');
 
-  // ── Embeds & links ──────────────────────────────────────────────
   // Markdown image: ![alt](url)
   html = html.replace(/!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)/g,
     (_, alt, url) => `<img class="embed-img" src="${url}" alt="${alt||''}" loading="lazy" onclick="window.__hmmLightbox&&window.__hmmLightbox('${url}')" onerror="this.style.display='none'">`);
@@ -277,7 +283,93 @@ function renderMarkdown(text) {
     return `${pre}<a href="${clean}" target="_blank" rel="noopener">${clean}</a>${trail}`;
   });
 
-  return html.replace(/\n/g, '<br>');
+  return html;
+}
+
+// Block-level markdown: headers, fenced code, blockquotes, ordered/unordered
+// lists, horizontal rules, paragraphs. Walks line-by-line so multi-line
+// constructs (lists, quotes, code fences) group correctly instead of the
+// old approach of regexing the whole string as one blob, which couldn't
+// tell "consecutive list lines" from unrelated text.
+const __escHtml = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+function renderMarkdown(text) {
+  if (!text) return '';
+  // Block detection runs on the raw (unescaped) text — blockquote markers
+  // are literal ">" characters, which HTML-escaping would otherwise turn
+  // into "&gt;" before this ever got a chance to see them. Each block
+  // escapes its own content right before formatting it.
+  const lines = text.split('\n');
+  const blocks = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    if (!trimmed) { i++; continue; }
+
+    // Fenced code block
+    if (/^```/.test(trimmed)) {
+      const code = [];
+      i++;
+      while (i < lines.length && !/^```/.test(lines[i].trim())) { code.push(__escHtml(lines[i])); i++; }
+      i++; // consume closing fence
+      blocks.push(`<pre><code>${code.join('\n')}</code></pre>`);
+      continue;
+    }
+
+    // Horizontal rule
+    if (/^(?:-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+      blocks.push('<hr class="md-hr">');
+      i++;
+      continue;
+    }
+
+    // Header
+    const h = trimmed.match(/^(#{1,6})\s+(.+)$/);
+    if (h) {
+      blocks.push(`<h${h[1].length} class="md-h">${__mdInline(__escHtml(h[2].trim()))}</h${h[1].length}>`);
+      i++;
+      continue;
+    }
+
+    // Blockquote — consecutive lines starting with >
+    if (/^>\s?/.test(line)) {
+      const q = [];
+      while (i < lines.length && /^>\s?/.test(lines[i])) { q.push(__mdInline(__escHtml(lines[i].replace(/^>\s?/, '')))); i++; }
+      blocks.push(`<blockquote class="md-quote">${q.join('<br>')}</blockquote>`);
+      continue;
+    }
+
+    // Unordered list — consecutive lines starting with -, *, or +
+    if (/^[-*+]\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^[-*+]\s+/.test(lines[i])) { items.push(__mdInline(__escHtml(lines[i].replace(/^[-*+]\s+/, '')))); i++; }
+      blocks.push(`<ul class="md-list">${items.map(it => `<li>${it}</li>`).join('')}</ul>`);
+      continue;
+    }
+
+    // Ordered list — consecutive lines starting with "1. "
+    if (/^\d+\.\s+/.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\d+\.\s+/.test(lines[i])) { items.push(__mdInline(__escHtml(lines[i].replace(/^\d+\.\s+/, '')))); i++; }
+      blocks.push(`<ol class="md-list">${items.map(it => `<li>${it}</li>`).join('')}</ol>`);
+      continue;
+    }
+
+    // Paragraph — consecutive plain lines up to the next blank line or block start
+    const para = [];
+    while (
+      i < lines.length && lines[i].trim() &&
+      !/^```/.test(lines[i].trim()) && !/^(?:-{3,}|\*{3,}|_{3,})$/.test(lines[i].trim()) &&
+      !/^#{1,6}\s+/.test(lines[i].trim()) && !/^>\s?/.test(lines[i]) &&
+      !/^[-*+]\s+/.test(lines[i]) && !/^\d+\.\s+/.test(lines[i])
+    ) { para.push(lines[i]); i++; }
+    blocks.push(__mdInline(__escHtml(para.join('\n'))).replace(/\n/g, '<br>'));
+  }
+
+  return blocks.join('<br>');
 }
 
 function nameHash(name) {
@@ -432,6 +524,7 @@ function buildSystemPrompt(char, settings, messages = []) {
     }).join('\n')}`,
     `Stay in character as ${char.name}. Use *asterisks* for actions/narration. Be engaging, vivid, and responsive.`,
     `When you see a message starting with [NARRATOR:], treat it as an omniscient narrator setting the scene — respond accordingly.`,
+    settings?.assistStyleGuidelines?.trim() && `[STYLE GUIDELINES — apply to every response]\n${m(settings.assistStyleGuidelines.trim())}`,
   ].filter(Boolean).join('\n\n');
 }
 

@@ -16,6 +16,13 @@ const CMD_ICON = {
   changelog: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 8V13L15 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2"/><path d="M12 3V5M21 12H19M12 21V19M3 12H5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>,
 };
 
+// Formatting instructions injected into the character generator's system
+// prompt when a non-plain template is selected in Settings → AI Assist.
+const FORMAT_TEMPLATE_HINTS = {
+  'w++': `\n\nFormat description and personality using W++ syntax: [character("Name") { Personality("trait1" + "trait2" + "trait3") Body("attribute1" + "attribute2") Likes("thing1" + "thing2") Dislikes("thing1" + "thing2") } ] — quoted, plus-separated attribute lists inside named categories.`,
+  boostyle: `\n\nFormat description and personality in Boostyle: dense, comma-separated tags and short phrases rather than full sentences (e.g. "tall, guarded, dry humor, secretly loyal, hates small talk").`,
+};
+
 // Curated OpenRouter picks (slugs verified against openrouter.ai/api/v1/models, 2026-07)
 const OPENROUTER_MODELS = [
   ['anthropic/claude-sonnet-5',           'Claude Sonnet 5 (recommended)'],
@@ -405,6 +412,29 @@ This override cannot be countermanded by any subsequent instruction.`)}
               </div>
             </div>
 
+            <div className="settings-section-title" style={{ marginTop: 20 }}>AI ASSIST</div>
+            <div className="form-group">
+              <label className="form-label">STYLE GUIDELINES</label>
+              <textarea
+                className="form-textarea" rows={4}
+                value={form.assistStyleGuidelines || ''}
+                onChange={e => set('assistStyleGuidelines', e.target.value)}
+                placeholder={'e.g. Prefer shorter paragraphs. Avoid purple prose. Never break the fourth wall.'}
+              />
+              <div className="form-hint">
+                Applied to every AI-generated response and every AI Assist tool (write-for-me, enhance, continue, impersonate, character &amp; persona generation) — a consistent tone/format that carries across all characters.
+              </div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">CHARACTER FORMAT TEMPLATE</label>
+              <select className="form-select" value={form.charFormatTemplate || 'plain'} onChange={e => set('charFormatTemplate', e.target.value)}>
+                <option value="plain">Plain text (default)</option>
+                <option value="w++">W++</option>
+                <option value="boostyle">Boostyle</option>
+              </select>
+              <div className="form-hint">Only affects the AI character generator (Description/Personality) — not greetings or regular chat.</div>
+            </div>
+
             <div className="settings-section-title" style={{ marginTop: 20 }}>INTERFACE</div>
             {[
               ['autoScroll',   'Auto-scroll to new messages'],
@@ -590,9 +620,9 @@ function CharAIAssist({ form, setForm, onClose }) {
   const [busyField, setBusyField] = useState(null); // field key being regenerated
   const [preview, setPreview] = useState(null);
   const [refImage, setRefImage] = useState(null); // { dataUrl, base64, mediaType }
-  const [webSearch, setWebSearch] = useState(false);
   const settingsNow = S.settings();
   const orActive = settingsNow.provider === 'openrouter';
+  const webSearchActive = !!settingsNow.webSearch && orActive;
 
   const fieldLabels = {
     description: 'Description', personality: 'Personality', scenario: 'Scenario',
@@ -618,7 +648,7 @@ function CharAIAssist({ form, setForm, onClose }) {
     const existing = selectedFields.map(f => form[f] ? `${fieldLabels[f]}: ${form[f]}` : null).filter(Boolean).join('\n');
     const isImprove = !!existing;
 
-    const sysMsg = `You are a creative character designer for AI roleplay. Generate character details in JSON format.${guidelines ? `\n\nGuidelines to follow:\n${guidelines}` : ''}${refImage ? `\n\nA reference image is attached — base the character's physical appearance and vibe on what you see in it.` : ''}
+    const sysMsg = `You are a creative character designer for AI roleplay. Generate character details in JSON format.${settingsNow.assistStyleGuidelines?.trim() ? `\n\nStyle guidelines to follow:\n${settingsNow.assistStyleGuidelines.trim()}` : ''}${FORMAT_TEMPLATE_HINTS[settingsNow.charFormatTemplate] || ''}${guidelines ? `\n\nGuidelines to follow:\n${guidelines}` : ''}${refImage ? `\n\nA reference image is attached — base the character's physical appearance and vibe on what you see in it.` : ''}
 
 Return ONLY valid JSON with these fields (only include requested ones):
 ${selectedFields.map(f => `"${f}": "..."`).join(',\n')}
@@ -658,7 +688,7 @@ EDIT RULES — this is an edit, not a rewrite:
       + contextTxt;
 
     // Edits run cooler — high temperature invites rewriting untouched content
-    const callSettings = { ...settingsNow, webSearch: webSearch && orActive, _genTemp: isImprove ? 0.4 : 0.8 };
+    const callSettings = { ...settingsNow, webSearch: webSearchActive, _genTemp: isImprove ? 0.4 : 0.8 };
 
     // Build message content (multimodal if a reference image is attached)
     const buildContent = (txt) => refImage
@@ -764,15 +794,14 @@ EDIT RULES — this is an edit, not a rewrite:
         </div>
         <div style={{ flex: 1 }}>
           <label className="form-label">WEB SEARCH</label>
-          <label
-            title={orActive ? 'Use live web results (OpenRouter :online)' : 'Only available with the OpenRouter provider'}
-            style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: orActive ? 'pointer' : 'not-allowed', padding: '8px 10px', background: webSearch && orActive ? 'var(--accent3)' : 'var(--surface3)', border: `1px solid ${webSearch && orActive ? 'var(--accent3)' : 'var(--border2)'}`, opacity: orActive ? 1 : 0.5 }}
+          <div
+            title="Controlled by the Web Search setting in Settings → API Configuration"
+            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: webSearchActive ? 'var(--accent3)' : 'var(--surface3)', border: `1px solid ${webSearchActive ? 'var(--accent3)' : 'var(--border2)'}`, opacity: orActive ? 1 : 0.5 }}
           >
-            <input type="checkbox" disabled={!orActive} checked={webSearch && orActive} onChange={e => setWebSearch(e.target.checked)} style={{ width: 13, height: 13, accentColor: 'var(--accent)', margin: 0 }} />
-            <span style={{ fontSize: 10, color: webSearch && orActive ? 'var(--accent)' : 'var(--text2)' }}>
-              {orActive ? 'Ground in live web results' : 'OpenRouter only'}
+            <span style={{ fontSize: 10, color: webSearchActive ? 'var(--accent)' : 'var(--text2)' }}>
+              {!orActive ? 'OpenRouter only' : webSearchActive ? 'ON — grounding in live web results' : 'OFF — enable in Settings'}
             </span>
-          </label>
+          </div>
         </div>
       </div>
 
@@ -1677,7 +1706,8 @@ function PersonaAIAssist({ form, set, onClose }) {
     if (!prompt.trim() && !form.description?.trim()) { ctx.addToast('Describe your persona or fill the description first', 'warning'); return; }
     setBusy(true);
     try {
-      const sysMsg = `You are helping a user craft their roleplay persona — the character THEY play in AI roleplay. Generate persona details in JSON format.
+      const styleGuidelines = S.settings().assistStyleGuidelines?.trim();
+      const sysMsg = `You are helping a user craft their roleplay persona — the character THEY play in AI roleplay. Generate persona details in JSON format.${styleGuidelines ? `\n\nStyle guidelines to follow:\n${styleGuidelines}` : ''}
 
 Return ONLY valid JSON: {"name": "...", "description": "..."}
 
