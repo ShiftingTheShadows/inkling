@@ -441,6 +441,7 @@ function ChatView() {
   // typing afterward doesn't fight their chosen height.
   const manualResized = useRef(false);
   const lastAutoHeight = useRef('');
+  const pendingAutoGrow = useRef(false);
 
   const getTempVal = () => tempPreset === 'precise' ? 0.3 : tempPreset === 'creative' ? 1.0 : 0.7;
   const REPLY_HINTS = {
@@ -476,11 +477,26 @@ function ChatView() {
     }
     setInputVal(S.draft(char.id));
     manualResized.current = false;
+    lastAutoHeight.current = '';
+    pendingAutoGrow.current = true;
     if (inputRef.current) inputRef.current.style.height = 'auto';
     setShowSearch(false);
     setSearchQ('');
     setShowVarPanel(false);
   }, [char?.id]);
+
+  // Grow the composer to fit a restored draft once it actually lands in the
+  // DOM (a char switch sets inputVal, but that commits one render after this
+  // effect runs, so the resize has to happen on the follow-up render instead).
+  useEffect(() => {
+    if (!pendingAutoGrow.current) return;
+    pendingAutoGrow.current = false;
+    const ta = inputRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = Math.min(ta.scrollHeight, 320) + 'px';
+    lastAutoHeight.current = ta.style.height;
+  }, [inputVal]);
 
   // Auto-scroll
   useEffect(() => {
@@ -498,7 +514,14 @@ function ChatView() {
     return () => window.removeEventListener('keydown', fn);
   }, [ctx.currentChar]);
 
-  const updateInput = v => { setInputVal(v); if (char) S.saveDraft(char.id, v); };
+  const draftSaveTimer = useRef(null);
+  const updateInput = v => {
+    setInputVal(v);
+    if (!char) return;
+    clearTimeout(draftSaveTimer.current);
+    if (!v) { S.saveDraft(char.id, v); return; } // clearing — persist right away
+    draftSaveTimer.current = setTimeout(() => S.saveDraft(char.id, v), 400);
+  };
 
   const handleInputChange = e => {
     updateInput(e.target.value);
@@ -649,7 +672,7 @@ function ChatView() {
     const edited = { ...messages[idx], content: newText, edited: true };
     const trimmed = [...messages.slice(0, idx), edited];
     if (char.isGroup) {
-      if (!members?.length) return;
+      if (!members?.length) { ctx.addToast('Group has no members — edit the group first', 'warning'); return; }
       setMessages(trimmed);
       await generateAs(pickSpeaker(newText, trimmed), trimmed);
       return;
