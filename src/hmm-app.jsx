@@ -201,7 +201,12 @@ function App() {
       if (e.ctrlKey && e.key === ',') { e.preventDefault(); openModal('settings'); }
       if (e.ctrlKey && e.key === 'n') { e.preventDefault(); openModal('char-editor', null); }
       if (e.ctrlKey && e.key === 's') { e.preventDefault(); openModal('sync'); }
-      if (e.key === 'Escape') { setCmdOpen(false); closeModal(); }
+      if (e.key === 'Escape') {
+        setCmdOpen(false);
+        // Modals with unsaved-work risk (char/group editor) register a guard
+        // that confirms before letting Escape discard changes.
+        if (!window.__hmmModalGuard || window.__hmmModalGuard()) closeModal();
+      }
     };
     window.addEventListener('keydown', fn);
     return () => window.removeEventListener('keydown', fn);
