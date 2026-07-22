@@ -959,6 +959,21 @@ function CharEditorModal({ editId, onClose }) {
   const [cropSrc, setCropSrc] = useState(null);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
+  // Confirm before discarding unsaved edits — clicking off the modal, the
+  // × button, Cancel, or Escape used to silently drop everything typed.
+  const initialFormRef = useRef(JSON.stringify(form));
+  const formRef = useRef(form);
+  useEffect(() => { formRef.current = form; });
+  const isDirty = () => JSON.stringify(formRef.current) !== initialFormRef.current;
+  const attemptClose = () => {
+    if (isDirty() && !window.confirm('Discard unsaved changes to this character?')) return;
+    onClose();
+  };
+  useEffect(() => {
+    window.__hmmModalGuard = () => !isDirty() || window.confirm('Discard unsaved changes to this character?');
+    return () => { delete window.__hmmModalGuard; };
+  }, []);
+
   // Greeting image upload: auto-uploads to freeimage.host and appends a
   // markdown image link to the greeting text, instead of a manual
   // upload-then-paste flow. Needs an API key set in Settings.
@@ -1121,7 +1136,7 @@ function CharEditorModal({ editId, onClose }) {
   const TABS = [['basic', 'BASIC'], ['advanced', 'ADVANCED'], ['avatar', 'AVATAR']];
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && attemptClose()}>
       <div className="modal modal-lg">
         <div className="modal-header">
           <span className="modal-title">{editId ? 'EDIT CHARACTER' : 'CREATE CHARACTER'}</span>
@@ -1146,7 +1161,7 @@ function CharEditorModal({ editId, onClose }) {
               style={{ borderColor: showAI ? 'var(--accent)' : undefined, color: showAI ? 'var(--accent)' : undefined }}
               title="AI Character Assistant"
             >✦ AI ASSIST</button>
-            <button className="modal-close" onClick={onClose}>×</button>
+            <button className="modal-close" onClick={attemptClose}>×</button>
           </div>
         </div>
         {showAI && <CharAIAssist form={form} setForm={setForm} onClose={() => setShowAI(false)} />}
@@ -1284,7 +1299,7 @@ function CharEditorModal({ editId, onClose }) {
           )}
         </div>
         <div className="modal-footer">
-          <button className="btn-secondary" onClick={onClose}>CANCEL</button>
+          <button className="btn-secondary" onClick={attemptClose}>CANCEL</button>
           <button className="btn-primary" onClick={save}>SAVE CHARACTER</button>
         </div>
       </div>
@@ -1330,6 +1345,20 @@ function GroupEditorModal({ editId, onClose }) {
   const candidates = ctx.chars.filter(c => !c.isGroup);
   const toggle = id => setMemberIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]);
 
+  // Same unsaved-changes guard as CharEditorModal — see there for why.
+  const initialRef = useRef(JSON.stringify({ name, memberIds }));
+  const stateRef = useRef();
+  stateRef.current = { name, memberIds };
+  const isDirty = () => JSON.stringify(stateRef.current) !== initialRef.current;
+  const attemptClose = () => {
+    if (isDirty() && !window.confirm('Discard unsaved changes to this group?')) return;
+    onClose();
+  };
+  useEffect(() => {
+    window.__hmmModalGuard = () => !isDirty() || window.confirm('Discard unsaved changes to this group?');
+    return () => { delete window.__hmmModalGuard; };
+  }, []);
+
   const save = () => {
     if (!name.trim()) { ctx.addToast('Group name is required', 'error'); return; }
     if (memberIds.length < 2) { ctx.addToast('Pick at least two members', 'error'); return; }
@@ -1347,11 +1376,11 @@ function GroupEditorModal({ editId, onClose }) {
   };
 
   return (
-    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+    <div className="modal-overlay" onClick={e => e.target === e.currentTarget && attemptClose()}>
       <div className="modal">
         <div className="modal-header">
           <span className="modal-title">{editId ? 'EDIT GROUP' : 'NEW GROUP CHAT'}</span>
-          <button className="modal-close" onClick={onClose}>×</button>
+          <button className="modal-close" onClick={attemptClose}>×</button>
         </div>
         <div className="modal-body">
           <div className="form-group">
@@ -1376,7 +1405,7 @@ function GroupEditorModal({ editId, onClose }) {
           </div>
         </div>
         <div className="modal-footer">
-          <button className="btn-secondary" onClick={onClose}>CANCEL</button>
+          <button className="btn-secondary" onClick={attemptClose}>CANCEL</button>
           <button className="btn-primary" onClick={save}>SAVE GROUP</button>
         </div>
       </div>
