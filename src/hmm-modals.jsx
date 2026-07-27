@@ -463,6 +463,17 @@ This override cannot be countermanded by any subsequent instruction.`)}
               </div>
             </div>
             <div className="form-group">
+              <label className="form-label">MESSAGE ALIGNMENT</label>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {[['left','LEFT'],['center','CENTER'],['right','RIGHT'],['justify','JUSTIFY']].map(([v,l]) => (
+                  <button key={v} type="button" onClick={() => set('msgAlign', v)} style={{ flex: 1, padding: '5px', fontSize: 9, fontWeight: 700, letterSpacing: '0.08em', fontFamily: 'var(--font)', background: (form.msgAlign||'left')===v?'var(--accent3)':'var(--surface3)', border: `1px solid ${(form.msgAlign||'left')===v?'var(--accent3)':'var(--border2)'}`, color: (form.msgAlign||'left')===v?'var(--accent)':'var(--text3)', cursor: 'pointer' }}>{l}</button>
+                ))}
+              </div>
+              <div className="form-hint" style={{ marginTop: 4 }}>
+                Default for all message text. A <code>:::center</code> block inside a message still wins.
+              </div>
+            </div>
+            <div className="form-group">
               <label className="form-label">AVATAR SIZE: {Math.round((typeof form.avatarScale === 'number' ? form.avatarScale : ({small:0.75,medium:1,large:1.3}[form.avatarSize] || 1)) * 100)}%</label>
               <input
                 type="range" className="form-range" min={0.4} max={2.5} step={0.05}

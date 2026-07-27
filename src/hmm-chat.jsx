@@ -536,6 +536,69 @@ function ChatView() {
     }
   };
 
+  // ── Composer formatting ───────────────────────────────────────────
+  // All three helpers rewrite the textarea and restore a sensible selection so
+  // you can keep typing (or hit the button again to toggle back off).
+  const applyToInput = (nextVal, selStart, selEnd) => {
+    setInputVal(nextVal);
+    requestAnimationFrame(() => {
+      const ta = inputRef.current;
+      if (!ta) return;
+      ta.focus();
+      ta.setSelectionRange(selStart, selEnd);
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(ta.scrollHeight, 160) + 'px';
+    });
+  };
+
+  // Inline marks: **bold**, *italic*, __underline__, ~~strike~~, `code`
+  const fmtWrap = (mark, placeholder) => {
+    const ta = inputRef.current;
+    if (!ta) return;
+    const val = ta.value, s = ta.selectionStart, e = ta.selectionEnd;
+    const sel = val.slice(s, e);
+    // Already wrapped → unwrap
+    if (sel && val.slice(s - mark.length, s) === mark && val.slice(e, e + mark.length) === mark) {
+      const next = val.slice(0, s - mark.length) + sel + val.slice(e + mark.length);
+      return applyToInput(next, s - mark.length, e - mark.length);
+    }
+    const body = sel || placeholder;
+    const next = val.slice(0, s) + mark + body + mark + val.slice(e);
+    applyToInput(next, s + mark.length, s + mark.length + body.length);
+  };
+
+  // Line prefixes: headings, quotes, bullets, numbers. mk(i) builds each line's
+  // prefix so ordered lists can count.
+  const fmtPrefix = mk => {
+    const ta = inputRef.current;
+    if (!ta) return;
+    const val = ta.value, s = ta.selectionStart, e = ta.selectionEnd;
+    const ls = val.lastIndexOf('\n', Math.max(0, s - 1)) + 1;
+    let le = val.indexOf('\n', e);
+    if (le === -1) le = val.length;
+    const rows = val.slice(ls, le).split('\n');
+    const on = rows.every((r, i) => r.startsWith(mk(i)));
+    const next = rows.map((r, i) => (on ? r.slice(mk(i).length) : mk(i) + r)).join('\n');
+    const out = val.slice(0, ls) + next + val.slice(le);
+    applyToInput(out, ls, ls + next.length);
+  };
+
+  // Block alignment: wraps the touched lines in a ":::center … :::" fence
+  const fmtAlign = mode => {
+    const ta = inputRef.current;
+    if (!ta) return;
+    const val = ta.value, s = ta.selectionStart, e = ta.selectionEnd;
+    const ls = val.lastIndexOf('\n', Math.max(0, s - 1)) + 1;
+    let le = val.indexOf('\n', e);
+    if (le === -1) le = val.length;
+    const body = val.slice(ls, le) || 'text';
+    const open = `:::${mode}\n`;
+    const lead = ls > 0 ? '\n' : '';
+    const out = val.slice(0, ls) + lead + open + body + '\n:::\n' + val.slice(le);
+    const bodyAt = ls + lead.length + open.length;
+    applyToInput(out, bodyAt, bodyAt + body.length);
+  };
+
   const totalTokens = messages.reduce((s, m) => {
     const t = typeof m.content === 'string' ? m.content : m.content?.find?.(c => c.type === 'text')?.text || '';
     return s + estimateTokens(t);
@@ -1209,6 +1272,66 @@ function ChatView() {
             <button className="btn-icon danger" style={{ width: 26, height: 26, fontSize: 18 }} onClick={() => setPendingImage(null)}>×</button>
           </div>
         )}
+        {/* Formatting toolbar */}
+        <div className="fmt-bar">
+          <button type="button" className="fmt-btn" title="Bold (**text**)" onClick={() => fmtWrap('**', 'bold')}>
+            <span style={{ fontWeight: 800 }}>B</span>
+          </button>
+          <button type="button" className="fmt-btn" title="Italic (*text*)" onClick={() => fmtWrap('*', 'italic')}>
+            <span style={{ fontStyle: 'italic', fontFamily: 'Georgia, serif' }}>I</span>
+          </button>
+          <button type="button" className="fmt-btn" title="Underline (__text__)" onClick={() => fmtWrap('__', 'underline')}>
+            <span style={{ textDecoration: 'underline', textUnderlineOffset: 2 }}>U</span>
+          </button>
+          <button type="button" className="fmt-btn" title="Strikethrough (~~text~~)" onClick={() => fmtWrap('~~', 'struck')}>
+            <span style={{ textDecoration: 'line-through' }}>S</span>
+          </button>
+          <button type="button" className="fmt-btn" title="Inline code (`text`)" onClick={() => fmtWrap('`', 'code')}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M9 7L4 12L9 17M15 7L20 12L15 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          </button>
+
+          <span className="fmt-sep" />
+
+          <button type="button" className="fmt-btn" title="Heading (# text)" onClick={() => fmtPrefix(() => '# ')}>
+            <span style={{ fontWeight: 800 }}>H</span>
+          </button>
+          <button type="button" className="fmt-btn" title="Quote (&gt; text)" onClick={() => fmtPrefix(() => '> ')}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M5 5V19M10 8H19M10 12H19M10 16H16" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+          </button>
+          <button type="button" className="fmt-btn" title="Bullet list (- text)" onClick={() => fmtPrefix(() => '- ')}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M9 6H20M9 12H20M9 18H20" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><rect x="3" y="5" width="2.5" height="2.5" fill="currentColor"/><rect x="3" y="11" width="2.5" height="2.5" fill="currentColor"/><rect x="3" y="17" width="2.5" height="2.5" fill="currentColor"/></svg>
+          </button>
+          <button type="button" className="fmt-btn" title="Numbered list (1. text)" onClick={() => fmtPrefix(i => `${i + 1}. `)}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M9 6H20M9 12H20M9 18H20" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><text x="2" y="8" fontSize="7" fill="currentColor" fontFamily="monospace">1</text><text x="2" y="14.5" fontSize="7" fill="currentColor" fontFamily="monospace">2</text><text x="2" y="21" fontSize="7" fill="currentColor" fontFamily="monospace">3</text></svg>
+          </button>
+          <button type="button" className="fmt-btn" title="Divider (---)" onClick={() => {
+            const ta = inputRef.current;
+            if (!ta) return;
+            const val = ta.value, c = ta.selectionStart;
+            const ins = (c > 0 && val[c - 1] !== '\n' ? '\n' : '') + '---\n';
+            applyToInput(val.slice(0, c) + ins + val.slice(c), c + ins.length, c + ins.length);
+          }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M3 12H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+          </button>
+
+          <span className="fmt-sep" />
+
+          {[
+            ['left',    'Align left',    'M4 6H20M4 12H14M4 18H18'],
+            ['center',  'Align center',  'M4 6H20M7 12H17M5 18H19'],
+            ['right',   'Align right',   'M4 6H20M10 12H20M6 18H20'],
+            ['justify', 'Justify',       'M4 6H20M4 12H20M4 18H20'],
+          ].map(([mode, label, d]) => (
+            <button
+              key={mode} type="button" className="fmt-btn"
+              title={`${label} — wraps the line in a :::${mode} block`}
+              onClick={() => fmtAlign(mode)}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d={d} stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
+            </button>
+          ))}
+        </div>
+
         <div className="input-main">
           {/* Assist buttons */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flexShrink: 0, position: 'relative' }}>

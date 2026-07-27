@@ -33,8 +33,9 @@ function App() {
     const dens = settings.density || 'cozy';
     root.style.setProperty('--msg-pad', dens === 'compact' ? '5px 4px' : dens === 'roomy' ? '13px 4px' : '8px 4px');
     root.style.setProperty('--msg-gap', dens === 'compact' ? '8px' : dens === 'roomy' ? '16px' : '12px');
+    root.style.setProperty('--msg-align', settings.msgAlign || 'left');
     document.body.classList.toggle('reduce-motion', !!settings.reduceMotion);
-  }, [settings.theme, settings.fontSize, settings.density, settings.reduceMotion]);
+  }, [settings.theme, settings.fontSize, settings.density, settings.reduceMotion, settings.msgAlign]);
 
   // Custom background image (GIFs animate natively) + custom CSS injection
   useEffect(() => {

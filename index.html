@@ -547,7 +547,10 @@ body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after 
 .msg-author.user { color: oklch(0.62 0.1 220deg); }
 .msg-time { font-size: 10px; color: var(--text3); }
 .msg-edited { font-size: 10px; color: var(--text3); font-style: italic; }
-.msg-content { font-size: var(--chat-font-size, 13px); line-height: 1.75; color: var(--text); word-break: break-word; max-width: 78ch; text-wrap: pretty; }
+.msg-content { font-size: var(--chat-font-size, 13px); line-height: 1.75; color: var(--text); word-break: break-word; max-width: 78ch; text-wrap: pretty; text-align: var(--msg-align, left); }
+/* Per-block alignment (":::center" fences) overrides the global --msg-align */
+.msg-content .md-align { display: block; }
+.msg-content u { text-decoration: underline; text-underline-offset: 2px; }
 .embed-img { max-width: 320px; max-height: 320px; margin: 6px 0; border: 1px solid var(--border2); cursor: zoom-in; display: block; object-fit: cover; }
 .embed-img:hover { border-color: var(--accent2); }
 .embed-yt { display: block; margin: 6px 0; width: 100%; max-width: 400px; aspect-ratio: 16/9; }
@@ -611,6 +614,11 @@ body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after 
 .image-preview-bar { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--surface2); }
 .image-preview-bar img { width: 60px; height: 60px; object-fit: cover; border: 1px solid var(--border2); }
 .img-info { flex: 1; }
+.fmt-bar { display: flex; align-items: center; gap: 2px; padding: 5px 16px 0; flex-wrap: wrap; }
+.fmt-btn { width: 24px; height: 22px; display: flex; align-items: center; justify-content: center; background: transparent; border: 1px solid transparent; color: var(--text3); font-family: var(--font); font-size: 11px; line-height: 1; transition: color 0.1s, border-color 0.1s, background 0.1s; }
+.fmt-btn:hover { color: var(--accent); border-color: var(--accent3); background: var(--surface2); }
+.fmt-btn:active { background: var(--accent3); }
+.fmt-sep { width: 1px; height: 14px; background: var(--border2); margin: 0 5px; flex-shrink: 0; }
 .input-main { display: flex; gap: 10px; padding: 10px 16px; align-items: flex-end; }
 .input-wrap { flex: 1; position: relative; }
 .msg-input { width: 100%; padding: 8px 28px 8px 12px; background: var(--surface2); border: 1px solid var(--border2); color: var(--text); font-family: var(--font); font-size: 13px; resize: vertical; min-height: 44px; max-height: 60vh; line-height: 1.55; transition: border-color 0.1s; }

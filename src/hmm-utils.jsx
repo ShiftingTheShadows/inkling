@@ -249,6 +249,7 @@ function __mdInline(s) {
     .replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>')
     .replace(/~~([^~\n]+)~~/g, '<del>$1</del>')
     .replace(/\*([^*\n<>]+)\*/g, '<em class="rp-action">$1</em>')
+    .replace(/__([^_\n<>]+)__/g, '<u>$1</u>')
     .replace(/_([^_\n<>]+)_/g, '<em>$1</em>');
 
   // Markdown image: ![alt](url)
@@ -293,13 +294,24 @@ function __mdInline(s) {
 // tell "consecutive list lines" from unrelated text.
 const __escHtml = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
+// Alignment fence:  ":::center" … ":::"  — wraps its contents in an aligned
+// block, overriding the global --msg-align. Written by the composer's align
+// buttons; also usable by hand.
+const __MD_ALIGN_OPEN  = /^:::[ \t]*(left|center|right|justify)[ \t]*$/i;
+const __MD_ALIGN_CLOSE = /^:::[ \t]*$/;
+
 function renderMarkdown(text) {
   if (!text) return '';
   // Block detection runs on the raw (unescaped) text — blockquote markers
   // are literal ">" characters, which HTML-escaping would otherwise turn
   // into "&gt;" before this ever got a chance to see them. Each block
   // escapes its own content right before formatting it.
-  const lines = text.split('\n');
+  return __mdBlocks(text.split('\n'));
+}
+
+// Split out from renderMarkdown so an alignment fence can recurse and keep
+// every other block type working inside it.
+function __mdBlocks(lines) {
   const blocks = [];
   let i = 0;
 
@@ -308,6 +320,23 @@ function renderMarkdown(text) {
     const trimmed = line.trim();
 
     if (!trimmed) { i++; continue; }
+
+    // Alignment fence
+    const al = trimmed.match(__MD_ALIGN_OPEN);
+    if (al) {
+      const inner = [];
+      i++;
+      let depth = 1;
+      while (i < lines.length) {
+        const t = lines[i].trim();
+        if (__MD_ALIGN_OPEN.test(t)) depth++;
+        else if (__MD_ALIGN_CLOSE.test(t)) { depth--; if (!depth) { i++; break; } }
+        inner.push(lines[i]);
+        i++;
+      }
+      blocks.push(`<div class="md-align" style="text-align:${al[1].toLowerCase()}">${__mdBlocks(inner)}</div>`);
+      continue;
+    }
 
     // Fenced code block
     if (/^```/.test(trimmed)) {
@@ -364,7 +393,8 @@ function renderMarkdown(text) {
       i < lines.length && lines[i].trim() &&
       !/^```/.test(lines[i].trim()) && !/^(?:-{3,}|\*{3,}|_{3,})$/.test(lines[i].trim()) &&
       !/^#{1,6}\s+/.test(lines[i].trim()) && !/^>\s?/.test(lines[i]) &&
-      !/^[-*+]\s+/.test(lines[i]) && !/^\d+\.\s+/.test(lines[i])
+      !/^[-*+]\s+/.test(lines[i]) && !/^\d+\.\s+/.test(lines[i]) &&
+      !__MD_ALIGN_OPEN.test(lines[i].trim()) && !__MD_ALIGN_CLOSE.test(lines[i].trim())
     ) { para.push(lines[i]); i++; }
     blocks.push(__mdInline(__escHtml(para.join('\n'))).replace(/\n/g, '<br>'));
   }
