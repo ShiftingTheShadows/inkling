@@ -551,6 +551,10 @@ body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after 
 /* Per-block alignment (":::center" fences) overrides the global --msg-align */
 .msg-content .md-align { display: block; }
 .msg-content u { text-decoration: underline; text-underline-offset: 2px; }
+/* Paragraph spacing + preserved extra blank lines, so a message can be spaced out */
+.msg-content .md-p { margin: 0 0 0.7em; }
+.msg-content .md-p:last-child { margin-bottom: 0; }
+.msg-content .md-gap { display: block; height: 1.3em; }
 .embed-img { max-width: 320px; max-height: 320px; margin: 6px 0; border: 1px solid var(--border2); cursor: zoom-in; display: block; object-fit: cover; }
 .embed-img:hover { border-color: var(--accent2); }
 .embed-yt { display: block; margin: 6px 0; width: 100%; max-width: 400px; aspect-ratio: 16/9; }

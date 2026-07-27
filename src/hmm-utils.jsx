@@ -319,7 +319,17 @@ function __mdBlocks(lines) {
     const line = lines[i];
     const trimmed = line.trim();
 
-    if (!trimmed) { i++; continue; }
+    // Blank lines. One blank line is the ordinary paragraph separator and the
+    // gap between blocks already expresses it. Every *extra* one was typed
+    // deliberately to space things out (greetings especially), so keep it —
+    // collapsing them is what made whole messages read as one block.
+    if (!trimmed) {
+      let blanks = 0;
+      while (i < lines.length && !lines[i].trim()) { blanks++; i++; }
+      // Nothing follows → trailing whitespace, don't pad the end of the message
+      if (i < lines.length) for (let k = 1; k < blanks; k++) blocks.push('<span class="md-gap"></span>');
+      continue;
+    }
 
     // Alignment fence
     const al = trimmed.match(__MD_ALIGN_OPEN);
@@ -396,10 +406,13 @@ function __mdBlocks(lines) {
       !/^[-*+]\s+/.test(lines[i]) && !/^\d+\.\s+/.test(lines[i]) &&
       !__MD_ALIGN_OPEN.test(lines[i].trim()) && !__MD_ALIGN_CLOSE.test(lines[i].trim())
     ) { para.push(lines[i]); i++; }
-    blocks.push(__mdInline(__escHtml(para.join('\n'))).replace(/\n/g, '<br>'));
+    blocks.push(`<p class="md-p">${__mdInline(__escHtml(para.join('\n'))).replace(/\n/g, '<br>')}</p>`);
   }
 
-  return blocks.join('<br>');
+  // Joined bare: every block carries its own spacing now. The old '<br>' glue
+  // gave paragraphs a single line break, so a blank line between them did
+  // nothing visible no matter how many you typed.
+  return blocks.join('');
 }
 
 function nameHash(name) {
