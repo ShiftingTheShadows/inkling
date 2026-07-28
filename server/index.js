@@ -32,6 +32,11 @@ async function ensureSchema() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `);
+  // revision powers optimistic concurrency for non-browser writers (the MCP
+  // server). A plain counter rather than comparing updated_at: timestamptz
+  // has microsecond precision that a JS Date round-trip silently truncates,
+  // so timestamp equality can't be trusted as a compare-and-swap key.
+  await pool.query('ALTER TABLE backups ADD COLUMN IF NOT EXISTS revision BIGINT NOT NULL DEFAULT 0');
 }
 
 const app = express();
@@ -46,8 +51,11 @@ app.get('/api/sync/meta', async (req, res) => {
   const token = String(req.query.token || '');
   if (token.length < MIN_TOKEN_LEN) return res.status(400).json({ error: `token must be at least ${MIN_TOKEN_LEN} characters` });
   try {
-    const { rows } = await pool.query('SELECT updated_at FROM backups WHERE token_hash = $1', [hashToken(token)]);
-    res.json({ updatedAt: rows.length ? rows[0].updated_at : null });
+    const { rows } = await pool.query('SELECT updated_at, revision FROM backups WHERE token_hash = $1', [hashToken(token)]);
+    res.json({
+      updatedAt: rows.length ? rows[0].updated_at : null,
+      revision: rows.length ? Number(rows[0].revision) : null,
+    });
   } catch (e) {
     console.error('GET /api/sync/meta failed:', e);
     res.status(500).json({ error: 'internal error' });
@@ -58,8 +66,10 @@ app.get('/api/sync', async (req, res) => {
   const token = String(req.query.token || '');
   if (token.length < MIN_TOKEN_LEN) return res.status(400).json({ error: `token must be at least ${MIN_TOKEN_LEN} characters` });
   try {
-    const { rows } = await pool.query('SELECT data, updated_at FROM backups WHERE token_hash = $1', [hashToken(token)]);
-    res.json(rows.length ? { data: rows[0].data, updatedAt: rows[0].updated_at } : { data: null });
+    const { rows } = await pool.query('SELECT data, updated_at, revision FROM backups WHERE token_hash = $1', [hashToken(token)]);
+    res.json(rows.length
+      ? { data: rows[0].data, updatedAt: rows[0].updated_at, revision: Number(rows[0].revision) }
+      : { data: null, revision: null });
   } catch (e) {
     console.error('GET /api/sync failed:', e);
     res.status(500).json({ error: 'internal error' });
@@ -67,22 +77,51 @@ app.get('/api/sync', async (req, res) => {
 });
 
 app.post('/api/sync', async (req, res) => {
-  const { token, data } = req.body || {};
+  const { token, data, expectedRevision } = req.body || {};
   if (typeof token !== 'string' || token.length < MIN_TOKEN_LEN) return res.status(400).json({ error: `token must be at least ${MIN_TOKEN_LEN} characters` });
   if (!data || typeof data !== 'object') return res.status(400).json({ error: 'missing data' });
   try {
+    // Optimistic concurrency, opt-in. The browser omits expectedRevision and
+    // keeps its existing last-write-wins behaviour; the MCP server sends the
+    // revision it read, so a blob built from stale data is rejected instead of
+    // silently overwriting whatever was saved in between (chats included).
+    if (expectedRevision !== undefined && expectedRevision !== null) {
+      if (!Number.isInteger(expectedRevision) || expectedRevision < 0) {
+        return res.status(400).json({ error: 'expectedRevision must be a non-negative integer' });
+      }
+      const sql = expectedRevision === 0
+        // 0 means "I expect no backup to exist yet"
+        ? `INSERT INTO backups (token_hash, data, updated_at, revision) VALUES ($1, $2, now(), 1)
+           ON CONFLICT (token_hash) DO NOTHING
+           RETURNING updated_at, revision`
+        : `UPDATE backups SET data = $2, updated_at = now(), revision = revision + 1
+           WHERE token_hash = $1 AND revision = $3
+           RETURNING updated_at, revision`;
+      const params = expectedRevision === 0 ? [hashToken(token), data] : [hashToken(token), data, expectedRevision];
+      const { rows } = await pool.query(sql, params);
+      if (!rows.length) {
+        const cur = await pool.query('SELECT updated_at, revision FROM backups WHERE token_hash = $1', [hashToken(token)]);
+        return res.status(409).json({
+          error: 'revision conflict - the backup changed since you read it',
+          revision: cur.rows.length ? Number(cur.rows[0].revision) : null,
+          updatedAt: cur.rows.length ? cur.rows[0].updated_at : null,
+        });
+      }
+      return res.json({ ok: true, updatedAt: rows[0].updated_at, revision: Number(rows[0].revision) });
+    }
+
     // Return the server-assigned updated_at (Postgres now(), not the client's
     // payload timestamp) so the client's auto-sync poll can compare against
     // the exact value it'll see on GET /api/sync/meta later. Using the
     // client's own clock here would make every push look "outdated" the
     // moment it lands, since now() is always a beat after the payload was built.
     const { rows } = await pool.query(
-      `INSERT INTO backups (token_hash, data, updated_at) VALUES ($1, $2, now())
-       ON CONFLICT (token_hash) DO UPDATE SET data = $2, updated_at = now()
-       RETURNING updated_at`,
+      `INSERT INTO backups (token_hash, data, updated_at, revision) VALUES ($1, $2, now(), 1)
+       ON CONFLICT (token_hash) DO UPDATE SET data = $2, updated_at = now(), revision = backups.revision + 1
+       RETURNING updated_at, revision`,
       [hashToken(token), data]
     );
-    res.json({ ok: true, updatedAt: rows[0].updated_at });
+    res.json({ ok: true, updatedAt: rows[0].updated_at, revision: Number(rows[0].revision) });
   } catch (e) {
     console.error('POST /api/sync failed:', e);
     res.status(500).json({ error: 'internal error' });
