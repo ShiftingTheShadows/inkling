@@ -30,6 +30,20 @@ claude mcp add inkling -s user \
 
 The token is stored in your Claude config in plaintext. It grants full read and write access to your entire backup — treat it like a password and never commit it.
 
+For **Claude Desktop**, add it to `claude_desktop_config.json` instead:
+
+```json
+"inkling": { "command": "node", "args": ["C:\\Users\\shand\\HMM\\mcp\\index.js"] }
+```
+
+On the Microsoft Store (MSIX) build of Claude Desktop, that file is **not** in `%APPDATA%\Claude`. A stale copy often lingers there and editing it does nothing. The live one is:
+
+```
+%LOCALAPPDATA%\Packages\Claude_<id>\LocalCache\Roaming\Claude\claude_desktop_config.json
+```
+
+Fully quit Claude Desktop from the tray and relaunch — it reads the config only at startup.
+
 3. Redeploy the sync server. This MCP server needs the `revision` column added in `server/index.js`; an older deployment will reject writes with a 400.
 
 ## Tools
