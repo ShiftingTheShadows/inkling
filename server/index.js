@@ -36,7 +36,15 @@ async function ensureSchema() {
   // server). A plain counter rather than comparing updated_at: timestamptz
   // has microsecond precision that a JS Date round-trip silently truncates,
   // so timestamp equality can't be trusted as a compare-and-swap key.
-  await pool.query('ALTER TABLE backups ADD COLUMN IF NOT EXISTS revision BIGINT NOT NULL DEFAULT 0');
+  //
+  // Revisions start at 1, never 0, because expectedRevision = 0 is the
+  // caller's way of saying "I expect no backup to exist yet". A stored row
+  // sitting at 0 would make that check ambiguous and every compare-and-swap
+  // write against it would fail forever. The backfill repairs rows created
+  // by the first version of this migration, which defaulted to 0.
+  await pool.query('ALTER TABLE backups ADD COLUMN IF NOT EXISTS revision BIGINT NOT NULL DEFAULT 1');
+  await pool.query('ALTER TABLE backups ALTER COLUMN revision SET DEFAULT 1');
+  await pool.query('UPDATE backups SET revision = 1 WHERE revision = 0');
 }
 
 const app = express();

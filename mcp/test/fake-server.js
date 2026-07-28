@@ -71,8 +71,11 @@ export function startFakeSync() {
 
       const row = store.get(k);
       if (expectedRevision !== undefined && expectedRevision !== null) {
-        const current = row?.revision ?? 0;
-        if (current !== expectedRevision) {
+        // Mirrors server/index.js exactly: 0 means "I expect no row yet", so
+        // it must conflict when one already exists. Stored revisions start
+        // at 1 for the same reason.
+        const conflict = expectedRevision === 0 ? !!row : (row?.revision ?? null) !== expectedRevision;
+        if (conflict) {
           return send(res, 409, { error: 'revision conflict', revision: row?.revision ?? null });
         }
       }

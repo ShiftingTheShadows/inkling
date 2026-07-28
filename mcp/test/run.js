@@ -132,6 +132,29 @@ check('concurrent external write NOT clobbered', !!blob.data.characters.find(c =
   blob.data.characters.map(c => c.name));
 check('our write also landed', !!blob.data.characters.find(c => c.name === 'Late'));
 
+// ── revision sentinel ─────────────────────────────────────
+// A stored row must never sit at revision 0: that value means "no backup
+// exists yet", so a row at 0 would make every compare-and-swap write against
+// it conflict forever. Regression test for exactly that.
+{
+  const row = await dump();
+  check('stored revision is never 0', row.revision >= 1, { revision: row.revision });
+
+  const res = await fetch(`${sync.url}/api/sync`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: TOKEN, data: row.data, expectedRevision: 0 }),
+  });
+  check('expectedRevision 0 conflicts when a row exists', res.status === 409, { status: res.status });
+
+  const fresh = await fetch(`${sync.url}/api/sync`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token: 'brand-new-token-abc', data: { characters: [] }, expectedRevision: 0 }),
+  });
+  const freshBody = await fresh.json();
+  check('expectedRevision 0 succeeds when no row exists', fresh.status === 200 && freshBody.revision === 1,
+    { status: fresh.status, revision: freshBody.revision });
+}
+
 // ── delete ────────────────────────────────────────────────
 const unconfirmed = await call('inkling_delete_character', { character: 'Late', confirm: false });
 check('delete without confirm refused', unconfirmed.isError && /confirm:true/.test(unconfirmed.text));
