@@ -7,26 +7,61 @@
 // back. The open Inkling tab polls every 60s, sees the newer revision, pulls
 // and reloads — so changes show up on their own within about a minute.
 //
-// Config (env):
-//   INKLING_SYNC_URL    https://your-app.up.railway.app
-//   INKLING_SYNC_TOKEN  the same secret you put in Settings > Sync > Railway
+// Config, in priority order:
+//   1. env INKLING_SYNC_URL / INKLING_SYNC_TOKEN
+//   2. ~/.inkling-mcp.json  ->  { "url": "...", "token": "..." }
+// The file exists so the token lives in exactly one place instead of being
+// copied into every MCP client's config (Claude Code, Claude Desktop, ...).
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import { SyncClient, assertPayloadShape } from './sync.js';
 import { buildCharacter, normalizeInput, summarize, detail, resolveCharacter } from './characters.js';
 
-const URL_ENV = process.env.INKLING_SYNC_URL;
-const TOKEN_ENV = process.env.INKLING_SYNC_TOKEN;
+export const CONFIG_PATH = path.join(os.homedir(), '.inkling-mcp.json');
 
-if (!URL_ENV || !TOKEN_ENV) {
-  console.error('inkling-mcp: set INKLING_SYNC_URL and INKLING_SYNC_TOKEN (Settings > Sync > Railway in the app).');
-  process.exit(1);
+function loadConfig() {
+  let url = process.env.INKLING_SYNC_URL;
+  let token = process.env.INKLING_SYNC_TOKEN;
+
+  if ((!url || !token) && fs.existsSync(CONFIG_PATH)) {
+    let file;
+    try {
+      file = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+    } catch (e) {
+      throw new Error(`${CONFIG_PATH} is not valid JSON: ${e.message}`);
+    }
+    url = url || file.url;
+    token = token || file.token;
+  }
+
+  const placeholder = v => !v || /^(PASTE|YOUR|<)/i.test(String(v).trim());
+  if (placeholder(url) || placeholder(token)) {
+    throw new Error(
+      `Inkling sync is not configured yet.\n` +
+      `Edit ${CONFIG_PATH} and fill in:\n` +
+      `  { "url": "https://your-app.up.railway.app", "token": "your-sync-token" }\n` +
+      `Both values are in the app under Settings > Sync > Railway.`
+    );
+  }
+  return { url, token };
 }
 
-const sync = new SyncClient({ url: URL_ENV, token: TOKEN_ENV });
+let sync = null;
+let configError = null;
+try {
+  const cfg = loadConfig();
+  sync = new SyncClient(cfg);
+} catch (e) {
+  // Start anyway so the tools can report the problem in-chat. Exiting here
+  // just shows up as an opaque "server failed to start" in the client.
+  configError = e.message;
+}
 
 const TOOLS = [
   {
@@ -131,6 +166,7 @@ const ok = payload => ({ content: [{ type: 'text', text: JSON.stringify(payload,
 const fail = message => ({ content: [{ type: 'text', text: `Error: ${message}` }], isError: true });
 
 async function handle(name, args) {
+  if (configError) return fail(configError);
   switch (name) {
     case 'inkling_status': {
       const { data, revision, updatedAt } = await sync.pull();
