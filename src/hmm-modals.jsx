@@ -1369,8 +1369,12 @@ function CharEditorModal({ editId, onClose }) {
                     try {
                       const added = {};
                       for (const f of eligible) {
-                        added[window.expressionNameFromFilename(f.name)] =
-                          await new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(f); });
+                        try {
+                          added[window.expressionNameFromFilename(f.name)] =
+                            await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(f); });
+                        } catch (err) {
+                          ctx.addToast(`Failed to read ${f.name}`, 'error');
+                        }
                       }
                       spriteCapRejectedRef.current = false;
                       setForm(fm => {
