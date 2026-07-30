@@ -44,12 +44,26 @@ function Textbox({ char, text, settings, streaming, onChoice }) {
   const [shown, setShown] = useState(reduce ? Infinity : 0);
   const timer = useRef(null);
 
-  const current = pages[Math.min(page, pages.length - 1)] || { text: '', start: 0 };
+  const current = pages[Math.min(page, pages.length - 1)] || { text: '', start: 0, map: [] };
   const full = current.text;
   const done = shown >= full.length;
 
-  // Restart typing when the page changes or new streamed text arrives
-  useEffect(() => { setShown(reduce ? Infinity : 0); }, [page, full, reduce]);
+  // Restart typing only when the page actually changed, or when the new
+  // `full` is NOT a forward extension of what we had (a genuinely different
+  // page's text). `text` grows in place while an AI response streams in, so
+  // on every chunk `full` is just a longer prefix of itself — in that case
+  // leave `shown` alone so typing continues forward into the newly arrived
+  // characters instead of wiping back to empty and re-typing from scratch.
+  const prevFullRef = useRef(full);
+  const prevPageRef = useRef(page);
+  useEffect(() => {
+    const pageChanged = page !== prevPageRef.current;
+    const isExtension = !pageChanged && full.startsWith(prevFullRef.current);
+    if (reduce) setShown(Infinity);
+    else if (pageChanged || !isExtension) setShown(0);
+    prevFullRef.current = full;
+    prevPageRef.current = page;
+  }, [page, full, reduce]);
 
   useEffect(() => {
     if (reduce || done) return;
@@ -68,8 +82,13 @@ function Textbox({ char, text, settings, streaming, onChoice }) {
   const skip = useCallback(() => setShown(Infinity), []);
 
   const visible = done ? full : full.slice(0, shown);
+  // `current.map[i]` is the source-text offset of `current.text[i]` — pages
+  // aren't verbatim slices of the source (collapsed whitespace, hard breaks),
+  // so the portrait offset must come from the map rather than arithmetic on
+  // `current.start`.
+  const portraitOffset = current.map?.[Math.min(shown, full.length) - 1] ?? current.start;
   const portraitKey = char?.textboxStyle === 'deltarune'
-    ? resolveExpressionKey(char?.expressions, expressionAt(tags, current.start + Math.min(shown, full.length)))
+    ? resolveExpressionKey(char?.expressions, expressionAt(tags, portraitOffset))
       || resolveExpressionKey(char?.expressions, char?.defaultExpression)
       || Object.keys(char?.expressions || {})[0]
     : null;

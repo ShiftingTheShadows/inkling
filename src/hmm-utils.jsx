@@ -500,16 +500,33 @@ function parseChoiceFence(raw) {
   return { text: prose, choices };
 }
 
+// Trim trailing whitespace off a wrapped line's text, dropping the same
+// number of trailing entries from its parallel source-offset map so the two
+// stay the same length.
+function __trimTrailingWs(text, map) {
+  const m = text.match(/\s+$/);
+  const n = m ? m[0].length : 0;
+  return n ? { text: text.slice(0, -n), map: map.slice(0, map.length - n) } : { text, map };
+}
+
 // The box font is monospace, so characters-per-line is deterministic and
 // wrapping is pure arithmetic - no DOM measurement, identical on every device.
 // `start` is the offset of each page's first character in the source text, so
 // expression-tag offsets can be mapped onto the page being typed.
+// `map[i]` is the source-text offset of `text[i]` for that page. It's needed
+// alongside `start` because a page's rendered text is NOT a verbatim slice of
+// the source: whitespace runs collapse to a single space, and wrapped lines
+// join with a synthetic '\n' that has no source character of its own (it's
+// given the offset of the last real character before it, so a tag doesn't
+// fire until the character it precedes has actually been typed). Built here,
+// character by character, while the true source cursor is known — trying to
+// reconstruct it afterwards by matching strings would be unreliable.
 function wrapPages(raw, cols, rows) {
   const text = String(raw ?? '');
   const width = Math.max(1, cols | 0);
   const height = Math.max(1, rows | 0);
 
-  const lines = [];               // { text, start }
+  const lines = [];               // { text, start, map } | null
   let cursor = 0;
 
   for (const rawLine of text.split('\n')) {
@@ -520,12 +537,15 @@ function wrapPages(raw, cols, rows) {
 
     let at = 0;
     let buf = '';
+    let bufMap = [];               // source offset for each char already in buf
     let bufStart = lineStart;
     const words = rawLine.split(/(\s+)/); // keep separators to track offsets
 
     for (const piece of words) {
       if (/^\s+$/.test(piece)) {
-        if (buf) buf += ' ';
+        // A run of whitespace collapses to one space — record the offset of
+        // its FIRST source character, since that's where the collapse begins.
+        if (buf) { buf += ' '; bufMap.push(lineStart + at); }
         at += piece.length;
         continue;
       }
@@ -538,35 +558,57 @@ function wrapPages(raw, cols, rows) {
         // chop it into width-sized chunks, each chunk's start following
         // directly from the previous one (not from the original word start).
         if (buf) {
-          lines.push({ text: buf.replace(/\s+$/, ''), start: bufStart });
-          buf = '';
+          const t = __trimTrailingWs(buf, bufMap);
+          lines.push({ text: t.text, start: bufStart, map: t.map });
+          buf = ''; bufMap = [];
         }
         let chunkStart = wordStart;
         while (word.length > width) {          // hard-break over-long words
-          lines.push({ text: word.slice(0, width), start: chunkStart });
+          const chunkMap = [];
+          for (let k = 0; k < width; k++) chunkMap.push(chunkStart + k);
+          lines.push({ text: word.slice(0, width), start: chunkStart, map: chunkMap });
           word = word.slice(width);
           chunkStart += width;
         }
         bufStart = chunkStart;
         buf = word;
+        bufMap = [];
+        for (let k = 0; k < word.length; k++) bufMap.push(chunkStart + k);
       } else {
         if (buf.length + word.length > width) {
-          lines.push({ text: buf.replace(/\s+$/, ''), start: bufStart });
-          buf = '';
+          const t = __trimTrailingWs(buf, bufMap);
+          lines.push({ text: t.text, start: bufStart, map: t.map });
+          buf = ''; bufMap = [];
         }
         if (!buf) bufStart = wordStart;
+        for (let k = 0; k < word.length; k++) bufMap.push(wordStart + k);
         buf += word;
       }
       at += piece.length;
     }
-    lines.push({ text: buf.replace(/\s+$/, ''), start: bufStart });
+    const t = __trimTrailingWs(buf, bufMap);
+    lines.push({ text: t.text, start: bufStart, map: t.map });
   }
 
   const pages = [];
   let group = [];
   const flush = () => {
     if (!group.length) return;
-    pages.push({ text: group.map(l => l.text).join('\n'), start: group[0].start });
+    let pageText = '';
+    let pageMap = [];
+    let lastOffset = group[0].start;
+    group.forEach((l, idx) => {
+      if (idx > 0) {
+        pageText += '\n';
+        // Synthetic join newline: no source character of its own, so reuse
+        // the offset of the last real character already typed.
+        pageMap.push(lastOffset);
+      }
+      pageText += l.text;
+      pageMap = pageMap.concat(l.map);
+      if (l.map.length) lastOffset = l.map[l.map.length - 1];
+    });
+    pages.push({ text: pageText, start: group[0].start, map: pageMap });
     group = [];
   };
   for (const line of lines) {
@@ -576,7 +618,7 @@ function wrapPages(raw, cols, rows) {
   }
   flush();
 
-  return pages.length ? pages : [{ text: '', start: 0 }];
+  return pages.length ? pages : [{ text: '', start: 0, map: [] }];
 }
 
 function parseTextbox(raw, { cols = 46, rows = 3 } = {}) {

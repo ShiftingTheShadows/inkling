@@ -95,31 +95,31 @@ eq('lone ::: with no open stays literal',
 
 eq('short text is one page',
   M.wrapPages('hello', 20, 3),
-  [{ text: 'hello', start: 0 }]);
+  [{ text: 'hello', start: 0, map: [0, 1, 2, 3, 4] }]);
 
 eq('wraps on word boundaries',
   M.wrapPages('aaa bbb ccc', 7, 3),
-  [{ text: 'aaa bbb\nccc', start: 0 }]);
+  [{ text: 'aaa bbb\nccc', start: 0, map: [0, 1, 2, 3, 4, 5, 6, 6, 8, 9, 10] }]);
 
 eq('splits into pages at the row limit',
   M.wrapPages('a b c d', 1, 2),
-  [{ text: 'a\nb', start: 0 }, { text: 'c\nd', start: 4 }]);
+  [{ text: 'a\nb', start: 0, map: [0, 0, 2] }, { text: 'c\nd', start: 4, map: [4, 4, 6] }]);
 
 eq('word longer than cols hard-breaks',
   M.wrapPages('abcdefgh', 3, 3),
-  [{ text: 'abc\ndef\ngh', start: 0 }]);
+  [{ text: 'abc\ndef\ngh', start: 0, map: [0, 1, 2, 2, 3, 4, 5, 5, 6, 7] }]);
 
 eq('blank line starts a new page',
   M.wrapPages('one\n\ntwo', 20, 3),
-  [{ text: 'one', start: 0 }, { text: 'two', start: 5 }]);
+  [{ text: 'one', start: 0, map: [0, 1, 2] }, { text: 'two', start: 5, map: [5, 6, 7] }]);
 
 eq('explicit newline is a line break, not a page break',
   M.wrapPages('one\ntwo', 20, 3),
-  [{ text: 'one\ntwo', start: 0 }]);
+  [{ text: 'one\ntwo', start: 0, map: [0, 1, 2, 2, 4, 5, 6] }]);
 
 eq('empty input yields one empty page',
   M.wrapPages('', 20, 3),
-  [{ text: '', start: 0 }]);
+  [{ text: '', start: 0, map: [] }]);
 
 ok('start offsets index the original text', (() => {
   const src = 'alpha beta gamma delta';
@@ -129,22 +129,30 @@ ok('start offsets index the original text', (() => {
 
 eq('hard-break remainder keeps a correct start offset',
   M.wrapPages('abcdefgh', 3, 1),
-  [{ text: 'abc', start: 0 }, { text: 'def', start: 3 }, { text: 'gh', start: 6 }]);
+  [{ text: 'abc', start: 0, map: [0, 1, 2] }, { text: 'def', start: 3, map: [3, 4, 5] }, { text: 'gh', start: 6, map: [6, 7] }]);
 
 eq('hard-break mid-sentence keeps later offsets correct',
   M.wrapPages('hi abcdefgh yo', 4, 1),
-  [{ text: 'hi', start: 0 }, { text: 'abcd', start: 3 }, { text: 'efgh', start: 7 }, { text: 'yo', start: 12 }]);
+  [{ text: 'hi', start: 0, map: [0, 1] }, { text: 'abcd', start: 3, map: [3, 4, 5, 6] }, { text: 'efgh', start: 7, map: [7, 8, 9, 10] }, { text: 'yo', start: 12, map: [12, 13] }]);
+
+eq('map survives a collapsed double space',
+  M.wrapPages('ab  cd', 20, 3),
+  [{ text: 'ab cd', start: 0, map: [0, 1, 2, 4, 5] }]);
+
+eq('map survives a hard break',
+  M.wrapPages('abcdefgh', 3, 3),
+  [{ text: 'abc\ndef\ngh', start: 0, map: [0, 1, 2, 2, 3, 4, 5, 5, 6, 7] }]);
 
 {
   const r = M.parseTextbox('\\E[Grin]Hi there.\n:::choices\nAsk\n:::', { cols: 20, rows: 3 });
-  eq('parseTextbox pages', r.pages, [{ text: 'Hi there.', start: 0 }]);
+  eq('parseTextbox pages', r.pages, [{ text: 'Hi there.', start: 0, map: [0, 1, 2, 3, 4, 5, 6, 7, 8] }]);
   eq('parseTextbox choices', r.choices, ['Ask']);
   eq('parseTextbox tags', r.tags, [{ at: 0, name: 'Grin' }]);
 }
 
 eq('parseTextbox on empty input',
   M.parseTextbox('', { cols: 20, rows: 3 }),
-  { pages: [{ text: '', start: 0 }], choices: [], tags: [] });
+  { pages: [{ text: '', start: 0, map: [] }], choices: [], tags: [] });
 
 eq('expressionAt before any tag', M.expressionAt([{ at: 5, name: 'A' }], 0), null);
 eq('expressionAt at the tag', M.expressionAt([{ at: 5, name: 'A' }], 5), 'A');
