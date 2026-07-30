@@ -451,31 +451,52 @@ function stripExpressionTags(raw) {
 // for ordinary dialogue lines. A fourth meaning could fire by accident.
 const MAX_CHOICES = 8;
 
-function parseChoiceFence(raw) {
-  const text = String(raw ?? '');
-  const lines = text.split('\n');
-
-  // Walk backwards: only the LAST fence is live, earlier ones stay literal
-  let openIdx = -1, closeIdx = -1;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const t = lines[i].trim();
-    if (closeIdx === -1 && /^:::$/.test(t)) { closeIdx = i; continue; }
-    if (closeIdx !== -1 && /^:::choices$/i.test(t)) { openIdx = i; break; }
-  }
-  if (openIdx === -1 || closeIdx === -1) return { text, choices: [] };
-
-  const choices = lines.slice(openIdx + 1, closeIdx)
-    .map(l => l.trim())
-    .filter(Boolean)
-    .map(l => l
+// Strip inline markdown marks. Nested/adjacent marks (e.g. "**bold *inner* **")
+// need more than one pass — a single sweep of one-shot replaces leaves stray
+// characters behind. Reapply the same five patterns until a pass changes
+// nothing, capped so malformed input can't spin forever.
+function __stripChoiceMarks(s) {
+  let prev = s;
+  for (let n = 0; n < 5; n++) {
+    const next = prev
       .replace(/\*\*([^*]+)\*\*/g, '$1')
       .replace(/\*([^*]+)\*/g, '$1')
       .replace(/__([^_]+)__/g, '$1')
       .replace(/~~([^~]+)~~/g, '$1')
-      .replace(/`([^`]+)`/g, '$1'))
+      .replace(/`([^`]+)`/g, '$1');
+    if (next === prev) break;
+    prev = next;
+  }
+  return prev;
+}
+
+function parseChoiceFence(raw) {
+  const text = String(raw ?? '');
+  const lines = text.split('\n');
+
+  // Only the LAST fence is live, earlier ones stay literal. Find the last
+  // open, then the first close after it — this way a genuinely-unclosed
+  // last fence can never fall back onto an earlier well-formed one.
+  let openIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^:::choices$/i.test(lines[i].trim())) { openIdx = i; break; }
+  }
+  if (openIdx === -1) return { text, choices: [] };
+
+  let closeIdx = -1;
+  for (let i = openIdx + 1; i < lines.length; i++) {
+    if (lines[i].trim() === ':::') { closeIdx = i; break; }
+  }
+  if (closeIdx === -1) return { text, choices: [] };
+
+  const choices = lines.slice(openIdx + 1, closeIdx)
+    .map(l => l.trim())
+    .filter(Boolean)
+    .map(l => __stripChoiceMarks(l).trim())
     .slice(0, MAX_CHOICES);
 
-  const prose = lines.slice(0, openIdx).join('\n').replace(/\s+$/, '');
+  const prose = lines.slice(0, openIdx).concat(lines.slice(closeIdx + 1))
+    .join('\n').replace(/\s+$/, '');
   return { text: prose, choices };
 }
 /* TEXTBOX-EXPORTS-END */

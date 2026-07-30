@@ -77,4 +77,20 @@ eq('trailing whitespace trimmed from prose',
   M.parseChoiceFence('hi\n\n:::choices\nA\n:::'),
   { text: 'hi', choices: ['A'] });
 
+eq('unclosed LAST fence keeps the whole message literal',
+  M.parseChoiceFence('a\n:::choices\nOLD\n:::\nb\n:::choices\nNEW'),
+  { text: 'a\n:::choices\nOLD\n:::\nb\n:::choices\nNEW', choices: [] });
+
+eq('content after the fence close is preserved',
+  M.parseChoiceFence('a\n:::choices\nX\n:::\nafter'),
+  { text: 'a\nafter', choices: ['X'] });
+
+eq('nested marks strip cleanly',
+  M.parseChoiceFence('x\n:::choices\n**bold *inner* **\n:::'),
+  { text: 'x', choices: ['bold inner'] });
+
+eq('lone ::: with no open stays literal',
+  M.parseChoiceFence('a\n:::\nb'),
+  { text: 'a\n:::\nb', choices: [] });
+
 done();
