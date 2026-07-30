@@ -155,6 +155,13 @@ check('our write also landed', !!blob.data.characters.find(c => c.name === 'Late
     { status: fresh.status, revision: freshBody.revision });
 }
 
+// ── textbox style ─────────────────────────────────────────
+const tbx = await call('inkling_update_character', { character: 'Mox', textbox_style: 'deltarune' });
+check('textbox_style round-trips', !tbx.isError, tbx.text);
+blob = await dump();
+check('textboxStyle persisted',
+  blob.data.characters.find(c => c.name === 'Mox').textboxStyle === 'deltarune');
+
 // ── delete ────────────────────────────────────────────────
 const unconfirmed = await call('inkling_delete_character', { character: 'Late', confirm: false });
 check('delete without confirm refused', unconfirmed.isError && /confirm:true/.test(unconfirmed.text));
