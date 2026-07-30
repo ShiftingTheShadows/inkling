@@ -415,6 +415,12 @@ function __mdBlocks(lines) {
   return blocks.join('');
 }
 
+// ── Textbox parsing ──────────────────────────────────────────────
+// Everything between the TEXTBOX-EXPORTS markers is pure and gets sliced out
+// by test/harness.js to run under Node. Keep it free of React and DOM access.
+/* TEXTBOX-EXPORTS-START */
+/* TEXTBOX-EXPORTS-END */
+
 function nameHash(name) {
   let h = 0;
   for (let i = 0; i < (name || '').length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
