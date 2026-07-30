@@ -578,6 +578,53 @@ function wrapPages(raw, cols, rows) {
 
   return pages.length ? pages : [{ text: '', start: 0 }];
 }
+
+function parseTextbox(raw, { cols = 46, rows = 3 } = {}) {
+  const fenced = parseChoiceFence(raw);
+  const stripped = stripExpressionTags(fenced.text);
+  return {
+    pages: wrapPages(stripped.text, cols, rows),
+    choices: fenced.choices,
+    tags: stripped.tags,
+  };
+}
+
+// Latest tag at or before `offset`. Linear scan: tag counts are tiny.
+function expressionAt(tags, offset) {
+  let name = null;
+  for (const t of tags || []) {
+    if (t.at <= offset) name = t.name; else break;
+  }
+  return name;
+}
+
+function resolveExpressionKey(expressions, name) {
+  if (!expressions || !name) return null;
+  const keys = Object.keys(expressions);
+  const needle = String(name).trim().toLowerCase();
+  return keys.find(k => k.toLowerCase() === needle) || null;
+}
+
+// "Anxious Side Eye [323643].png" -> "Anxious Side Eye"
+function expressionNameFromFilename(filename) {
+  return String(filename || '')
+    .replace(/\.[a-z0-9]+$/i, '')
+    .replace(/\s*\[\d+\]\s*$/, '')
+    .trim();
+}
+
+// Distinct voice per character with zero authoring. Deliberately NOT built on
+// top of nameHash: nameHash folds down to a 0-359 hue for colour, and two
+// short names easily land on the same hue ('Vera' and 'Mox' both hash to 158)
+// which would give them the identical pitch too. Hashing straight to the
+// 600-wide pitch range keeps far more entropy and avoids that collision.
+function pitchForCharacter(char) {
+  if (typeof char?.blipPitch === 'number') return char.blipPitch;
+  const name = char?.name || '';
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
+  return 200 + (Math.abs(h) % 600);
+}
 /* TEXTBOX-EXPORTS-END */
 
 function nameHash(name) {
@@ -1294,4 +1341,5 @@ Object.assign(window, {
   charBg, charFg, buildSystemPrompt, substituteMacros, callAI, avatarPx,
   summarizeMessages, GistSync, RailwaySync,
   downloadCharJson, downloadCharPng,
+  parseTextbox, expressionAt, resolveExpressionKey, expressionNameFromFilename, pitchForCharacter,
 });

@@ -135,4 +135,45 @@ eq('hard-break mid-sentence keeps later offsets correct',
   M.wrapPages('hi abcdefgh yo', 4, 1),
   [{ text: 'hi', start: 0 }, { text: 'abcd', start: 3 }, { text: 'efgh', start: 7 }, { text: 'yo', start: 12 }]);
 
+{
+  const r = M.parseTextbox('\\E[Grin]Hi there.\n:::choices\nAsk\n:::', { cols: 20, rows: 3 });
+  eq('parseTextbox pages', r.pages, [{ text: 'Hi there.', start: 0 }]);
+  eq('parseTextbox choices', r.choices, ['Ask']);
+  eq('parseTextbox tags', r.tags, [{ at: 0, name: 'Grin' }]);
+}
+
+eq('parseTextbox on empty input',
+  M.parseTextbox('', { cols: 20, rows: 3 }),
+  { pages: [{ text: '', start: 0 }], choices: [], tags: [] });
+
+eq('expressionAt before any tag', M.expressionAt([{ at: 5, name: 'A' }], 0), null);
+eq('expressionAt at the tag', M.expressionAt([{ at: 5, name: 'A' }], 5), 'A');
+eq('expressionAt takes the latest passed tag',
+  M.expressionAt([{ at: 0, name: 'A' }, { at: 5, name: 'B' }], 9), 'B');
+eq('expressionAt with no tags', M.expressionAt([], 3), null);
+
+{
+  const set = { 'Grin (No Eyes)': 'd1', Neutral: 'd2' };
+  eq('resolve exact', M.resolveExpressionKey(set, 'Neutral'), 'Neutral');
+  eq('resolve case-insensitive', M.resolveExpressionKey(set, 'nEuTrAl'), 'Neutral');
+  eq('resolve with parens', M.resolveExpressionKey(set, 'grin (no eyes)'), 'Grin (No Eyes)');
+  eq('resolve unknown', M.resolveExpressionKey(set, 'Nope'), null);
+  eq('resolve on empty set', M.resolveExpressionKey({}, 'Neutral'), null);
+}
+
+eq('filename strips id suffix',
+  M.expressionNameFromFilename('Anxious Side Eye [323643].png'), 'Anxious Side Eye');
+eq('filename without id', M.expressionNameFromFilename('Neutral.png'), 'Neutral');
+eq('filename with parens',
+  M.expressionNameFromFilename('Grin (No Eyes) [323564].png'), 'Grin (No Eyes)');
+
+ok('pitch is stable and in range', (() => {
+  const a = M.pitchForCharacter({ name: 'Vera' });
+  const b = M.pitchForCharacter({ name: 'Vera' });
+  return a === b && a >= 200 && a <= 800;
+})());
+ok('explicit blipPitch wins', M.pitchForCharacter({ name: 'Vera', blipPitch: 440 }) === 440);
+ok('different names differ',
+  M.pitchForCharacter({ name: 'Vera' }) !== M.pitchForCharacter({ name: 'Mox' }));
+
 done();
