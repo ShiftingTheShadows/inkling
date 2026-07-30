@@ -529,21 +529,34 @@ function wrapPages(raw, cols, rows) {
         at += piece.length;
         continue;
       }
+      const wordStart = lineStart + at;
       let word = piece;
-      while (word.length > width) {          // hard-break over-long words
-        const room = width - buf.length;
-        if (room > 0) { buf += word.slice(0, room); word = word.slice(room); }
-        lines.push({ text: buf, start: bufStart });
-        bufStart = lineStart + at + (piece.length - word.length);
-        buf = '';
+
+      if (word.length > width) {
+        // Word can never fit on a single line - flush whatever's already
+        // buffered so the hard break always starts at a clean line, then
+        // chop it into width-sized chunks, each chunk's start following
+        // directly from the previous one (not from the original word start).
+        if (buf) {
+          lines.push({ text: buf.replace(/\s+$/, ''), start: bufStart });
+          buf = '';
+        }
+        let chunkStart = wordStart;
+        while (word.length > width) {          // hard-break over-long words
+          lines.push({ text: word.slice(0, width), start: chunkStart });
+          word = word.slice(width);
+          chunkStart += width;
+        }
+        bufStart = chunkStart;
+        buf = word;
+      } else {
+        if (buf.length + word.length > width) {
+          lines.push({ text: buf.replace(/\s+$/, ''), start: bufStart });
+          buf = '';
+        }
+        if (!buf) bufStart = wordStart;
+        buf += word;
       }
-      if (buf.length + word.length > width) {
-        lines.push({ text: buf.replace(/\s+$/, ''), start: bufStart });
-        bufStart = lineStart + at;
-        buf = '';
-      }
-      if (!buf) bufStart = lineStart + at;
-      buf += word;
       at += piece.length;
     }
     lines.push({ text: buf.replace(/\s+$/, ''), start: bufStart });

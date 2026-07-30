@@ -127,4 +127,12 @@ ok('start offsets index the original text', (() => {
   return pages.every(p => src.slice(p.start).startsWith(p.text.split('\n')[0]));
 })());
 
+eq('hard-break remainder keeps a correct start offset',
+  M.wrapPages('abcdefgh', 3, 1),
+  [{ text: 'abc', start: 0 }, { text: 'def', start: 3 }, { text: 'gh', start: 6 }]);
+
+eq('hard-break mid-sentence keeps later offsets correct',
+  M.wrapPages('hi abcdefgh yo', 4, 1),
+  [{ text: 'hi', start: 0 }, { text: 'abcd', start: 3 }, { text: 'efgh', start: 7 }, { text: 'yo', start: 12 }]);
+
 done();
