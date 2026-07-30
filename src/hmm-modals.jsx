@@ -967,6 +967,7 @@ function CharEditorModal({ editId, onClose }) {
     name: '', description: '', personality: '', scenario: '',
     firstMessage: '', exampleDialogues: '', systemPrompt: '',
     tags: '', avatar: '', alternateGreetings: [],
+    textboxStyle: 'none', blipPitch: null, expressions: {}, defaultExpression: '',
     ...(existing ? { ...existing, tags: (existing.tags || []).join(', '), alternateGreetings: existing.alternateGreetings || [] } : {}),
   });
   const [avatarPreview, setAvatarPreview] = useState(existing?.avatar || '');
@@ -1147,7 +1148,7 @@ function CharEditorModal({ editId, onClose }) {
     onClose();
   };
 
-  const TABS = [['basic', 'BASIC'], ['advanced', 'ADVANCED'], ['avatar', 'AVATAR']];
+  const TABS = [['basic', 'BASIC'], ['advanced', 'ADVANCED'], ['avatar', 'AVATAR'], ['textbox', 'TEXTBOX']];
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && attemptClose()}>
@@ -1308,6 +1309,80 @@ function CharEditorModal({ editId, onClose }) {
                   <input className="form-input" value={form.avatar?.startsWith('data:') ? '' : (form.avatar || '')} onChange={e => { set('avatar', e.target.value); setAvatarPreview(e.target.value); }} placeholder="https://..." />
                 </div>
                 <div className="form-hint" style={{ marginTop: 8 }}>PNG, JPG, WebP supported. Square images work best.<br/>If left empty, initials will be shown.</div>
+              </div>
+            </div>
+          )}
+          {tab === 'textbox' && (
+            <div>
+              <div className="form-group">
+                <label className="form-label">TEXTBOX STYLE</label>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {[['none','OFF'],['undertale','UNDERTALE'],['deltarune','DELTARUNE']].map(([v,l]) => (
+                    <button key={v} type="button" onClick={() => set('textboxStyle', v)}
+                      style={{ flex: 1, padding: '6px', fontSize: 9, fontWeight: 700, letterSpacing: '0.08em',
+                        fontFamily: 'var(--font)',
+                        background: (form.textboxStyle||'none')===v?'var(--accent3)':'var(--surface3)',
+                        border: `1px solid ${(form.textboxStyle||'none')===v?'var(--accent3)':'var(--border2)'}`,
+                        color: (form.textboxStyle||'none')===v?'var(--accent)':'var(--text3)', cursor: 'pointer' }}>{l}</button>
+                  ))}
+                </div>
+                <div className="form-hint" style={{ marginTop: 4 }}>
+                  Portraits show in DELTARUNE style only - Undertale has none in overworld dialogue.
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">
+                  BLIP PITCH: {form.blipPitch ? `${Math.round(form.blipPitch)} Hz` : 'auto (from name)'}
+                </label>
+                <input type="range" className="form-range" min={150} max={900} step={10}
+                  value={form.blipPitch || 400}
+                  onChange={e => set('blipPitch', Number(e.target.value))} />
+                <button type="button" className="btn-secondary btn-sm" style={{ marginTop: 6 }}
+                  onClick={() => set('blipPitch', null)}>RESET TO AUTO</button>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">
+                  EXPRESSIONS ({Object.keys(form.expressions || {}).length})
+                </label>
+                <input type="file" accept="image/*" multiple
+                  onChange={async e => {
+                    const files = [...e.target.files].filter(f => f.type.startsWith('image/'));
+                    if (files.length + Object.keys(form.expressions||{}).length > 200) {
+                      ctx.addToast('Too many sprites (200 max)', 'error'); return;
+                    }
+                    const added = {};
+                    for (const f of files) {
+                      if (f.size > 256 * 1024) { ctx.addToast(`${f.name} is over 256KB, skipped`, 'error'); continue; }
+                      added[window.expressionNameFromFilename(f.name)] =
+                        await new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(f); });
+                    }
+                    setForm(fm => ({ ...fm, expressions: { ...fm.expressions, ...added } }));
+                    e.target.value = '';
+                  }} />
+                <div className="form-hint">
+                  Select many at once. Names come from filenames - "Anxious [323643].png" becomes "Anxious".
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(84px, 1fr))', gap: 8 }}>
+                {Object.entries(form.expressions || {}).map(([name, src]) => (
+                  <div key={name} style={{ border: `1px solid ${form.defaultExpression === name ? 'var(--accent)' : 'var(--border2)'}`, padding: 4, textAlign: 'center' }}>
+                    <img src={src} alt={name} style={{ width: 60, height: 60, imageRendering: 'pixelated' }} />
+                    <div style={{ fontSize: 9, color: 'var(--text3)', wordBreak: 'break-word', margin: '2px 0' }}>{name}</div>
+                    <div style={{ display: 'flex', gap: 2, justifyContent: 'center' }}>
+                      <button type="button" className="btn-secondary btn-sm" title="Set as default"
+                        onClick={() => set('defaultExpression', name)}>★</button>
+                      <button type="button" className="btn-secondary btn-sm" title="Remove"
+                        onClick={() => setForm(fm => {
+                          const next = { ...fm.expressions }; delete next[name];
+                          return { ...fm, expressions: next,
+                            defaultExpression: fm.defaultExpression === name ? '' : fm.defaultExpression };
+                        })}>×</button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}
