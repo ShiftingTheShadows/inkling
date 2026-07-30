@@ -38,4 +38,43 @@ eq('unclosed tag is left as literal text',
 
 eq('empty input', M.stripExpressionTags(''), { text: '', tags: [] });
 
+eq('no fence',
+  M.parseChoiceFence('Just talking.'),
+  { text: 'Just talking.', choices: [] });
+
+eq('basic fence',
+  M.parseChoiceFence('Well?\n:::choices\nAsk\nLeave\n:::'),
+  { text: 'Well?', choices: ['Ask', 'Leave'] });
+
+eq('fence is case-insensitive',
+  M.parseChoiceFence('x\n:::CHOICES\nA\n:::'),
+  { text: 'x', choices: ['A'] });
+
+eq('blank lines inside the fence are ignored',
+  M.parseChoiceFence('x\n:::choices\nA\n\nB\n:::'),
+  { text: 'x', choices: ['A', 'B'] });
+
+eq('inline marks stripped from options',
+  M.parseChoiceFence('x\n:::choices\n**Ask** the *thing*\n:::'),
+  { text: 'x', choices: ['Ask the thing'] });
+
+eq('last fence wins, earlier one stays literal',
+  M.parseChoiceFence('a\n:::choices\nOLD\n:::\nb\n:::choices\nNEW\n:::'),
+  { text: 'a\n:::choices\nOLD\n:::\nb', choices: ['NEW'] });
+
+eq('empty fence is dropped entirely',
+  M.parseChoiceFence('x\n:::choices\n:::'),
+  { text: 'x', choices: [] });
+
+ok('caps at 8 options',
+  M.parseChoiceFence('x\n:::choices\n' + Array.from({length: 12}, (_, i) => `opt${i}`).join('\n') + '\n:::').choices.length === 8);
+
+eq('unclosed fence stays literal',
+  M.parseChoiceFence('x\n:::choices\nA'),
+  { text: 'x\n:::choices\nA', choices: [] });
+
+eq('trailing whitespace trimmed from prose',
+  M.parseChoiceFence('hi\n\n:::choices\nA\n:::'),
+  { text: 'hi', choices: ['A'] });
+
 done();

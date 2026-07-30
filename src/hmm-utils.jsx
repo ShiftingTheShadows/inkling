@@ -445,6 +445,39 @@ function stripExpressionTags(raw) {
 
   return { text: out, tags };
 }
+
+// ":::choices ... :::" - a fence rather than "* option" lines because "*"
+// already means a markdown bullet, rp-action italics, AND is UT's own prefix
+// for ordinary dialogue lines. A fourth meaning could fire by accident.
+const MAX_CHOICES = 8;
+
+function parseChoiceFence(raw) {
+  const text = String(raw ?? '');
+  const lines = text.split('\n');
+
+  // Walk backwards: only the LAST fence is live, earlier ones stay literal
+  let openIdx = -1, closeIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const t = lines[i].trim();
+    if (closeIdx === -1 && /^:::$/.test(t)) { closeIdx = i; continue; }
+    if (closeIdx !== -1 && /^:::choices$/i.test(t)) { openIdx = i; break; }
+  }
+  if (openIdx === -1 || closeIdx === -1) return { text, choices: [] };
+
+  const choices = lines.slice(openIdx + 1, closeIdx)
+    .map(l => l.trim())
+    .filter(Boolean)
+    .map(l => l
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/\*([^*]+)\*/g, '$1')
+      .replace(/__([^_]+)__/g, '$1')
+      .replace(/~~([^~]+)~~/g, '$1')
+      .replace(/`([^`]+)`/g, '$1'))
+    .slice(0, MAX_CHOICES);
+
+  const prose = lines.slice(0, openIdx).join('\n').replace(/\s+$/, '');
+  return { text: prose, choices };
+}
 /* TEXTBOX-EXPORTS-END */
 
 function nameHash(name) {
