@@ -974,6 +974,15 @@ function CharEditorModal({ editId, onClose }) {
   const [cropSrc, setCropSrc] = useState(null);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
+  // Expression sprite import: guards against bloating the synced character
+  // record. `importing` disables the file input for the duration of the
+  // async read loop so two overlapping batches can't both validate against
+  // the same stale count and both land. The cap itself is (re)checked inside
+  // the functional setForm updater, against state at commit time, not the
+  // render-closure count read when the batch started.
+  const [importing, setImporting] = useState(false);
+  const spriteCapRejectedRef = useRef(false);
+
   // Confirm before discarding unsaved edits — clicking off the modal, the
   // × button, Cancel, or Escape used to silently drop everything typed.
   const initialFormRef = useRef(JSON.stringify(form));
@@ -1346,23 +1355,44 @@ function CharEditorModal({ editId, onClose }) {
                 <label className="form-label">
                   EXPRESSIONS ({Object.keys(form.expressions || {}).length})
                 </label>
-                <input type="file" accept="image/*" multiple
+                <input type="file" accept="image/*" multiple disabled={importing}
                   onChange={async e => {
-                    const files = [...e.target.files].filter(f => f.type.startsWith('image/'));
-                    if (files.length + Object.keys(form.expressions||{}).length > 200) {
-                      ctx.addToast('Too many sprites (200 max)', 'error'); return;
+                    // Filter to eligible files (right type, under the size limit) BEFORE
+                    // checking the 200-sprite cap, so oversized files that will never be
+                    // added don't count against it. Skip-toasts fire during this pass.
+                    const eligible = [...e.target.files].filter(f => {
+                      if (!f.type.startsWith('image/')) return false;
+                      if (f.size > 256 * 1024) { ctx.addToast(`${f.name} is over 256KB, skipped`, 'error'); return false; }
+                      return true;
+                    });
+                    setImporting(true);
+                    try {
+                      const added = {};
+                      for (const f of eligible) {
+                        added[window.expressionNameFromFilename(f.name)] =
+                          await new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(f); });
+                      }
+                      spriteCapRejectedRef.current = false;
+                      setForm(fm => {
+                        const existingCount = Object.keys(fm.expressions || {}).length;
+                        if (Object.keys(added).length + existingCount > 200) {
+                          spriteCapRejectedRef.current = true;
+                          return fm;
+                        }
+                        // Re-importing a name that's already present overwrites it (last
+                        // file wins) - deliberate, not a bug. See form-hint below.
+                        return { ...fm, expressions: { ...fm.expressions, ...added } };
+                      });
+                      if (spriteCapRejectedRef.current) {
+                        ctx.addToast('Too many sprites (200 max)', 'error');
+                      }
+                    } finally {
+                      setImporting(false);
+                      e.target.value = '';
                     }
-                    const added = {};
-                    for (const f of files) {
-                      if (f.size > 256 * 1024) { ctx.addToast(`${f.name} is over 256KB, skipped`, 'error'); continue; }
-                      added[window.expressionNameFromFilename(f.name)] =
-                        await new Promise(res => { const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(f); });
-                    }
-                    setForm(fm => ({ ...fm, expressions: { ...fm.expressions, ...added } }));
-                    e.target.value = '';
                   }} />
                 <div className="form-hint">
-                  Select many at once. Names come from filenames - "Anxious [323643].png" becomes "Anxious".
+                  Select many at once. Names come from filenames - "Anxious [323643].png" becomes "Anxious". Re-importing a name that already exists replaces it.
                 </div>
               </div>
 
