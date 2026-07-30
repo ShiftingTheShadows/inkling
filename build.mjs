@@ -38,4 +38,5 @@ console.log(`built dist/index.html (${before} -> ${html.length} bytes)`);
 cpSync('manifest.webmanifest', 'dist/manifest.webmanifest');
 cpSync('sw.js', 'dist/sw.js');
 cpSync('icons', 'dist/icons', { recursive: true });
-console.log('copied manifest, sw.js, icons/');
+cpSync('fonts', 'dist/fonts', { recursive: true });
+console.log('copied manifest, sw.js, icons/, fonts/');

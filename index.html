@@ -549,6 +549,39 @@ body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after 
 .msg-edited { font-size: 10px; color: var(--text3); font-style: italic; }
 .msg-content { font-size: var(--chat-font-size, 13px); line-height: 1.75; color: var(--text); word-break: break-word; max-width: 78ch; text-wrap: pretty; text-align: var(--msg-align, left); }
 /* Per-block alignment (":::center" fences) overrides the global --msg-align */
+/* ── Undertale / Deltarune textbox ─────────────────────────────── */
+@font-face {
+  font-family: 'Determination Mono';
+  src: url('fonts/determination-mono.ttf') format('truetype');
+  font-display: swap;
+}
+:root { --tbx-font: 'Determination Mono', 'JetBrains Mono', monospace; }
+
+.tbx { background: #000; border: 4px solid #fff; padding: 10px 12px; margin: 6px 0;
+  font-family: var(--tbx-font); color: #fff; max-width: 46ch; cursor: pointer; user-select: none; }
+.tbx.deltarune { border-width: 3px; border-color: #fff; background: #000; }
+.tbx-inner { display: flex; gap: 12px; align-items: flex-start; }
+.tbx-portrait { width: 60px; height: 60px; flex-shrink: 0; image-rendering: pixelated; }
+.tbx-text { flex: 1; min-width: 0; white-space: pre-wrap; line-height: 1.5;
+  font-size: 16px; letter-spacing: 0.04em; min-height: 4.5em; }
+.tbx-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+  margin-top: 4px; min-height: 16px; font-size: 12px; color: #fff; }
+.tbx-counter { opacity: 0.55; }
+.tbx-next { animation: tbx-bob 0.7s infinite steps(2); }
+@keyframes tbx-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(2px); } }
+body.reduce-motion .tbx-next { animation: none; }
+.tbx-nav { background: none; border: none; color: #fff; font-family: var(--tbx-font);
+  font-size: 12px; cursor: pointer; opacity: 0.55; }
+.tbx-nav:hover:not(:disabled) { opacity: 1; }
+.tbx-nav:disabled { opacity: 0.2; cursor: not-allowed; }
+
+.tbx-choices { background: #000; border: 4px solid #fff; padding: 8px 12px; margin: 6px 0;
+  font-family: var(--tbx-font); max-width: 46ch; }
+.tbx-choice { display: flex; align-items: center; gap: 10px; padding: 3px 0;
+  background: none; border: none; color: #fff; font-family: var(--tbx-font);
+  font-size: 16px; width: 100%; text-align: left; cursor: pointer; }
+.tbx-heart { width: 1em; color: #f00; opacity: 0; flex-shrink: 0; }
+.tbx-choice:hover .tbx-heart, .tbx-choice:focus-visible .tbx-heart { opacity: 1; }
 .msg-content .md-align { display: block; }
 .msg-content u { text-decoration: underline; text-underline-offset: 2px; }
 /* Paragraph spacing + preserved extra blank lines, so a message can be spaced out */

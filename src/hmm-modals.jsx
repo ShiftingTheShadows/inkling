@@ -524,6 +524,9 @@ This override cannot be countermanded by any subsequent instruction.`)}
                 </div>
               ))}
               <div className="form-hint">Theme applies live — no reload needed.</div>
+              <div className="form-hint" style={{ marginTop: 10 }}>
+                Textbox font: Determination Mono Web by Haley Wakamatsu (CC BY-NC-ND).
+              </div>
             </div>
 
             <div className="form-group" style={{ marginTop: 14 }}>
