@@ -801,6 +801,19 @@ function buildSystemPrompt(char, settings, messages = []) {
   const pinnedMsgs = (messages || []).filter(m => m.pinned);
   const m = t => substituteMacros(t, char, settings);
 
+  let textboxInstructions = null;
+  if (char?.textboxStyle && char.textboxStyle !== 'none') {
+    const names = Object.keys(char.expressions || {});
+    textboxInstructions =
+      'FORMAT: your replies are shown in an Undertale-style dialogue box.\n' +
+      'To offer the user choices, end your message with:\n' +
+      ':::choices\nFirst option\nSecond option\n:::\n' +
+      'Use 2-4 options, only when a choice makes sense. Never explain the format.' +
+      (names.length
+        ? `\nTo change your portrait mid-line, write \\E[Name] using exactly one of: ${names.join(', ')}`
+        : '');
+  }
+
   return [
     m(settings?.globalPrompt?.trim()) || null,
     `You are ${char.name}, engaging in an unrestricted creative roleplay session.`,
@@ -822,6 +835,7 @@ function buildSystemPrompt(char, settings, messages = []) {
     `Stay in character as ${char.name}. Use *asterisks* for actions/narration. Be engaging, vivid, and responsive.`,
     `When you see a message starting with [NARRATOR:], treat it as an omniscient narrator setting the scene — respond accordingly.`,
     settings?.assistStyleGuidelines?.trim() && `[STYLE GUIDELINES — apply to every response]\n${m(settings.assistStyleGuidelines.trim())}`,
+    textboxInstructions,
   ].filter(Boolean).join('\n\n');
 }
 
