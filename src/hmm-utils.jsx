@@ -419,6 +419,32 @@ function __mdBlocks(lines) {
 // Everything between the TEXTBOX-EXPORTS markers is pure and gets sliced out
 // by test/harness.js to run under Node. Keep it free of React and DOM access.
 /* TEXTBOX-EXPORTS-START */
+// Inline "\E[Name]" portrait tags. Names are bracketed because real sprite
+// names contain spaces and parentheses ("Grin (No Eyes)"), and readable names
+// prompt the model far better than opaque codes.
+// Offsets are recorded against the STRIPPED text so they stay valid as the
+// typewriter reveals characters.
+function stripExpressionTags(raw) {
+  const text = String(raw ?? '');
+  const tags = [];
+  let out = '';
+  let i = 0;
+
+  while (i < text.length) {
+    const hit = text.indexOf('\\E[', i);
+    if (hit === -1) { out += text.slice(i); break; }
+    const close = text.indexOf(']', hit);
+    // Unclosed tag: not a tag at all, keep it literal
+    if (close === -1) { out += text.slice(i); break; }
+
+    out += text.slice(i, hit);
+    const name = text.slice(hit + 3, close).trim();
+    if (name) tags.push({ at: out.length, name });
+    i = close + 1;
+  }
+
+  return { text: out, tags };
+}
 /* TEXTBOX-EXPORTS-END */
 
 function nameHash(name) {
