@@ -499,6 +499,72 @@ function parseChoiceFence(raw) {
     .join('\n').replace(/\s+$/, '');
   return { text: prose, choices };
 }
+
+// The box font is monospace, so characters-per-line is deterministic and
+// wrapping is pure arithmetic - no DOM measurement, identical on every device.
+// `start` is the offset of each page's first character in the source text, so
+// expression-tag offsets can be mapped onto the page being typed.
+function wrapPages(raw, cols, rows) {
+  const text = String(raw ?? '');
+  const width = Math.max(1, cols | 0);
+  const height = Math.max(1, rows | 0);
+
+  const lines = [];               // { text, start }
+  let cursor = 0;
+
+  for (const rawLine of text.split('\n')) {
+    const lineStart = cursor;
+    cursor += rawLine.length + 1; // +1 for the consumed '\n'
+
+    if (!rawLine.trim()) { lines.push(null); continue; } // blank = page break
+
+    let at = 0;
+    let buf = '';
+    let bufStart = lineStart;
+    const words = rawLine.split(/(\s+)/); // keep separators to track offsets
+
+    for (const piece of words) {
+      if (/^\s+$/.test(piece)) {
+        if (buf) buf += ' ';
+        at += piece.length;
+        continue;
+      }
+      let word = piece;
+      while (word.length > width) {          // hard-break over-long words
+        const room = width - buf.length;
+        if (room > 0) { buf += word.slice(0, room); word = word.slice(room); }
+        lines.push({ text: buf, start: bufStart });
+        bufStart = lineStart + at + (piece.length - word.length);
+        buf = '';
+      }
+      if (buf.length + word.length > width) {
+        lines.push({ text: buf.replace(/\s+$/, ''), start: bufStart });
+        bufStart = lineStart + at;
+        buf = '';
+      }
+      if (!buf) bufStart = lineStart + at;
+      buf += word;
+      at += piece.length;
+    }
+    lines.push({ text: buf.replace(/\s+$/, ''), start: bufStart });
+  }
+
+  const pages = [];
+  let group = [];
+  const flush = () => {
+    if (!group.length) return;
+    pages.push({ text: group.map(l => l.text).join('\n'), start: group[0].start });
+    group = [];
+  };
+  for (const line of lines) {
+    if (line === null) { flush(); continue; }   // blank line forces a break
+    group.push(line);
+    if (group.length === height) flush();
+  }
+  flush();
+
+  return pages.length ? pages : [{ text: '', start: 0 }];
+}
 /* TEXTBOX-EXPORTS-END */
 
 function nameHash(name) {

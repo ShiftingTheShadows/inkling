@@ -93,4 +93,38 @@ eq('lone ::: with no open stays literal',
   M.parseChoiceFence('a\n:::\nb'),
   { text: 'a\n:::\nb', choices: [] });
 
+eq('short text is one page',
+  M.wrapPages('hello', 20, 3),
+  [{ text: 'hello', start: 0 }]);
+
+eq('wraps on word boundaries',
+  M.wrapPages('aaa bbb ccc', 7, 3),
+  [{ text: 'aaa bbb\nccc', start: 0 }]);
+
+eq('splits into pages at the row limit',
+  M.wrapPages('a b c d', 1, 2),
+  [{ text: 'a\nb', start: 0 }, { text: 'c\nd', start: 4 }]);
+
+eq('word longer than cols hard-breaks',
+  M.wrapPages('abcdefgh', 3, 3),
+  [{ text: 'abc\ndef\ngh', start: 0 }]);
+
+eq('blank line starts a new page',
+  M.wrapPages('one\n\ntwo', 20, 3),
+  [{ text: 'one', start: 0 }, { text: 'two', start: 5 }]);
+
+eq('explicit newline is a line break, not a page break',
+  M.wrapPages('one\ntwo', 20, 3),
+  [{ text: 'one\ntwo', start: 0 }]);
+
+eq('empty input yields one empty page',
+  M.wrapPages('', 20, 3),
+  [{ text: '', start: 0 }]);
+
+ok('start offsets index the original text', (() => {
+  const src = 'alpha beta gamma delta';
+  const pages = M.wrapPages(src, 11, 1);
+  return pages.every(p => src.slice(p.start).startsWith(p.text.split('\n')[0]));
+})());
+
 done();
