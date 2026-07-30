@@ -13,14 +13,14 @@ A per-character **display skin**. The model writes normally; Inkling renders its
 
 Nothing about the conversation becomes pre-scripted. The only authored content stays what it already is: greetings (`firstMessage` + `alternateGreetings`), which the app already exposes as swipeable branches.
 
+Portraits are **in** v1. They were originally cut on the assumption that sprite sets would be heavy, but a real reference set (64 Kris expressions, uniform 60x60) totals 41 KB - 56 KB base64 - which is less than a single cropped avatar. With portraits in, `deltarune` is genuinely distinct from `undertale` rather than differing only by border colour.
+
 ## What this is not (v1)
 
-- **Portraits / sprites.** Cut from v1. Expression tags are still parsed and stored so portraits can light up old chats later.
 - **Present mode.** The fullscreen VN view is a later feature. It reuses this box renderer unchanged, which is why the renderer is a standalone module.
 - **Per-character gag fonts** (Papyrus in Papyrus, etc).
 - **Authored dialogue trees.** Explicitly rejected during design - the AI generates every turn.
-
-Consequence worth stating plainly: with portraits cut, `deltarune` differs from `undertale` in v1 only by border art and colours. The portrait is most of what separates them visually. The field ships now so the choice persists, but v1 will not feel like two distinct modes.
+- **Animated / talking sprites.** Static image per expression only.
 
 ## Architecture
 
@@ -52,6 +52,8 @@ Per character (all optional, absent means off - existing characters are unaffect
 |---|---|---|---|
 | `textboxStyle` | `'none' \| 'undertale' \| 'deltarune'` | `'none'` | Which skin, or off |
 | `blipPitch` | number (Hz) | derived | Voice pitch for the typing blip |
+| `expressions` | `{ [name: string]: dataUri }` | `{}` | Portrait sprite per expression |
+| `defaultExpression` | string | first key | Shown when no tag has been seen yet |
 
 `blipPitch` defaults to a value derived from the existing `nameHash(name)` helper in `hmm-utils.jsx`, mapped into roughly 200-800 Hz so every character gets a distinct but non-grating voice with zero authoring. An explicit value overrides it.
 
@@ -93,11 +95,21 @@ Parsing rules:
 
 ### Expression tags
 
-Inline `\E<name>` tags, e.g. `\Eangry`. Parsed out of the text, recorded in `expressions[]` with the character offset they appeared at, and **stripped from the rendered output** so they never print as raw junk. Unrendered in v1.
+Inline `\E[Name]` tags, e.g. `\E[Anxious Side Eye]`. Bracketed because real sprite names contain spaces and parentheses - the reference set has `Grin (No Eyes)`, `Nervous Smile w- Eyebrow` and similar. Readable names also prompt the model far better than opaque codes like `\E1`.
+
+Parsing rules:
+
+- Matched case-insensitively against the character's `expressions` keys, ignoring surrounding whitespace.
+- Recorded in the message's `expressions[]` with the character offset where each tag appeared, so the portrait can change **mid-page** as the typewriter passes that offset.
+- Always **stripped from the rendered output**, whether or not they resolve, so a tag never prints as raw junk.
+- An unknown name leaves the current portrait unchanged rather than blanking it.
+- Offsets are recorded against the stripped text, so they stay correct as the typewriter advances.
 
 ### System prompt
 
-When `textboxStyle !== 'none'`, `buildSystemPrompt` appends a short instruction explaining the choices fence and expression tags, and asking for 2-4 options when a choice makes sense. Kept brief: this is injected on every turn.
+When `textboxStyle !== 'none'`, `buildSystemPrompt` appends a short instruction explaining the choices fence and expression tags, and asking for 2-4 options when a choice makes sense.
+
+When the character has `expressions`, the available names are listed so the model can only pick real ones. Kept terse - this is injected on every turn, and a 64-name list is not free. Names are sent comma-separated with no commentary.
 
 ## Rendering
 
@@ -116,6 +128,15 @@ Characters reveal on an interval at `textboxSpeed` cps. While a reply is still s
 
 Clicking the box skips to the end of the current page. `reduceMotion` (and the OS `prefers-reduced-motion` media query, both already honoured in this codebase) renders instantly with no animation and no sound.
 
+### Portraits
+
+`deltarune` style renders the portrait inside the box on the left, text offset to its right. `undertale` style renders no portrait even when the character has sprites, matching the games - UT shows portraits only in battle.
+
+- Sprites render at their natural size with `image-rendering: pixelated`, scaled by an integer factor only. Non-integer scaling destroys pixel art.
+- The portrait column is a fixed width, so text wrapping does not shift when the expression changes. This also means the pagination maths stays independent of which sprite is showing.
+- The portrait changes mid-page as the typewriter passes each tag's offset.
+- Character with `textboxStyle: 'deltarune'` but no `expressions`: renders the box with no portrait column, laid out as the UT box. This is the common case for most characters and must not look broken.
+
 ### Controls
 
 - `▼` advances to the next page; a page counter (`1/3`) shows when there is more than one page.
@@ -127,6 +148,18 @@ Clicking the box skips to the end of the current page. `reduceMotion` (and the O
 Rendered in a second box below the dialogue box, with a `♥` cursor marking the hovered/selected row. Clicking an option sends that text as your next user message through the normal send path.
 
 Choices only appear once the final page has finished typing, matching how the games gate a choice behind the dialogue.
+
+## Expression authoring
+
+A new tab in the character editor, alongside the existing basic/advanced tabs.
+
+- **Bulk import:** select or drop many PNGs at once. The expression name derives from the filename with the extension and any trailing `[123456]` id stripped, so `Anxious Side Eye [323643].png` becomes `Anxious Side Eye`. This is the primary path - a 64-sprite set is unusable one file at a time.
+- Grid of thumbnails with the name under each; rename, delete, and set-as-default per sprite.
+- Sprites are stored as data URIs on the character, exactly like `avatar`, so they ride the existing sync and character-card export with no new plumbing.
+- Import is capped (200 sprites, 256 KB each) with a clear error rather than silently bloating the sync blob.
+- Non-image files in a dropped folder are skipped silently.
+
+Sprites live in the character's synced data, **not** in the repo. That is both the right architecture - every character needs its own set - and it avoids committing third-party game assets to a public repository. The same reasoning applies to the audio, which is synthesized rather than sampled.
 
 ## Audio
 
@@ -152,6 +185,9 @@ Determination Mono, self-hosted as woff2 with `@font-face`, falling back to `Jet
 | Font fails to load | Falls back to JetBrains Mono; monospace holds so pagination still works. |
 | Sound blocked before user interaction | Silently skipped - browsers require a gesture before audio. |
 | Empty message | Renders an empty box rather than throwing. |
+| Expression tag names an unknown sprite | Tag stripped, current portrait kept. |
+| `deltarune` style, no sprites imported | Box renders portrait-less, laid out as the UT box. |
+| Sprite fails to decode | That slot renders empty; the rest of the box is unaffected. |
 
 ## Testing
 
@@ -159,7 +195,10 @@ Determination Mono, self-hosted as woff2 with `@font-face`, falling back to `Jet
 
 - Word-wrap and pagination, including the hard-break case and blank-line page breaks
 - Choice parsing: last-block-wins, empty block dropped, 8-option cap, marks stripped
-- Expression tags stripped from output and recorded with offsets
+- Expression tags stripped from output and recorded with offsets; offsets correct against the *stripped* text, including several tags in one page
+- Unknown expression name leaves the tag stripped but the portrait unchanged
+- Bracketed names with spaces and parentheses resolve case-insensitively
+- Filename to expression-name derivation, including the `[323643]` id suffix
 - Interaction with the existing blank-line spacing behaviour
 - `textboxStyle: 'none'` produces byte-identical output to today
 
@@ -171,6 +210,9 @@ Determination Mono, self-hosted as woff2 with `@font-face`, falling back to `Jet
 - Choice click sends the option as a user message
 - `reduceMotion` renders instantly
 - Sound off by default; no AudioContext created unless enabled
+- Portrait swaps mid-page as the typewriter passes a tag offset
+- Bulk import of the 64-sprite reference set: names derived correctly, character still saves and syncs
+- `deltarune` with no sprites renders portrait-less without layout breakage
 
 ## Open questions
 
