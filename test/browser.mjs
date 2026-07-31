@@ -88,9 +88,14 @@ try {
         id: 'plain', name: 'Plain', firstMessage: 'hi', textboxStyle: 'none',
         createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
       },
+      {
+        id: 'tbu', name: 'Papyrus', firstMessage: 'hi', textboxStyle: 'undertale',
+        createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      },
     ]);
     window.S.saveChat('tb', [{ id: 'm1', role: 'assistant', ts: Date.now(), content: tbMessage }]);
     window.S.saveChat('plain', [{ id: 'm2', role: 'assistant', ts: Date.now(), content: 'Plain markdown reply, no textbox here.' }]);
+    window.S.saveChat('tbu', [{ id: 'm3', role: 'assistant', ts: Date.now(), content: tbMessage }]);
     localStorage.setItem('hmm_current', 'tb');
   }, { px: PX, tbMessage });
 
@@ -110,6 +115,19 @@ try {
   await page.locator('.tbx').click();
   const skipped = (await page.locator('.tbx-text').innerText()).length;
   check('click skips typing to the full page', skipped > later, { later, skipped });
+
+  // Geometry check: wrapPages() already wraps this page's text to fit exactly
+  // 3 rows at 46 cols. If the box's font/width don't agree with what
+  // wrapPages measured against, the browser silently re-wraps each of those
+  // lines again, and a "3-line page" renders taller than 3 lines. This is the
+  // only assertion that would catch that — text-length checks above cannot.
+  const boxGeometry = () => page.locator('.tbx-text').evaluate(el => {
+    const cs = getComputedStyle(el);
+    return { height: el.getBoundingClientRect().height, lineHeight: parseFloat(cs.lineHeight) };
+  });
+  const deltaruneGeom = await boxGeometry();
+  check('deltarune .tbx-text renders at most 3 line-heights tall',
+    deltaruneGeom.height <= deltaruneGeom.lineHeight * 3 + 2, deltaruneGeom);
 
   check('pagination counter starts at 1/2', await page.locator('.tbx-counter').innerText() === '1/2');
   check('choices are hidden before the last page', await page.locator('.tbx-choices').count() === 0);
@@ -150,6 +168,16 @@ try {
   const plainText = await page.locator('.msg.assistant .msg-content').first().innerText();
   check('textboxStyle "none" still renders the markdown message body',
     plainText.includes('Plain markdown reply'), { plainText });
+
+  // Same geometry check for the plain "undertale" style — no portrait column,
+  // but the same font-size/max-width mismatch (finding #1) applied here too.
+  await page.evaluate(() => localStorage.setItem('hmm_current', 'tbu'));
+  await page.reload();
+  await page.waitForSelector('.tbx', { timeout: 20000 });
+  await page.locator('.tbx').click(); // skip typing to the full page
+  const undertaleGeom = await boxGeometry();
+  check('undertale .tbx-text renders at most 3 line-heights tall',
+    undertaleGeom.height <= undertaleGeom.lineHeight * 3 + 2, undertaleGeom);
 
   const audioCalls = await page.evaluate(() => window.__audioCtorCalls);
   check('no AudioContext constructed (sound off by default)', audioCalls === 0, { audioCalls });

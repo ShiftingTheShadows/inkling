@@ -557,11 +557,25 @@ body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after 
 }
 :root { --tbx-font: 'Determination Mono', 'JetBrains Mono', monospace; }
 
+/* max-width includes the box's own padding/border (global border-box reset),
+   plus the portrait column for deltarune, so .tbx-text's actual content
+   width still resolves to (at least) 46ch - what wrapPages() wrapped against.
+   Padding is 10px 12px (24px horizontal); border is 4px/side (8px) here,
+   3px/side (6px) for deltarune; deltarune also pays for the 60px portrait
+   + 12px flex gap (72px). .tbx-text also carries 0.04em letter-spacing,
+   which "ch" doesn't account for - at 16px that's ~0.64px extra per
+   character, ~30px across a full 46-char line, so pad that in too or the
+   browser re-wraps a line short of the last couple characters. */
 .tbx { background: #000; border: 4px solid #fff; padding: 10px 12px; margin: 6px 0;
-  font-family: var(--tbx-font); color: #fff; max-width: 46ch; cursor: pointer; user-select: none; }
-.tbx.deltarune { border-width: 3px; border-color: #fff; background: #000; }
+  font-family: var(--tbx-font); font-size: 16px; color: #fff; max-width: calc(46ch + 62px); cursor: pointer; user-select: none; }
+.tbx.deltarune { border-width: 3px; border-color: #fff; background: #000; max-width: calc(46ch + 132px); }
 .tbx-inner { display: flex; gap: 12px; align-items: flex-start; }
-.tbx-portrait { width: 60px; height: 60px; flex-shrink: 0; image-rendering: pixelated; }
+/* Fixed 60x60 slot (not max-width/max-height) - the box-geometry math above
+   reserves exactly this much space for the portrait column, and most sprite
+   art is native-smaller than 60px anyway, so a max-* cap alone would leave it
+   at its tiny intrinsic size and collapse the reserved gap. object-fit:contain
+   still stops non-square sprites being squash-stretched to fill the slot. */
+.tbx-portrait { width: 60px; height: 60px; flex-shrink: 0; object-fit: contain; image-rendering: pixelated; }
 .tbx-text { flex: 1; min-width: 0; white-space: pre-wrap; line-height: 1.5;
   font-size: 16px; letter-spacing: 0.04em; min-height: 4.5em; }
 .tbx-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px;
