@@ -884,6 +884,14 @@ EDIT RULES — this is an edit, not a rewrite:
 const AVATAR_CROP_VIEWPORT = 280;
 const AVATAR_CROP_OUTPUT = 640;
 
+// Expression sprites sync as base64 data URIs inside the character record.
+// The sync server caps the whole request body at 50MB (express.json limit) —
+// blow past that with one character's sprites and the 413 kills sync for
+// every character on the account, not just this one, and auto-sync just
+// keeps retrying the same oversized payload forever. 4MB/character keeps a
+// generous sprite set well clear of that cliff.
+const SPRITE_TOTAL_BYTES_LIMIT = 4 * 1024 * 1024;
+
 function AvatarCropModal({ src, onCancel, onConfirm }) {
   const imgRef = useRef(null);
   const [ready, setReady] = useState(false);
@@ -995,7 +1003,7 @@ function CharEditorModal({ editId, onClose }) {
   // the functional setForm updater, against state at commit time, not the
   // render-closure count read when the batch started.
   const [importing, setImporting] = useState(false);
-  const spriteCapRejectedRef = useRef(false);
+  const spriteCapRejectedRef = useRef(null); // null | 'count' | 'size'
 
   // Confirm before discarding unsaved edits — clicking off the modal, the
   // × button, Cancel, or Escape used to silently drop everything typed.
@@ -1390,19 +1398,27 @@ function CharEditorModal({ editId, onClose }) {
                           ctx.addToast(`Failed to read ${f.name}`, 'error');
                         }
                       }
-                      spriteCapRejectedRef.current = false;
+                      spriteCapRejectedRef.current = null;
+                      const addedBytes = Object.values(added).reduce((sum, v) => sum + (v || '').length, 0);
                       setForm(fm => {
                         const existingCount = Object.keys(fm.expressions || {}).length;
                         if (Object.keys(added).length + existingCount > 200) {
-                          spriteCapRejectedRef.current = true;
+                          spriteCapRejectedRef.current = 'count';
+                          return fm;
+                        }
+                        const existingBytes = Object.values(fm.expressions || {}).reduce((sum, v) => sum + (v || '').length, 0);
+                        if (existingBytes + addedBytes > SPRITE_TOTAL_BYTES_LIMIT) {
+                          spriteCapRejectedRef.current = 'size';
                           return fm;
                         }
                         // Re-importing a name that's already present overwrites it (last
                         // file wins) - deliberate, not a bug. See form-hint below.
                         return { ...fm, expressions: { ...fm.expressions, ...added } };
                       });
-                      if (spriteCapRejectedRef.current) {
+                      if (spriteCapRejectedRef.current === 'count') {
                         ctx.addToast('Too many sprites (200 max)', 'error');
+                      } else if (spriteCapRejectedRef.current === 'size') {
+                        ctx.addToast(`Sprites exceed the ${Math.round(SPRITE_TOTAL_BYTES_LIMIT / (1024 * 1024))}MB total limit for one character`, 'error');
                       }
                     } finally {
                       setImporting(false);
