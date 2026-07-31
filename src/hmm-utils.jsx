@@ -470,7 +470,7 @@ function __stripChoiceMarks(s) {
   return prev;
 }
 
-function parseChoiceFence(raw) {
+function parseChoiceFence(raw, { streaming = false } = {}) {
   const text = String(raw ?? '');
   const lines = text.split('\n');
 
@@ -487,7 +487,18 @@ function parseChoiceFence(raw) {
   for (let i = openIdx + 1; i < lines.length; i++) {
     if (lines[i].trim() === ':::') { closeIdx = i; break; }
   }
-  if (closeIdx === -1) return { text, choices: [] };
+  if (closeIdx === -1) {
+    // Mid-stream, an unterminated trailing fence is a message still arriving,
+    // not malformed prose — drop it from the prose entirely (no choices yet)
+    // instead of typing the raw ":::choices" fence out on screen. Once the
+    // closing "::: " lands this falls through to the normal branch below,
+    // and the prose it yields is identical, so `full` only ever grows.
+    if (streaming) {
+      const prose = lines.slice(0, openIdx).join('\n').replace(/\s+$/, '');
+      return { text: prose, choices: [] };
+    }
+    return { text, choices: [] };
+  }
 
   const choices = lines.slice(openIdx + 1, closeIdx)
     .map(l => l.trim())
@@ -621,8 +632,8 @@ function wrapPages(raw, cols, rows) {
   return pages.length ? pages : [{ text: '', start: 0, map: [] }];
 }
 
-function parseTextbox(raw, { cols = 46, rows = 3 } = {}) {
-  const fenced = parseChoiceFence(raw);
+function parseTextbox(raw, { cols = 46, rows = 3, streaming = false } = {}) {
+  const fenced = parseChoiceFence(raw, { streaming });
   const stripped = stripExpressionTags(fenced.text);
   return {
     pages: wrapPages(stripped.text, cols, rows),

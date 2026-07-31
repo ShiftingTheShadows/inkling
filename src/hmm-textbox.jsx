@@ -35,8 +35,8 @@ function Textbox({ char, text, settings, streaming, onChoice }) {
     || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
   const parsed = useMemo(
-    () => parseTextbox(text || '', { cols: MAX_COLS, rows: ROWS }),
-    [text]
+    () => parseTextbox(text || '', { cols: MAX_COLS, rows: ROWS, streaming }),
+    [text, streaming]
   );
   const { pages, choices, tags } = parsed;
 
@@ -101,7 +101,8 @@ function Textbox({ char, text, settings, streaming, onChoice }) {
     <div>
       <div className={`tbx${char?.textboxStyle === 'deltarune' ? ' deltarune' : ''}`} onClick={skip}>
         <div className="tbx-inner">
-          {portrait && <img className="tbx-portrait" src={portrait} alt={portraitKey} />}
+          {portrait && <img className="tbx-portrait" src={portrait} alt={portraitKey}
+            onError={e => { e.target.style.display = 'none'; }} />}
           <div className="tbx-text">{visible}</div>
         </div>
         <div className="tbx-foot" onClick={e => e.stopPropagation()}>

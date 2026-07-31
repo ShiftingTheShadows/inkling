@@ -93,6 +93,20 @@ eq('lone ::: with no open stays literal',
   M.parseChoiceFence('a\n:::\nb'),
   { text: 'a\n:::\nb', choices: [] });
 
+// Streaming: a fence still arriving shouldn't be typed out as literal prose,
+// and shouldn't yield choices before it's actually complete.
+eq('streaming with a trailing unterminated fence drops it from the prose',
+  M.parseChoiceFence('Well?\n:::choices\nAsk\nLeave', { streaming: true }),
+  { text: 'Well?', choices: [] });
+
+eq('streaming with a complete fence still yields the choices',
+  M.parseChoiceFence('Well?\n:::choices\nAsk\nLeave\n:::', { streaming: true }),
+  { text: 'Well?', choices: ['Ask', 'Leave'] });
+
+eq('non-streaming with an unterminated fence still keeps it literal',
+  M.parseChoiceFence('Well?\n:::choices\nAsk\nLeave'),
+  { text: 'Well?\n:::choices\nAsk\nLeave', choices: [] });
+
 eq('short text is one page',
   M.wrapPages('hello', 20, 3),
   [{ text: 'hello', start: 0, map: [0, 1, 2, 3, 4] }]);
