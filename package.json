@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "test": "node test/textbox.test.js",
+    "test": "node test/hooks-check.mjs && node test/textbox.test.js",
     "test:browser": "node test/browser.mjs"
   },
   "devDependencies": {

@@ -1,5 +1,5 @@
 // hmm-chat.jsx — Chat view, messages, input
-const { useState, useContext, useEffect, useRef } = React;
+const { useState, useContext, useEffect, useRef, useCallback } = React;
 const { AppCtx, S, genId, estimateTokens, formatTime, renderMarkdown, charBg, charFg, callAI, buildSystemPrompt, summarizeMessages, compressImage, downloadCharJson, downloadCharPng, avatarPx } = window;
 const { CharAvatar, Textbox } = window;
 
