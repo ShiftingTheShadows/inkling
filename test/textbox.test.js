@@ -137,6 +137,24 @@ eq('pages break only when the row limit is reached',
   M.wrapPages('a\n\nb\n\nc\n\nd', 20, 3),     // a0 b3 c6 d9
   [{ text: 'a\nb\nc', start: 0, map: [0, 0, 3, 3, 6] }, { text: 'd', start: 9, map: [9] }]);
 
+// A beat is kept whole: if it will not fit in the remaining space it starts
+// the next page, so sentences never split across boxes.
+// Two 2-line beats, 3 rows: the second cannot fit in the 1 remaining line, so
+// it starts a fresh page rather than being split across the boundary.
+eq('a beat that does not fit starts the next page',
+  M.wrapPages('aa bb\n\ncc dd', 2, 3),        // a0 a1 b3 b4 / c7 c8 d10 d11
+  [{ text: 'aa\nbb', start: 0, map: [0, 1, 1, 3, 4] },
+   { text: 'cc\ndd', start: 7, map: [7, 8, 8, 10, 11] }]);
+
+// The same input with room for both beats packs them into one page.
+eq('two beats pack when the page has room',
+  M.wrapPages('aa bb\n\ncc dd', 2, 4),
+  [{ text: 'aa\nbb\ncc\ndd', start: 0, map: [0, 1, 1, 3, 4, 4, 7, 8, 8, 10, 11] }]);
+
+eq('beats pack together while they fit',
+  M.wrapPages('a\n\nb\n\nc', 20, 3),
+  [{ text: 'a\nb\nc', start: 0, map: [0, 0, 3, 3, 6] }]);
+
 eq('many blank lines in a row collapse',
   M.wrapPages('a\n\n\n\nb', 20, 3),           // a0 b5
   [{ text: 'a\nb', start: 0, map: [0, 0, 5] }]);

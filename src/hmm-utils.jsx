@@ -622,15 +622,28 @@ function wrapPages(raw, cols, rows) {
     pages.push({ text: pageText, start: group[0].start, map: pageMap });
     group = [];
   };
-  // A blank line separates beats but does NOT start a new page. Pages fill to
-  // `height` lines and break only when full, so a one-line beat followed by a
-  // two-line beat share a box instead of burning two. Blank lines used to
-  // force a break, which made short beats waste most of the box and turned an
-  // ordinary greeting into a long click-through.
+  // Pages fill to `height` lines rather than breaking at every blank line, so
+  // a one-line beat and a two-line beat share a box instead of burning two.
+  //
+  // But a beat is kept whole: if it will not fit in what is left of the
+  // current page it starts the next one, the way widow control works in
+  // print. Filling without this splits sentences across boxes, which is
+  // exactly what makes a dialogue box feel broken. A beat longer than a whole
+  // page still has to span pages - nothing can be done about that.
+  const beats = [];
+  let beat = [];
   for (const line of lines) {
-    if (line === null) continue;
-    group.push(line);
-    if (group.length === height) flush();
+    if (line === null) { if (beat.length) { beats.push(beat); beat = []; } continue; }
+    beat.push(line);
+  }
+  if (beat.length) beats.push(beat);
+
+  for (const b of beats) {
+    if (group.length && group.length + b.length > height) flush();
+    for (const line of b) {
+      group.push(line);
+      if (group.length === height) flush();
+    }
   }
   flush();
 
