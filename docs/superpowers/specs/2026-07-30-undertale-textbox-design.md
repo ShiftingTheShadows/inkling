@@ -36,7 +36,11 @@ Pipeline, so the split of responsibility is unambiguous:
 
 1. `parseTextbox` strips the `:::choices` fence and `\E` tags off the raw reply, returning the remaining prose plus `choices[]` and `expressions[]`.
 2. That prose is word-wrapped and split into `pages[]` - plain strings, not HTML.
-3. `<Textbox>` renders one page at a time, passing each through the existing inline-mark pass (`**bold**`, `*action*`, `__underline__`) so emphasis still works inside a box. Block constructs - headings, lists, quotes, alignment fences - are **not** supported inside a textbox; they render as literal text, since the games have no equivalent and a `<ul>` would break the fixed 3-line layout.
+3. `<Textbox>` renders one page at a time as **plain text**. No markdown is applied inside a box - not block constructs (headings, lists, quotes, alignment fences) and not inline marks (`**bold**`, `*action*`).
+
+   Revised 2026-07-30 during implementation. The original plan passed each page through the inline-mark pass, but the typewriter reveals text one character at a time, and slicing `renderMarkdown`'s HTML output mid-tag emits broken markup. Preserving both would need a new offset-based inline formatter that clips spans to the reveal point.
+
+   Plain text was chosen instead because neither game has bold or italic in dialogue, so this is the more faithful rendering, and `*smiles*` showing literal asterisks reads correctly in a context where the games prefix dialogue lines with `*` anyway. If inline marks inside boxes are ever wanted, the follow-up is an offset-based formatter - the same technique `stripExpressionTags` already uses for portrait tags - not `renderMarkdown`.
 
 `renderMarkdown` itself is untouched. `parseTextbox` runs before it and only on characters with a textbox style, so the default rendering path carries no new risk.
 

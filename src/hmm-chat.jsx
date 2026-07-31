@@ -1,7 +1,7 @@
 // hmm-chat.jsx — Chat view, messages, input
 const { useState, useContext, useEffect, useRef } = React;
 const { AppCtx, S, genId, estimateTokens, formatTime, renderMarkdown, charBg, charFg, callAI, buildSystemPrompt, summarizeMessages, compressImage, downloadCharJson, downloadCharPng, avatarPx } = window;
-const { CharAvatar } = window;
+const { CharAvatar, Textbox } = window;
 
 function UserAvatar({ persona, size = 32 }) {
   const name = persona?.name || 'You';
@@ -28,7 +28,7 @@ function UserAvatar({ persona, size = 32 }) {
   );
 }
 
-function Message({ msg, char, settings, isStreaming, grouped, onDelete, onCopy, onRegen, onRegenGuided, onEdit, onBranch, onPin }) {
+function Message({ msg, char, settings, isStreaming, grouped, onDelete, onCopy, onRegen, onRegenGuided, onEdit, onBranch, onPin, onChoice }) {
   const isUser = msg.role === 'user';
   const isNarrator = msg.narrator;
   const author = isNarrator ? 'NARRATOR' : (isUser ? (settings?.activePersona?.name || 'You') : char.name);
@@ -96,6 +96,14 @@ function Message({ msg, char, settings, isStreaming, grouped, onDelete, onCopy, 
               <button className="btn-primary btn-sm" onClick={submitEdit}>SAVE &amp; RESEND</button>
             </div>
           </div>
+        ) : char?.textboxStyle && char.textboxStyle !== 'none' && msg.role === 'assistant' ? (
+          <Textbox
+            char={char}
+            text={textContent}
+            settings={settings}
+            streaming={isStreaming}
+            onChoice={onChoice}
+          />
         ) : (
           <div
             className="msg-content"
@@ -614,10 +622,14 @@ function ChatView() {
     });
   };
 
-  const sendMessage = async () => {
-    if (!inputVal.trim() || !char || generating) return;
-    const text = inputVal.trim();
-    updateInput('');
+  const sendMessage = async (override) => {
+    const fromComposer = typeof override !== 'string';
+    const body = fromComposer ? inputVal : override;
+    if (!body.trim() || !char || generating) return;
+    const text = body.trim();
+    // A string override (e.g. a clicked textbox choice) is not the composer's
+    // draft — clearing it here would destroy whatever the user was mid-typing.
+    if (fromComposer) updateInput('');
     if (inputRef.current) inputRef.current.style.height = 'auto';
 
     if (char.isGroup) {
@@ -666,6 +678,13 @@ function ChatView() {
     } finally {
       setGenerating(false);
     }
+  };
+
+  // A chosen textbox option is just a user message - reuse the normal send
+  // path so branching, history and token accounting all behave identically.
+  const sendChoice = text => {
+    if (generating) return;
+    sendMessage(text);
   };
 
   const regenerate = async (instruction = null) => {
@@ -1158,6 +1177,7 @@ function ChatView() {
               onRegen={() => regenerate(null)}
               onRegenGuided={() => setRegenModal({ open: true })}
               onEdit={editAndResend} onBranch={navigateBranch} onPin={togglePin}
+              onChoice={sendChoice}
             />
             );
           })}

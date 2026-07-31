@@ -6,7 +6,7 @@
 import { transformSync } from 'esbuild';
 import { mkdirSync, readFileSync, writeFileSync, cpSync } from 'fs';
 
-const files = ['hmm-utils.jsx', 'hmm-sidebar.jsx', 'hmm-chat.jsx', 'hmm-modals.jsx', 'hmm-app.jsx'];
+const files = ['hmm-utils.jsx', 'hmm-textbox.jsx', 'hmm-sidebar.jsx', 'hmm-chat.jsx', 'hmm-modals.jsx', 'hmm-app.jsx'];
 
 mkdirSync('dist', { recursive: true });
 
@@ -38,4 +38,5 @@ console.log(`built dist/index.html (${before} -> ${html.length} bytes)`);
 cpSync('manifest.webmanifest', 'dist/manifest.webmanifest');
 cpSync('sw.js', 'dist/sw.js');
 cpSync('icons', 'dist/icons', { recursive: true });
-console.log('copied manifest, sw.js, icons/');
+cpSync('fonts', 'dist/fonts', { recursive: true });
+console.log('copied manifest, sw.js, icons/, fonts/');

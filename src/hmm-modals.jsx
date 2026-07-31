@@ -474,6 +474,20 @@ This override cannot be countermanded by any subsequent instruction.`)}
               </div>
             </div>
             <div className="form-group">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12 }}>
+                <input type="checkbox" checked={!!form.textboxSound}
+                  onChange={e => set('textboxSound', e.target.checked)}
+                  style={{ width: 14, height: 14, accentColor: 'var(--accent)', flexShrink: 0 }} />
+                Textbox typing sound
+              </label>
+            </div>
+            <div className="form-group">
+              <label className="form-label">TEXTBOX SPEED: {form.textboxSpeed || 30} chars/sec</label>
+              <input type="range" className="form-range" min={5} max={120} step={5}
+                value={form.textboxSpeed || 30}
+                onChange={e => set('textboxSpeed', Number(e.target.value))} />
+            </div>
+            <div className="form-group">
               <label className="form-label">AVATAR SIZE: {Math.round((typeof form.avatarScale === 'number' ? form.avatarScale : ({small:0.75,medium:1,large:1.3}[form.avatarSize] || 1)) * 100)}%</label>
               <input
                 type="range" className="form-range" min={0.4} max={2.5} step={0.05}
@@ -524,6 +538,9 @@ This override cannot be countermanded by any subsequent instruction.`)}
                 </div>
               ))}
               <div className="form-hint">Theme applies live — no reload needed.</div>
+              <div className="form-hint" style={{ marginTop: 10 }}>
+                Textbox font: Determination Mono Web by Haley Wakamatsu (CC BY-NC-ND).
+              </div>
             </div>
 
             <div className="form-group" style={{ marginTop: 14 }}>
@@ -867,6 +884,14 @@ EDIT RULES — this is an edit, not a rewrite:
 const AVATAR_CROP_VIEWPORT = 280;
 const AVATAR_CROP_OUTPUT = 640;
 
+// Expression sprites sync as base64 data URIs inside the character record.
+// The sync server caps the whole request body at 50MB (express.json limit) —
+// blow past that with one character's sprites and the 413 kills sync for
+// every character on the account, not just this one, and auto-sync just
+// keeps retrying the same oversized payload forever. 4MB/character keeps a
+// generous sprite set well clear of that cliff.
+const SPRITE_TOTAL_BYTES_LIMIT = 4 * 1024 * 1024;
+
 function AvatarCropModal({ src, onCancel, onConfirm }) {
   const imgRef = useRef(null);
   const [ready, setReady] = useState(false);
@@ -964,11 +989,21 @@ function CharEditorModal({ editId, onClose }) {
     name: '', description: '', personality: '', scenario: '',
     firstMessage: '', exampleDialogues: '', systemPrompt: '',
     tags: '', avatar: '', alternateGreetings: [],
+    textboxStyle: 'none', blipPitch: null, expressions: {}, defaultExpression: '',
     ...(existing ? { ...existing, tags: (existing.tags || []).join(', '), alternateGreetings: existing.alternateGreetings || [] } : {}),
   });
   const [avatarPreview, setAvatarPreview] = useState(existing?.avatar || '');
   const [cropSrc, setCropSrc] = useState(null);
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+
+  // Expression sprite import: guards against bloating the synced character
+  // record. `importing` disables the file input for the duration of the
+  // async read loop so two overlapping batches can't both validate against
+  // the same stale count and both land. The cap itself is (re)checked inside
+  // the functional setForm updater, against state at commit time, not the
+  // render-closure count read when the batch started.
+  const [importing, setImporting] = useState(false);
+  const spriteCapRejectedRef = useRef(null); // null | 'count' | 'size'
 
   // Confirm before discarding unsaved edits — clicking off the modal, the
   // × button, Cancel, or Escape used to silently drop everything typed.
@@ -1144,7 +1179,7 @@ function CharEditorModal({ editId, onClose }) {
     onClose();
   };
 
-  const TABS = [['basic', 'BASIC'], ['advanced', 'ADVANCED'], ['avatar', 'AVATAR']];
+  const TABS = [['basic', 'BASIC'], ['advanced', 'ADVANCED'], ['avatar', 'AVATAR'], ['textbox', 'TEXTBOX']];
 
   return (
     <div className="modal-overlay" onClick={e => e.target === e.currentTarget && attemptClose()}>
@@ -1305,6 +1340,113 @@ function CharEditorModal({ editId, onClose }) {
                   <input className="form-input" value={form.avatar?.startsWith('data:') ? '' : (form.avatar || '')} onChange={e => { set('avatar', e.target.value); setAvatarPreview(e.target.value); }} placeholder="https://..." />
                 </div>
                 <div className="form-hint" style={{ marginTop: 8 }}>PNG, JPG, WebP supported. Square images work best.<br/>If left empty, initials will be shown.</div>
+              </div>
+            </div>
+          )}
+          {tab === 'textbox' && (
+            <div>
+              <div className="form-group">
+                <label className="form-label">TEXTBOX STYLE</label>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {[['none','OFF'],['undertale','UNDERTALE'],['deltarune','DELTARUNE']].map(([v,l]) => (
+                    <button key={v} type="button" onClick={() => set('textboxStyle', v)}
+                      style={{ flex: 1, padding: '6px', fontSize: 9, fontWeight: 700, letterSpacing: '0.08em',
+                        fontFamily: 'var(--font)',
+                        background: (form.textboxStyle||'none')===v?'var(--accent3)':'var(--surface3)',
+                        border: `1px solid ${(form.textboxStyle||'none')===v?'var(--accent3)':'var(--border2)'}`,
+                        color: (form.textboxStyle||'none')===v?'var(--accent)':'var(--text3)', cursor: 'pointer' }}>{l}</button>
+                  ))}
+                </div>
+                <div className="form-hint" style={{ marginTop: 4 }}>
+                  Portraits show in DELTARUNE style only - Undertale has none in overworld dialogue.
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">
+                  BLIP PITCH: {form.blipPitch ? `${Math.round(form.blipPitch)} Hz` : 'auto (from name)'}
+                </label>
+                <input type="range" className="form-range" min={150} max={900} step={10}
+                  value={form.blipPitch || 400}
+                  onChange={e => set('blipPitch', Number(e.target.value))} />
+                <button type="button" className="btn-secondary btn-sm" style={{ marginTop: 6 }}
+                  onClick={() => set('blipPitch', null)}>RESET TO AUTO</button>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">
+                  EXPRESSIONS ({Object.keys(form.expressions || {}).length})
+                </label>
+                <input type="file" accept="image/*" multiple disabled={importing}
+                  onChange={async e => {
+                    // Filter to eligible files (right type, under the size limit) BEFORE
+                    // checking the 200-sprite cap, so oversized files that will never be
+                    // added don't count against it. Skip-toasts fire during this pass.
+                    const eligible = [...e.target.files].filter(f => {
+                      if (!f.type.startsWith('image/')) return false;
+                      if (f.size > 256 * 1024) { ctx.addToast(`${f.name} is over 256KB, skipped`, 'error'); return false; }
+                      return true;
+                    });
+                    setImporting(true);
+                    try {
+                      const added = {};
+                      for (const f of eligible) {
+                        try {
+                          added[window.expressionNameFromFilename(f.name)] =
+                            await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(f); });
+                        } catch (err) {
+                          ctx.addToast(`Failed to read ${f.name}`, 'error');
+                        }
+                      }
+                      spriteCapRejectedRef.current = null;
+                      const addedBytes = Object.values(added).reduce((sum, v) => sum + (v || '').length, 0);
+                      setForm(fm => {
+                        const existingCount = Object.keys(fm.expressions || {}).length;
+                        if (Object.keys(added).length + existingCount > 200) {
+                          spriteCapRejectedRef.current = 'count';
+                          return fm;
+                        }
+                        const existingBytes = Object.values(fm.expressions || {}).reduce((sum, v) => sum + (v || '').length, 0);
+                        if (existingBytes + addedBytes > SPRITE_TOTAL_BYTES_LIMIT) {
+                          spriteCapRejectedRef.current = 'size';
+                          return fm;
+                        }
+                        // Re-importing a name that's already present overwrites it (last
+                        // file wins) - deliberate, not a bug. See form-hint below.
+                        return { ...fm, expressions: { ...fm.expressions, ...added } };
+                      });
+                      if (spriteCapRejectedRef.current === 'count') {
+                        ctx.addToast('Too many sprites (200 max)', 'error');
+                      } else if (spriteCapRejectedRef.current === 'size') {
+                        ctx.addToast(`Sprites exceed the ${Math.round(SPRITE_TOTAL_BYTES_LIMIT / (1024 * 1024))}MB total limit for one character`, 'error');
+                      }
+                    } finally {
+                      setImporting(false);
+                      e.target.value = '';
+                    }
+                  }} />
+                <div className="form-hint">
+                  Select many at once. Names come from filenames - "Anxious [323643].png" becomes "Anxious". Re-importing a name that already exists replaces it.
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(84px, 1fr))', gap: 8 }}>
+                {Object.entries(form.expressions || {}).map(([name, src]) => (
+                  <div key={name} style={{ border: `1px solid ${form.defaultExpression === name ? 'var(--accent)' : 'var(--border2)'}`, padding: 4, textAlign: 'center' }}>
+                    <img src={src} alt={name} style={{ width: 60, height: 60, imageRendering: 'pixelated' }} />
+                    <div style={{ fontSize: 9, color: 'var(--text3)', wordBreak: 'break-word', margin: '2px 0' }}>{name}</div>
+                    <div style={{ display: 'flex', gap: 2, justifyContent: 'center' }}>
+                      <button type="button" className="btn-secondary btn-sm" title="Set as default"
+                        onClick={() => set('defaultExpression', name)}>★</button>
+                      <button type="button" className="btn-secondary btn-sm" title="Remove"
+                        onClick={() => setForm(fm => {
+                          const next = { ...fm.expressions }; delete next[name];
+                          return { ...fm, expressions: next,
+                            defaultExpression: fm.defaultExpression === name ? '' : fm.defaultExpression };
+                        })}>×</button>
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           )}

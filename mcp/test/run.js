@@ -25,7 +25,9 @@ const dump = () => fetch(`${sync.url}/__test/dump?token=${TOKEN}`).then(r => r.j
 await seed({
   version: 2,
   characters: [
-    { id: 'c1', name: 'Vera', description: 'A tired detective', firstMessage: 'You again.', tags: ['noir'], avatar: 'data:image/png;base64,' + 'A'.repeat(4000), createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' },
+    { id: 'c1', name: 'Vera', description: 'A tired detective', firstMessage: 'You again.', tags: ['noir'], avatar: 'data:image/png;base64,' + 'A'.repeat(4000),
+      expressions: { Neutral: 'data:image/png;base64,' + 'B'.repeat(4000), Grin: 'data:image/png;base64,' + 'C'.repeat(4000) },
+      createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' },
     { id: 'c2', name: 'Verity', description: 'An archivist', firstMessage: 'Mind the dust.', tags: ['calm'], createdAt: '2026-01-01T00:00:00Z', updatedAt: '2026-01-01T00:00:00Z' },
   ],
   chats: { c1: [{ id: 'm1', role: 'assistant', content: 'You again.' }], c2: [] },
@@ -75,6 +77,16 @@ check('get returns full record', got.json?.description === 'A tired detective');
 check('get omits avatar by default', /data URI omitted/.test(got.json?.avatar || ''), got.json?.avatar?.slice(0, 60));
 const gotAv = await call('inkling_get_character', { character: 'c1', include_avatar: true });
 check('include_avatar returns the real value', (gotAv.json?.avatar || '').startsWith('data:image/png'));
+
+// Expressions are a sprite map, same base64-blowup risk as avatar, and were
+// added later without the same guard — must never leak raw data: URIs,
+// with or without include_avatar (that flag only covers avatar).
+check('get never leaks expression data: URIs',
+  !JSON.stringify(got.json?.expressions).includes('data:') && !JSON.stringify(gotAv.json?.expressions).includes('data:'),
+  { got: got.json?.expressions, gotAv: gotAv.json?.expressions });
+check('get summarizes expressions as count + names',
+  got.json?.expressions?.count === 2 && JSON.stringify(got.json.expressions.names.sort()) === JSON.stringify(['Grin', 'Neutral']),
+  got.json?.expressions);
 
 // ── name resolution ───────────────────────────────────────
 const exact = await call('inkling_get_character', { character: 'Vera' });
@@ -154,6 +166,13 @@ check('our write also landed', !!blob.data.characters.find(c => c.name === 'Late
   check('expectedRevision 0 succeeds when no row exists', fresh.status === 200 && freshBody.revision === 1,
     { status: fresh.status, revision: freshBody.revision });
 }
+
+// ── textbox style ─────────────────────────────────────────
+const tbx = await call('inkling_update_character', { character: 'Mox', textbox_style: 'deltarune' });
+check('textbox_style round-trips', !tbx.isError, tbx.text);
+blob = await dump();
+check('textboxStyle persisted',
+  blob.data.characters.find(c => c.name === 'Mox').textboxStyle === 'deltarune');
 
 // ── delete ────────────────────────────────────────────────
 const unconfirmed = await call('inkling_delete_character', { character: 'Late', confirm: false });

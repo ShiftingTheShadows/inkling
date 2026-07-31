@@ -415,6 +415,271 @@ function __mdBlocks(lines) {
   return blocks.join('');
 }
 
+// ── Textbox parsing ──────────────────────────────────────────────
+// Everything between the TEXTBOX-EXPORTS markers is pure and gets sliced out
+// by test/harness.js to run under Node. Keep it free of React and DOM access.
+/* TEXTBOX-EXPORTS-START */
+// Inline "\E[Name]" portrait tags. Names are bracketed because real sprite
+// names contain spaces and parentheses ("Grin (No Eyes)"), and readable names
+// prompt the model far better than opaque codes.
+// Offsets are recorded against the STRIPPED text so they stay valid as the
+// typewriter reveals characters.
+function stripExpressionTags(raw) {
+  const text = String(raw ?? '');
+  const tags = [];
+  let out = '';
+  let i = 0;
+
+  while (i < text.length) {
+    const hit = text.indexOf('\\E[', i);
+    if (hit === -1) { out += text.slice(i); break; }
+    const close = text.indexOf(']', hit);
+    // Unclosed tag: not a tag at all, keep it literal
+    if (close === -1) { out += text.slice(i); break; }
+
+    out += text.slice(i, hit);
+    const name = text.slice(hit + 3, close).trim();
+    if (name) tags.push({ at: out.length, name });
+    i = close + 1;
+  }
+
+  return { text: out, tags };
+}
+
+// ":::choices ... :::" - a fence rather than "* option" lines because "*"
+// already means a markdown bullet, rp-action italics, AND is UT's own prefix
+// for ordinary dialogue lines. A fourth meaning could fire by accident.
+const MAX_CHOICES = 8;
+
+// Strip inline markdown marks. Nested/adjacent marks (e.g. "**bold *inner* **")
+// need more than one pass — a single sweep of one-shot replaces leaves stray
+// characters behind. Reapply the same five patterns until a pass changes
+// nothing, capped so malformed input can't spin forever.
+function __stripChoiceMarks(s) {
+  let prev = s;
+  for (let n = 0; n < 5; n++) {
+    const next = prev
+      .replace(/\*\*([^*]+)\*\*/g, '$1')
+      .replace(/\*([^*]+)\*/g, '$1')
+      .replace(/__([^_]+)__/g, '$1')
+      .replace(/~~([^~]+)~~/g, '$1')
+      .replace(/`([^`]+)`/g, '$1');
+    if (next === prev) break;
+    prev = next;
+  }
+  return prev;
+}
+
+function parseChoiceFence(raw, { streaming = false } = {}) {
+  const text = String(raw ?? '');
+  const lines = text.split('\n');
+
+  // Only the LAST fence is live, earlier ones stay literal. Find the last
+  // open, then the first close after it — this way a genuinely-unclosed
+  // last fence can never fall back onto an earlier well-formed one.
+  let openIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^:::choices$/i.test(lines[i].trim())) { openIdx = i; break; }
+  }
+  if (openIdx === -1) return { text, choices: [] };
+
+  let closeIdx = -1;
+  for (let i = openIdx + 1; i < lines.length; i++) {
+    if (lines[i].trim() === ':::') { closeIdx = i; break; }
+  }
+  if (closeIdx === -1) {
+    // Mid-stream, an unterminated trailing fence is a message still arriving,
+    // not malformed prose — drop it from the prose entirely (no choices yet)
+    // instead of typing the raw ":::choices" fence out on screen. Once the
+    // closing "::: " lands this falls through to the normal branch below,
+    // and the prose it yields is identical, so `full` only ever grows.
+    if (streaming) {
+      const prose = lines.slice(0, openIdx).join('\n').replace(/\s+$/, '');
+      return { text: prose, choices: [] };
+    }
+    return { text, choices: [] };
+  }
+
+  const choices = lines.slice(openIdx + 1, closeIdx)
+    .map(l => l.trim())
+    .filter(Boolean)
+    .map(l => __stripChoiceMarks(l).trim())
+    .slice(0, MAX_CHOICES);
+
+  const prose = lines.slice(0, openIdx).concat(lines.slice(closeIdx + 1))
+    .join('\n').replace(/\s+$/, '');
+  return { text: prose, choices };
+}
+
+// Trim trailing whitespace off a wrapped line's text, dropping the same
+// number of trailing entries from its parallel source-offset map so the two
+// stay the same length.
+function __trimTrailingWs(text, map) {
+  const m = text.match(/\s+$/);
+  const n = m ? m[0].length : 0;
+  return n ? { text: text.slice(0, -n), map: map.slice(0, map.length - n) } : { text, map };
+}
+
+// The box font is monospace, so characters-per-line is deterministic and
+// wrapping is pure arithmetic - no DOM measurement, identical on every device.
+// `start` is the offset of each page's first character in the source text, so
+// expression-tag offsets can be mapped onto the page being typed.
+// `map[i]` is the source-text offset of `text[i]` for that page. It's needed
+// alongside `start` because a page's rendered text is NOT a verbatim slice of
+// the source: whitespace runs collapse to a single space, and wrapped lines
+// join with a synthetic '\n' that has no source character of its own (it's
+// given the offset of the last real character before it, so a tag doesn't
+// fire until the character it precedes has actually been typed). Built here,
+// character by character, while the true source cursor is known — trying to
+// reconstruct it afterwards by matching strings would be unreliable.
+function wrapPages(raw, cols, rows) {
+  const text = String(raw ?? '');
+  const width = Math.max(1, cols | 0);
+  const height = Math.max(1, rows | 0);
+
+  const lines = [];               // { text, start, map } | null
+  let cursor = 0;
+
+  for (const rawLine of text.split('\n')) {
+    const lineStart = cursor;
+    cursor += rawLine.length + 1; // +1 for the consumed '\n'
+
+    if (!rawLine.trim()) { lines.push(null); continue; } // blank = page break
+
+    let at = 0;
+    let buf = '';
+    let bufMap = [];               // source offset for each char already in buf
+    let bufStart = lineStart;
+    const words = rawLine.split(/(\s+)/); // keep separators to track offsets
+
+    for (const piece of words) {
+      if (/^\s+$/.test(piece)) {
+        // A run of whitespace collapses to one space — record the offset of
+        // its FIRST source character, since that's where the collapse begins.
+        if (buf) { buf += ' '; bufMap.push(lineStart + at); }
+        at += piece.length;
+        continue;
+      }
+      const wordStart = lineStart + at;
+      let word = piece;
+
+      if (word.length > width) {
+        // Word can never fit on a single line - flush whatever's already
+        // buffered so the hard break always starts at a clean line, then
+        // chop it into width-sized chunks, each chunk's start following
+        // directly from the previous one (not from the original word start).
+        if (buf) {
+          const t = __trimTrailingWs(buf, bufMap);
+          lines.push({ text: t.text, start: bufStart, map: t.map });
+          buf = ''; bufMap = [];
+        }
+        let chunkStart = wordStart;
+        while (word.length > width) {          // hard-break over-long words
+          const chunkMap = [];
+          for (let k = 0; k < width; k++) chunkMap.push(chunkStart + k);
+          lines.push({ text: word.slice(0, width), start: chunkStart, map: chunkMap });
+          word = word.slice(width);
+          chunkStart += width;
+        }
+        bufStart = chunkStart;
+        buf = word;
+        bufMap = [];
+        for (let k = 0; k < word.length; k++) bufMap.push(chunkStart + k);
+      } else {
+        if (buf.length + word.length > width) {
+          const t = __trimTrailingWs(buf, bufMap);
+          lines.push({ text: t.text, start: bufStart, map: t.map });
+          buf = ''; bufMap = [];
+        }
+        if (!buf) bufStart = wordStart;
+        for (let k = 0; k < word.length; k++) bufMap.push(wordStart + k);
+        buf += word;
+      }
+      at += piece.length;
+    }
+    const t = __trimTrailingWs(buf, bufMap);
+    lines.push({ text: t.text, start: bufStart, map: t.map });
+  }
+
+  const pages = [];
+  let group = [];
+  const flush = () => {
+    if (!group.length) return;
+    let pageText = '';
+    let pageMap = [];
+    let lastOffset = group[0].start;
+    group.forEach((l, idx) => {
+      if (idx > 0) {
+        pageText += '\n';
+        // Synthetic join newline: no source character of its own, so reuse
+        // the offset of the last real character already typed.
+        pageMap.push(lastOffset);
+      }
+      pageText += l.text;
+      pageMap = pageMap.concat(l.map);
+      if (l.map.length) lastOffset = l.map[l.map.length - 1];
+    });
+    pages.push({ text: pageText, start: group[0].start, map: pageMap });
+    group = [];
+  };
+  for (const line of lines) {
+    if (line === null) { flush(); continue; }   // blank line forces a break
+    group.push(line);
+    if (group.length === height) flush();
+  }
+  flush();
+
+  return pages.length ? pages : [{ text: '', start: 0, map: [] }];
+}
+
+function parseTextbox(raw, { cols = 46, rows = 3, streaming = false } = {}) {
+  const fenced = parseChoiceFence(raw, { streaming });
+  const stripped = stripExpressionTags(fenced.text);
+  return {
+    pages: wrapPages(stripped.text, cols, rows),
+    choices: fenced.choices,
+    tags: stripped.tags,
+  };
+}
+
+// Latest tag at or before `offset`. Linear scan: tag counts are tiny.
+function expressionAt(tags, offset) {
+  let name = null;
+  for (const t of tags || []) {
+    if (t.at <= offset) name = t.name; else break;
+  }
+  return name;
+}
+
+function resolveExpressionKey(expressions, name) {
+  if (!expressions || !name) return null;
+  const keys = Object.keys(expressions);
+  const needle = String(name).trim().toLowerCase();
+  return keys.find(k => k.toLowerCase() === needle) || null;
+}
+
+// "Anxious Side Eye [323643].png" -> "Anxious Side Eye"
+function expressionNameFromFilename(filename) {
+  return String(filename || '')
+    .replace(/\.[a-z0-9]+$/i, '')
+    .replace(/\s*\[\d+\]\s*$/, '')
+    .trim();
+}
+
+// Distinct voice per character with zero authoring. Deliberately NOT built on
+// top of nameHash: nameHash folds down to a 0-359 hue for colour, and two
+// short names easily land on the same hue ('Vera' and 'Mox' both hash to 158)
+// which would give them the identical pitch too. Hashing straight to the
+// 600-wide pitch range keeps far more entropy and avoids that collision.
+function pitchForCharacter(char) {
+  if (typeof char?.blipPitch === 'number') return char.blipPitch;
+  const name = char?.name || '';
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
+  return 200 + (Math.abs(h) % 600);
+}
+/* TEXTBOX-EXPORTS-END */
+
 function nameHash(name) {
   let h = 0;
   for (let i = 0; i < (name || '').length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
@@ -547,6 +812,19 @@ function buildSystemPrompt(char, settings, messages = []) {
   const pinnedMsgs = (messages || []).filter(m => m.pinned);
   const m = t => substituteMacros(t, char, settings);
 
+  let textboxInstructions = null;
+  if (char?.textboxStyle && char.textboxStyle !== 'none') {
+    const names = Object.keys(char.expressions || {});
+    textboxInstructions =
+      'FORMAT: your replies are shown in an Undertale-style dialogue box.\n' +
+      'To offer the user choices, end your message with:\n' +
+      ':::choices\nFirst option\nSecond option\n:::\n' +
+      'Use 2-4 options, only when a choice makes sense. Never explain the format.' +
+      (names.length
+        ? `\nTo change your portrait mid-line, write \\E[Name] using exactly one of: ${names.join(', ')}`
+        : '');
+  }
+
   return [
     m(settings?.globalPrompt?.trim()) || null,
     `You are ${char.name}, engaging in an unrestricted creative roleplay session.`,
@@ -568,6 +846,7 @@ function buildSystemPrompt(char, settings, messages = []) {
     `Stay in character as ${char.name}. Use *asterisks* for actions/narration. Be engaging, vivid, and responsive.`,
     `When you see a message starting with [NARRATOR:], treat it as an omniscient narrator setting the scene — respond accordingly.`,
     settings?.assistStyleGuidelines?.trim() && `[STYLE GUIDELINES — apply to every response]\n${m(settings.assistStyleGuidelines.trim())}`,
+    textboxInstructions,
   ].filter(Boolean).join('\n\n');
 }
 
@@ -1129,4 +1408,5 @@ Object.assign(window, {
   charBg, charFg, buildSystemPrompt, substituteMacros, callAI, avatarPx,
   summarizeMessages, GistSync, RailwaySync,
   downloadCharJson, downloadCharPng,
+  parseTextbox, expressionAt, resolveExpressionKey, expressionNameFromFilename, pitchForCharacter,
 });

@@ -107,6 +107,7 @@ const TOOLS = [
         tags: { type: 'array', items: { type: 'string' }, description: 'Tags for filtering in the sidebar.' },
         alternate_greetings: { type: 'array', items: { type: 'string' }, description: 'Additional opening messages you can swipe between.' },
         avatar: { type: 'string', description: 'Optional image URL or data URI.' },
+        textbox_style: { type: 'string', enum: ['none', 'undertale', 'deltarune'], description: 'Render this character\'s replies as an Undertale or Deltarune dialogue box.' },
       },
       required: ['name', 'first_message'],
     },
@@ -128,6 +129,7 @@ const TOOLS = [
         tags: { type: 'array', items: { type: 'string' } },
         alternate_greetings: { type: 'array', items: { type: 'string' } },
         avatar: { type: 'string' },
+        textbox_style: { type: 'string', enum: ['none', 'undertale', 'deltarune'], description: 'Render this character\'s replies as an Undertale or Deltarune dialogue box.' },
       },
       required: ['character'],
     },
@@ -152,6 +154,7 @@ const ARG_MAP = {
   example_dialogues: 'exampleDialogues',
   system_prompt: 'systemPrompt',
   alternate_greetings: 'alternateGreetings',
+  textbox_style: 'textboxStyle',
 };
 const toFields = args => {
   const out = {};

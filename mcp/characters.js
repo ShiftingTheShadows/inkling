@@ -6,6 +6,7 @@ export const CHAR_FIELDS = [
   'name', 'description', 'personality', 'scenario',
   'firstMessage', 'exampleDialogues', 'systemPrompt',
   'tags', 'avatar', 'alternateGreetings',
+  'textboxStyle', 'blipPitch', 'defaultExpression',
 ];
 
 // Matches genId() in src/hmm-utils.jsx
@@ -18,6 +19,7 @@ export function normalizeInput(input = {}) {
   for (const k of CHAR_FIELDS) {
     if (input[k] === undefined) continue;
     if (k === 'tags' || k === 'alternateGreetings') out[k] = asArray(input[k]);
+    else if (k === 'blipPitch') out[k] = input[k] === null ? null : Number(input[k]);
     else out[k] = String(input[k] ?? '');
   }
   return out;
@@ -52,6 +54,7 @@ export function summarize(char, data = {}) {
     tags: char.tags || [],
     isGroup: !!char.isGroup,
     hasAvatar: !!char.avatar,
+    expressionCount: Object.keys(char.expressions || {}).length,
     descriptionPreview: (char.description || '').slice(0, 120),
     messages: (data.chats?.[char.id] || []).length,
     updatedAt: char.updatedAt,
@@ -62,6 +65,14 @@ export function detail(char, { includeAvatar = false } = {}) {
   const out = { ...char };
   if (!includeAvatar) {
     out.avatar = char.avatar ? `[${Math.round(char.avatar.length / 1024)}KB data URI omitted - pass include_avatar:true]` : '';
+  }
+  // Expression sprites are base64 data URIs, same blow-up risk as avatar —
+  // an Undertale/Deltarune character can carry dozens of them. Always
+  // summarize rather than dump: unlike the avatar there's no legitimate
+  // single-character use case for pulling the raw pixel data through the
+  // agent's context.
+  if (char.expressions && Object.keys(char.expressions).length) {
+    out.expressions = { count: Object.keys(char.expressions).length, names: Object.keys(char.expressions) };
   }
   return out;
 }

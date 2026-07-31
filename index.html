@@ -549,6 +549,53 @@ body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after 
 .msg-edited { font-size: 10px; color: var(--text3); font-style: italic; }
 .msg-content { font-size: var(--chat-font-size, 13px); line-height: 1.75; color: var(--text); word-break: break-word; max-width: 78ch; text-wrap: pretty; text-align: var(--msg-align, left); }
 /* Per-block alignment (":::center" fences) overrides the global --msg-align */
+/* ── Undertale / Deltarune textbox ─────────────────────────────── */
+@font-face {
+  font-family: 'Determination Mono';
+  src: url('fonts/determination-mono.ttf') format('truetype');
+  font-display: swap;
+}
+:root { --tbx-font: 'Determination Mono', 'JetBrains Mono', monospace; }
+
+/* max-width includes the box's own padding/border (global border-box reset),
+   plus the portrait column for deltarune, so .tbx-text's actual content
+   width still resolves to (at least) 46ch - what wrapPages() wrapped against.
+   Padding is 10px 12px (24px horizontal); border is 4px/side (8px) here,
+   3px/side (6px) for deltarune; deltarune also pays for the 60px portrait
+   + 12px flex gap (72px). .tbx-text also carries 0.04em letter-spacing,
+   which "ch" doesn't account for - at 16px that's ~0.64px extra per
+   character, ~30px across a full 46-char line, so pad that in too or the
+   browser re-wraps a line short of the last couple characters. */
+.tbx { background: #000; border: 4px solid #fff; padding: 10px 12px; margin: 6px 0;
+  font-family: var(--tbx-font); font-size: 16px; color: #fff; max-width: calc(46ch + 62px); cursor: pointer; user-select: none; }
+.tbx.deltarune { border-width: 3px; border-color: #fff; background: #000; max-width: calc(46ch + 132px); }
+.tbx-inner { display: flex; gap: 12px; align-items: flex-start; }
+/* Fixed 60x60 slot (not max-width/max-height) - the box-geometry math above
+   reserves exactly this much space for the portrait column, and most sprite
+   art is native-smaller than 60px anyway, so a max-* cap alone would leave it
+   at its tiny intrinsic size and collapse the reserved gap. object-fit:contain
+   still stops non-square sprites being squash-stretched to fill the slot. */
+.tbx-portrait { width: 60px; height: 60px; flex-shrink: 0; object-fit: contain; image-rendering: pixelated; }
+.tbx-text { flex: 1; min-width: 0; white-space: pre-wrap; line-height: 1.5;
+  font-size: 16px; letter-spacing: 0.04em; min-height: 4.5em; }
+.tbx-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+  margin-top: 4px; min-height: 16px; font-size: 12px; color: #fff; }
+.tbx-counter { opacity: 0.55; }
+.tbx-next { animation: tbx-bob 0.7s infinite steps(2); }
+@keyframes tbx-bob { 0%,100% { transform: translateY(0); } 50% { transform: translateY(2px); } }
+body.reduce-motion .tbx-next { animation: none; }
+.tbx-nav { background: none; border: none; color: #fff; font-family: var(--tbx-font);
+  font-size: 12px; cursor: pointer; opacity: 0.55; }
+.tbx-nav:hover:not(:disabled) { opacity: 1; }
+.tbx-nav:disabled { opacity: 0.2; cursor: not-allowed; }
+
+.tbx-choices { background: #000; border: 4px solid #fff; padding: 8px 12px; margin: 6px 0;
+  font-family: var(--tbx-font); max-width: 46ch; }
+.tbx-choice { display: flex; align-items: center; gap: 10px; padding: 3px 0;
+  background: none; border: none; color: #fff; font-family: var(--tbx-font);
+  font-size: 16px; width: 100%; text-align: left; cursor: pointer; }
+.tbx-heart { width: 1em; color: #f00; opacity: 0; flex-shrink: 0; }
+.tbx-choice:hover .tbx-heart, .tbx-choice:focus-visible .tbx-heart { opacity: 1; }
 .msg-content .md-align { display: block; }
 .msg-content u { text-decoration: underline; text-underline-offset: 2px; }
 /* Paragraph spacing + preserved extra blank lines, so a message can be spaced out */
@@ -807,6 +854,7 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 <script type="text/babel" src="src/hmm-utils.jsx"></script>
+<script type="text/babel" src="src/hmm-textbox.jsx"></script>
 <script type="text/babel" src="src/hmm-sidebar.jsx"></script>
 <script type="text/babel" src="src/hmm-chat.jsx"></script>
 <script type="text/babel" src="src/hmm-modals.jsx"></script>

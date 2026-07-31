@@ -654,16 +654,27 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ### Task 6: Font and box CSS
 
 **Files:**
-- Create: `fonts/determination-mono.woff2`
 - Modify: `index.html`
 - Modify: `build.mjs`
+
+Already present, do not recreate: `fonts/determination-mono.ttf` and `fonts/README.md`.
 
 **Interfaces:**
 - Produces: CSS classes `.tbx`, `.tbx-inner`, `.tbx-portrait`, `.tbx-text`, `.tbx-next`, `.tbx-counter`, `.tbx-choices`, `.tbx-choice`, and the `--tbx-font` variable.
 
-- [ ] **Step 1: Add the font file**
+- [ ] **Step 1: Font is already installed**
 
-Download Determination Mono Web (woff2) and save it as `fonts/determination-mono.woff2`. If unavailable, any monospace pixel woff2 works - the pagination maths depends only on the font being monospace.
+`fonts/determination-mono.ttf` (Determination Mono Web, Haley Wakamatsu) is already in place, licensed **CC BY-NC-ND**.
+
+Do **not** convert it to WOFF2 - the No Derivatives term makes format conversion legally ambiguous, and it is only 39 KB. Reference the TTF directly with `format('truetype')`.
+
+Attribution is required. Add this to the bottom of the THEME section in `SettingsModal` (`src/hmm-modals.jsx`):
+
+```jsx
+<div className="form-hint" style={{ marginTop: 10 }}>
+  Textbox font: Determination Mono Web by Haley Wakamatsu (CC BY-NC-ND).
+</div>
+```
 
 - [ ] **Step 2: Add CSS**
 
@@ -673,7 +684,7 @@ In `index.html`, immediately before the `.msg-content .md-align` rule, add:
 /* ── Undertale / Deltarune textbox ─────────────────────────────── */
 @font-face {
   font-family: 'Determination Mono';
-  src: url('fonts/determination-mono.woff2') format('woff2');
+  src: url('fonts/determination-mono.ttf') format('truetype');
   font-display: swap;
 }
 :root { --tbx-font: 'Determination Mono', 'JetBrains Mono', monospace; }
@@ -720,7 +731,7 @@ console.log('copied manifest, sw.js, icons/, fonts/');
 - [ ] **Step 4: Verify the build**
 
 Run: `npm run build`
-Expected: succeeds, and `dist/fonts/determination-mono.woff2` exists.
+Expected: succeeds, and `dist/fonts/determination-mono.ttf` exists.
 
 - [ ] **Step 5: Commit**
 
