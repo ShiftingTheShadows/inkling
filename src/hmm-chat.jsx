@@ -623,10 +623,13 @@ function ChatView() {
   };
 
   const sendMessage = async (override) => {
-    const body = typeof override === 'string' ? override : inputVal;
+    const fromComposer = typeof override !== 'string';
+    const body = fromComposer ? inputVal : override;
     if (!body.trim() || !char || generating) return;
     const text = body.trim();
-    updateInput('');
+    // A string override (e.g. a clicked textbox choice) is not the composer's
+    // draft — clearing it here would destroy whatever the user was mid-typing.
+    if (fromComposer) updateInput('');
     if (inputRef.current) inputRef.current.style.height = 'auto';
 
     if (char.isGroup) {
