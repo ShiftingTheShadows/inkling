@@ -622,8 +622,13 @@ function wrapPages(raw, cols, rows) {
     pages.push({ text: pageText, start: group[0].start, map: pageMap });
     group = [];
   };
+  // A blank line separates beats but does NOT start a new page. Pages fill to
+  // `height` lines and break only when full, so a one-line beat followed by a
+  // two-line beat share a box instead of burning two. Blank lines used to
+  // force a break, which made short beats waste most of the box and turned an
+  // ordinary greeting into a long click-through.
   for (const line of lines) {
-    if (line === null) { flush(); continue; }   // blank line forces a break
+    if (line === null) continue;
     group.push(line);
     if (group.length === height) flush();
   }

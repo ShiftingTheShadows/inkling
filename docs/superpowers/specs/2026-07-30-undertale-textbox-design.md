@@ -124,7 +124,9 @@ The pixel font is monospace, so characters-per-line is deterministic and wrappin
 - Greedy word-wrap to N characters per line. N is computed from the box's rendered width in `ch` units and recalculated on resize, clamped to a maximum (~46ch, close to the games' own line length) so the box does not stretch absurdly wide on a desktop monitor.
 - 3 lines per page, matching both games.
 - A word longer than N hard-breaks rather than overflowing.
-- Blank lines in the source start a new page rather than consuming a text line. This keeps the paragraph-spacing behaviour added earlier from silently eating vertical space inside a fixed-height box.
+- Blank lines separate beats but do **not** start a new page. Pages fill to the row limit and break only when full, so a one-line beat followed by a two-line beat share a box.
+
+  Revised 2026-07-31. Blank lines originally forced a page break, which meant a short beat wasted most of the box - a greeting written as a dozen one-line beats became a dozen pages of click-through. Filling first is what makes the box feel like the games', where text accumulates until the box is full.
 
 ### Typewriter
 

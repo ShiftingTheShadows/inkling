@@ -123,9 +123,23 @@ eq('word longer than cols hard-breaks',
   M.wrapPages('abcdefgh', 3, 3),
   [{ text: 'abc\ndef\ngh', start: 0, map: [0, 1, 2, 2, 3, 4, 5, 5, 6, 7] }]);
 
-eq('blank line starts a new page',
-  M.wrapPages('one\n\ntwo', 20, 3),
-  [{ text: 'one', start: 0, map: [0, 1, 2] }, { text: 'two', start: 5, map: [5, 6, 7] }]);
+// A blank line separates beats but must NOT break the page - pages fill to the
+// row limit first, so short beats share a box instead of burning one each.
+// Offsets below are hand-checked against the input strings. A synthetic '\n'
+// between wrapped lines has no source character of its own, so it carries the
+// offset of the LAST already-typed character - that way a portrait tag on the
+// next line does not fire a character early.
+eq('blank line does not start a new page',
+  M.wrapPages('one\n\ntwo', 20, 3),           // o0 n1 e2 \n3 \n4 t5 w6 o7
+  [{ text: 'one\ntwo', start: 0, map: [0, 1, 2, 2, 5, 6, 7] }]);
+
+eq('pages break only when the row limit is reached',
+  M.wrapPages('a\n\nb\n\nc\n\nd', 20, 3),     // a0 b3 c6 d9
+  [{ text: 'a\nb\nc', start: 0, map: [0, 0, 3, 3, 6] }, { text: 'd', start: 9, map: [9] }]);
+
+eq('many blank lines in a row collapse',
+  M.wrapPages('a\n\n\n\nb', 20, 3),           // a0 b5
+  [{ text: 'a\nb', start: 0, map: [0, 0, 5] }]);
 
 eq('explicit newline is a line break, not a page break',
   M.wrapPages('one\ntwo', 20, 3),
