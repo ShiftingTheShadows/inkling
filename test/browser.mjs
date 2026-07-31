@@ -182,6 +182,86 @@ try {
   const audioCalls = await page.evaluate(() => window.__audioCtorCalls);
   check('no AudioContext constructed (sound off by default)', audioCalls === 0, { audioCalls });
 
+  // ── Choices authored into a greeting ──────────────────────────
+  // Greetings flow through the same <Textbox>, so a :::choices fence in
+  // firstMessage should render selectable options with no extra machinery.
+  await page.evaluate(() => {
+    const chars = window.S.chars();
+    chars.push({
+      id: 'tbg', name: 'Greeter', textboxStyle: 'undertale',
+      firstMessage: 'You stand at the door.\n:::choices\nKnock\nWalk away\n:::',
+      createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+    });
+    window.S.saveChars(chars);
+    window.S.saveChat('tbg', []);            // empty history -> greeting renders
+    localStorage.setItem('hmm_current', 'tbg');
+  });
+  await page.waitForTimeout(900);
+  await page.reload();
+  await page.waitForSelector('.tbx', { timeout: 20000 });
+  await page.locator('.tbx').click();
+  await page.waitForSelector('.tbx-choices', { timeout: 5000 });
+  check('greeting renders its authored choices',
+    await page.locator('.tbx-choice').count() === 2);
+  check('greeting box does not leak the raw fence',
+    !(await page.locator('.tbx-text').innerText()).includes(':::'));
+
+  // ── Resize grip ───────────────────────────────────────────────
+  const gridState = () => page.evaluate(() => ({
+    cols: Number(getComputedStyle(document.documentElement).getPropertyValue('--tbx-cols')),
+    rows: Number(getComputedStyle(document.documentElement).getPropertyValue('--tbx-rows')),
+    width: Math.round(document.querySelector('.tbx').getBoundingClientRect().width),
+    saved: window.S.settings(),
+  }));
+
+  const beforeResize = await gridState();
+  check('resize grip is present', await page.locator('.tbx-grip').count() === 1);
+  check('grip declares touch-action:none so iOS drags instead of scrolling',
+    await page.evaluate(() => getComputedStyle(document.querySelector('.tbx-grip')).touchAction) === 'none');
+
+  const grip = await page.locator('.tbx-grip').boundingBox();
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(grip.x + grip.width / 2 + 200, grip.y + grip.height / 2 + 60, { steps: 10 });
+  await page.mouse.up();
+  await page.waitForTimeout(300);
+
+  const afterResize = await gridState();
+  check('dragging the grip widens the box',
+    afterResize.width > beforeResize.width + 80, { before: beforeResize.width, after: afterResize.width });
+  check('dragging the grip increases cols and rows',
+    afterResize.cols > beforeResize.cols && afterResize.rows > beforeResize.rows,
+    { before: beforeResize, after: afterResize });
+  check('resize persists to settings',
+    afterResize.saved.textboxCols === afterResize.cols && afterResize.saved.textboxRows === afterResize.rows,
+    afterResize.saved);
+
+  // Touch path: synthetic pointerType 'touch', which is what iOS Safari sends
+  const beforeTouch = await gridState();
+  const grip2 = await page.locator('.tbx-grip').boundingBox();
+  await page.evaluate(async ({ x, y }) => {
+    const el = document.elementFromPoint(x, y);
+    const ev = (type, cx, cy) => el.dispatchEvent(new PointerEvent(type, {
+      pointerId: 1, pointerType: 'touch', isPrimary: true,
+      bubbles: true, cancelable: true, clientX: cx, clientY: cy,
+    }));
+    ev('pointerdown', x, y);
+    for (let i = 1; i <= 8; i++) { ev('pointermove', x - i * 6, y - i * 2); await new Promise(r => setTimeout(r, 16)); }
+    ev('pointerup', x - 48, y - 16);
+  }, { x: grip2.x + grip2.width / 2, y: grip2.y + grip2.height / 2 });
+  await page.waitForTimeout(300);
+
+  const afterTouch = await gridState();
+  check('touch pointer events resize the box too',
+    afterTouch.cols < beforeTouch.cols, { before: beforeTouch.cols, after: afterTouch.cols });
+
+  await page.reload();
+  await page.waitForSelector('.tbx', { timeout: 20000 });
+  await page.waitForTimeout(300);
+  const reloaded = await gridState();
+  check('resized grid survives a reload',
+    reloaded.cols === afterTouch.cols && reloaded.rows === afterTouch.rows, reloaded);
+
   check('no uncaught page errors', errs.length === 0, errs);
 
   console.log(`\n${pass} passed, ${fail} failed`);

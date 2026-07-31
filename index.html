@@ -567,8 +567,19 @@ body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after 
    character, ~30px across a full 46-char line, so pad that in too or the
    browser re-wraps a line short of the last couple characters. */
 .tbx { background: #000; border: 4px solid #fff; padding: 10px 12px; margin: 6px 0;
-  font-family: var(--tbx-font); font-size: 16px; color: #fff; max-width: calc(46ch + 62px); cursor: pointer; user-select: none; }
-.tbx.deltarune { border-width: 3px; border-color: #fff; background: #000; max-width: calc(46ch + 132px); }
+  font-family: var(--tbx-font); font-size: 16px; color: #fff;
+  max-width: calc(var(--tbx-cols, 46) * 1ch + 62px); cursor: pointer; user-select: none; position: relative; }
+.tbx.deltarune { border-width: 3px; border-color: #fff; background: #000;
+  max-width: calc(var(--tbx-cols, 46) * 1ch + 132px); }
+/* Resize grip. touch-action:none stops iOS scrolling the page instead of
+   dragging; pointer events then cover mouse, touch and pen through one path. */
+.tbx-grip { position: absolute; right: -2px; bottom: -2px; width: 26px; height: 26px;
+  cursor: nwse-resize; touch-action: none; opacity: 0.35; transition: opacity 0.1s;
+  display: flex; align-items: flex-end; justify-content: flex-end; padding: 4px; }
+.tbx-grip:hover, .tbx-grip.dragging { opacity: 1; }
+.tbx-grip::after { content: ''; width: 12px; height: 12px;
+  background: repeating-linear-gradient(135deg, #fff 0 2px, transparent 2px 4px); }
+.tbx.resizing, .tbx.resizing * { cursor: nwse-resize !important; }
 .tbx-inner { display: flex; gap: 12px; align-items: flex-start; }
 /* Fixed 60x60 slot (not max-width/max-height) - the box-geometry math above
    reserves exactly this much space for the portrait column, and most sprite
@@ -577,8 +588,10 @@ body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after 
    still stops non-square sprites being squash-stretched to fill the slot. */
 .tbx-portrait { width: 60px; height: 60px; flex-shrink: 0; object-fit: contain; image-rendering: pixelated; }
 .tbx-text { flex: 1; min-width: 0; white-space: pre-wrap; line-height: 1.5;
-  font-size: 16px; letter-spacing: 0.04em; min-height: 4.5em; }
-.tbx-foot { display: flex; align-items: center; justify-content: flex-end; gap: 10px;
+  font-size: 16px; letter-spacing: 0.04em; min-height: calc(var(--tbx-rows, 3) * 1.5em); }
+/* padding-right clears the resize grip, which occupies the same bottom-right
+   corner - without it the grip sits on top of the page-advance arrow. */
+.tbx-foot { padding-right: 24px; display: flex; align-items: center; justify-content: flex-end; gap: 10px;
   margin-top: 4px; min-height: 16px; font-size: 12px; color: #fff; }
 .tbx-counter { opacity: 0.55; }
 .tbx-next { animation: tbx-bob 0.7s infinite steps(2); }

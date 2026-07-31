@@ -28,7 +28,7 @@ function UserAvatar({ persona, size = 32 }) {
   );
 }
 
-function Message({ msg, char, settings, isStreaming, grouped, onDelete, onCopy, onRegen, onRegenGuided, onEdit, onBranch, onPin, onChoice }) {
+function Message({ msg, char, settings, isStreaming, grouped, onDelete, onCopy, onRegen, onRegenGuided, onEdit, onBranch, onPin, onChoice, onResizeTextbox }) {
   const isUser = msg.role === 'user';
   const isNarrator = msg.narrator;
   const author = isNarrator ? 'NARRATOR' : (isUser ? (settings?.activePersona?.name || 'You') : char.name);
@@ -103,6 +103,7 @@ function Message({ msg, char, settings, isStreaming, grouped, onDelete, onCopy, 
             settings={settings}
             streaming={isStreaming}
             onChoice={onChoice}
+            onResize={onResizeTextbox}
           />
         ) : (
           <div
@@ -687,6 +688,12 @@ function ChatView() {
     sendMessage(text);
   };
 
+  // Textbox size is a display preference like font size, so it is global
+  // rather than per character, and persists through the normal settings path.
+  const resizeTextbox = useCallback((cols, rows) => {
+    ctx.saveSettings({ ...ctx.settings, textboxCols: cols, textboxRows: rows });
+  }, [ctx]);
+
   const regenerate = async (instruction = null) => {
     if (generating) return;
     let lastIdx = -1;
@@ -1178,6 +1185,7 @@ function ChatView() {
               onRegenGuided={() => setRegenModal({ open: true })}
               onEdit={editAndResend} onBranch={navigateBranch} onPin={togglePin}
               onChoice={sendChoice}
+              onResizeTextbox={resizeTextbox}
             />
             );
           })}

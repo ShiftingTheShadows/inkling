@@ -5,8 +5,12 @@
 const { useState, useEffect, useRef, useMemo, useCallback } = React;
 const { parseTextbox, expressionAt, resolveExpressionKey, pitchForCharacter } = window;
 
-const MAX_COLS = 46;
-const ROWS = 3;
+const DEFAULT_COLS = 46;
+const DEFAULT_ROWS = 3;
+// Clamps for the drag handle. Below ~20 cols words stop fitting on a line at
+// all; above ~120 the box outgrows the chat column on a laptop.
+const MIN_COLS = 20, MAX_COLS = 120;
+const MIN_ROWS = 1, MAX_ROWS = 12;
 
 // Square-wave blip per character. Synthesized rather than sampled: no bundled
 // audio, nothing copyrighted, works offline, and per-character pitch is closer
@@ -30,13 +34,19 @@ function blip(pitch) {
   } catch { /* audio is decorative, never break rendering over it */ }
 }
 
-function Textbox({ char, text, settings, streaming, onChoice }) {
+function Textbox({ char, text, settings, streaming, onChoice, onResize }) {
   const reduce = !!settings?.reduceMotion
     || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
+  // While dragging, the live size lives here so the box tracks the finger
+  // without a storage write per pointermove. Committed on release.
+  const [drag, setDrag] = useState(null);
+  const cols = drag ? drag.cols : (settings?.textboxCols || DEFAULT_COLS);
+  const rows = drag ? drag.rows : (settings?.textboxRows || DEFAULT_ROWS);
+
   const parsed = useMemo(
-    () => parseTextbox(text || '', { cols: MAX_COLS, rows: ROWS, streaming }),
-    [text, streaming]
+    () => parseTextbox(text || '', { cols, rows, streaming }),
+    [text, streaming, cols, rows]
   );
   const { pages, choices, tags } = parsed;
 
@@ -81,6 +91,58 @@ function Textbox({ char, text, settings, streaming, onChoice }) {
 
   const skip = useCallback(() => setShown(Infinity), []);
 
+  // ── Resize grip ────────────────────────────────────────────────
+  // Pointer events rather than mouse+touch pairs: one code path covers mouse,
+  // touch and pen, and setPointerCapture keeps the drag alive when the finger
+  // slides outside the handle. `touch-action: none` on .tbx-grip is what stops
+  // iOS Safari scrolling the page instead of reporting the move to us.
+  const boxRef = useRef(null);
+  const textRef = useRef(null);
+  const dragRef = useRef(null);
+
+  const onGripDown = useCallback(e => {
+    if (!textRef.current) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+
+    const cs = getComputedStyle(textRef.current);
+    const lineH = parseFloat(cs.lineHeight) || 24;
+    // Measure the real advance width of one character in the box's own font
+    // instead of assuming, since the font may still be swapping in.
+    const probe = document.createElement('span');
+    probe.textContent = '0'.repeat(20);
+    probe.style.cssText = `position:absolute;visibility:hidden;white-space:pre;font-family:${cs.fontFamily};font-size:${cs.fontSize};letter-spacing:${cs.letterSpacing}`;
+    document.body.appendChild(probe);
+    const charW = probe.getBoundingClientRect().width / 20 || 9;
+    probe.remove();
+
+    dragRef.current = { x: e.clientX, y: e.clientY, cols, rows, charW, lineH };
+    setDrag({ cols, rows });
+  }, [cols, rows]);
+
+  const onGripMove = useCallback(e => {
+    const d = dragRef.current;
+    if (!d) return;
+    e.preventDefault();
+    const nextCols = Math.min(MAX_COLS, Math.max(MIN_COLS, d.cols + Math.round((e.clientX - d.x) / d.charW)));
+    const nextRows = Math.min(MAX_ROWS, Math.max(MIN_ROWS, d.rows + Math.round((e.clientY - d.y) / d.lineH)));
+    setDrag(prev => (prev && prev.cols === nextCols && prev.rows === nextRows)
+      ? prev : { cols: nextCols, rows: nextRows });
+  }, []);
+
+  const onGripUp = useCallback(e => {
+    const d = dragRef.current;
+    if (!d) return;
+    dragRef.current = null;
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+    setDrag(cur => {
+      // Commit once, on release, rather than writing storage every pointermove
+      if (cur && (cur.cols !== d.cols || cur.rows !== d.rows)) onResize?.(cur.cols, cur.rows);
+      return null;
+    });
+  }, [onResize]);
+
   const visible = done ? full : full.slice(0, shown);
   // `current.map[i]` is the source-text offset of `current.text[i]` — pages
   // aren't verbatim slices of the source (collapsed whitespace, hard breaks),
@@ -99,11 +161,16 @@ function Textbox({ char, text, settings, streaming, onChoice }) {
 
   return (
     <div>
-      <div className={`tbx${char?.textboxStyle === 'deltarune' ? ' deltarune' : ''}`} onClick={skip}>
+      <div
+        ref={boxRef}
+        className={`tbx${char?.textboxStyle === 'deltarune' ? ' deltarune' : ''}${drag ? ' resizing' : ''}`}
+        style={drag ? { '--tbx-cols': drag.cols, '--tbx-rows': drag.rows } : undefined}
+        onClick={skip}
+      >
         <div className="tbx-inner">
           {portrait && <img className="tbx-portrait" src={portrait} alt={portraitKey}
             onError={e => { e.target.style.display = 'none'; }} />}
-          <div className="tbx-text">{visible}</div>
+          <div className="tbx-text" ref={textRef}>{visible}</div>
         </div>
         <div className="tbx-foot" onClick={e => e.stopPropagation()}>
           {pages.length > 1 && (
@@ -118,6 +185,19 @@ function Textbox({ char, text, settings, streaming, onChoice }) {
               onClick={() => setPage(p => Math.min(pages.length - 1, p + 1))}>▼</button>
           )}
         </div>
+        {onResize && (
+          <div
+            className={`tbx-grip${drag ? ' dragging' : ''}`}
+            role="separator"
+            aria-label={`Resize textbox, ${cols} by ${rows}`}
+            title={`${cols} x ${rows} - drag to resize`}
+            onPointerDown={onGripDown}
+            onPointerMove={onGripMove}
+            onPointerUp={onGripUp}
+            onPointerCancel={onGripUp}
+            onClick={e => e.stopPropagation()}
+          />
+        )}
       </div>
 
       {showChoices && (
