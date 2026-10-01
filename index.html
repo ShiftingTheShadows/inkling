@@ -571,6 +571,40 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .msg:hover .msg-gutter { opacity: 1; }
 body.reduce-motion *, body.reduce-motion *::before, body.reduce-motion *::after { animation-duration: 0.001s !important; transition-duration: 0.001s !important; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.001s !important; transition-duration: 0.001s !important; } }
+
+/* ── Subtle UI polish (body.polish — default on; remove for the legacy square
+   look). Deliberately light: soft corners, a 1px hover lift, gentle entrances.
+   reduce-motion neutralises the moving parts via the global rule above. ── */
+body.polish .btn-primary, body.polish .btn-secondary, body.polish .btn-sm,
+body.polish .filter-btn, body.polish .assist-tab, body.polish .tag,
+body.polish .char-card, body.polish .modal, body.polish .toast,
+body.polish .form-input, body.polish .form-textarea, body.polish .form-select,
+body.polish .form-range, body.polish .sidebar-search, body.polish .search-bar,
+body.polish .char-group-head, body.polish .assist-msg-text, body.polish .assist-chat-body,
+body.polish .msg-action-btn, body.polish .btn-icon { border-radius: 6px; }
+body.polish .modal { border-radius: 10px; }
+body.polish .btn-sm { border-radius: 5px; }
+
+/* Buttons: ease + 1px lift on hover, settle on press */
+body.polish .btn-primary, body.polish .btn-secondary {
+  transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease, color 0.12s ease, border-color 0.12s ease; }
+body.polish .btn-primary:hover:not(:disabled), body.polish .btn-secondary:hover:not(:disabled) {
+  transform: translateY(-1px); box-shadow: 0 3px 12px rgba(0,0,0,0.22); }
+body.polish .btn-primary:active:not(:disabled), body.polish .btn-secondary:active:not(:disabled) {
+  transform: translateY(0); box-shadow: none; }
+
+/* Character cards: smoother hover, a hair of travel */
+body.polish .char-card { transition: background 0.16s ease, border-left-color 0.16s ease, padding-left 0.16s ease, transform 0.16s ease; }
+
+/* Inputs: soft focus ring instead of a hard jump */
+body.polish .form-input:focus, body.polish .form-textarea:focus, body.polish .form-select:focus {
+  outline: none; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent3); }
+
+/* Entrances: overlay fades, modal rises into place */
+body.polish .modal-overlay { animation: polish-fade 0.18s ease; }
+body.polish .modal { animation: polish-modal-in 0.2s cubic-bezier(0.2, 0.7, 0.2, 1); }
+@keyframes polish-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes polish-modal-in { from { opacity: 0; transform: translateY(10px) scale(0.985); } to { opacity: 1; transform: none; } }
 .msg-body { flex: 1; min-width: 0; }
 .msg-meta { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }
 .msg-author { font-size: 11px; font-weight: 700; color: var(--text2); letter-spacing: 0.04em; }

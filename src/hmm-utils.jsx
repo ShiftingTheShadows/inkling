@@ -151,6 +151,7 @@ const S = {
       localModel: 'llama3',
       assistStyleGuidelines: '',
       charFormatTemplate: 'plain', // 'plain' | 'w++' | 'boostyle' — character generator only
+      uiPolish: true, // subtle rounded corners + motion; false = legacy square look
       ...saved,
     };
   },

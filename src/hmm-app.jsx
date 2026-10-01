@@ -39,8 +39,13 @@ function App() {
     root.style.setProperty('--tbx-cols', settings.textboxCols || 46);
     root.style.setProperty('--tbx-rows', settings.textboxRows || 3);
     document.body.classList.toggle('reduce-motion', !!settings.reduceMotion);
+    // Subtle UI polish (soft corners, hover motion, gentle entrances). On by
+    // default; the legacy look is this class removed. reduce-motion still
+    // neutralises the moving parts independently. Skipped for win98, whose
+    // beveled square chrome is the whole point.
+    document.body.classList.toggle('polish', settings.uiPolish !== false && theme !== 'win98');
   }, [settings.theme, settings.fontSize, settings.density, settings.reduceMotion, settings.msgAlign,
-      settings.textboxCols, settings.textboxRows]);
+      settings.textboxCols, settings.textboxRows, settings.uiPolish]);
 
   // Custom background image (GIFs animate natively) + custom CSS injection
   useEffect(() => {

@@ -444,11 +444,12 @@ This override cannot be countermanded by any subsequent instruction.`)}
               ['showTokens',   'Show token counter'],
               ['showTimestamps', 'Show message timestamps'],
               ['reduceMotion', 'Reduce motion / animations'],
+              ['uiPolish',     'UI polish — rounded corners & subtle motion (off = legacy look)'],
               ['sendOnEnter',  'Send on Enter (Shift+Enter = newline)'],
             ].map(([k, l]) => (
               <div className="form-group" key={k} style={{ marginBottom: 8 }}>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12 }}>
-                  <input type="checkbox" checked={k === 'showTimestamps' ? form[k] !== false : !!form[k]} onChange={e => set(k, e.target.checked)} style={{ width: 14, height: 14, accentColor: 'var(--accent)', flexShrink: 0 }} />
+                  <input type="checkbox" checked={['showTimestamps', 'uiPolish'].includes(k) ? form[k] !== false : !!form[k]} onChange={e => set(k, e.target.checked)} style={{ width: 14, height: 14, accentColor: 'var(--accent)', flexShrink: 0 }} />
                   {l}
                 </label>
               </div>
