@@ -88,6 +88,13 @@ const S = {
   saveChat: (id, v) => __set(`hmm_chat_${id}`, v),
   history: id => __get(`hmm_hist_${id}`, []),
   saveHistory: (id, v) => __set(`hmm_hist_${id}`, v),
+  // AI-assist design chat, per character. Lives in IndexedDB and rides the
+  // normal sync payload so your character-building conversations follow you
+  // across devices like chats and histories do.
+  assistChat: id => __get(`hmm_assist_${id}`, []),
+  saveAssistChat: (id, v) => (v && v.length)
+    ? __set(`hmm_assist_${id}`, v)
+    : (__mem.delete(`hmm_assist_${id}`), __idbDel(`hmm_assist_${id}`), __notifyDataChange(`hmm_assist_${id}`)),
   draft: id => __get(`hmm_draft_${id}`, ''),
   saveDraft: (id, v) => v ? __set(`hmm_draft_${id}`, v) : (__mem.delete(`hmm_draft_${id}`), __idbDel(`hmm_draft_${id}`)),
   lorebook: () => __get('hmm_lorebook', []),
@@ -107,8 +114,8 @@ const S = {
   },
   saveScripts: v => __set('hmm_scripts', v),
   deleteCharData: id => {
-    __mem.delete(`hmm_chat_${id}`); __mem.delete(`hmm_hist_${id}`); __mem.delete(`hmm_draft_${id}`);
-    __idbDel(`hmm_chat_${id}`); __idbDel(`hmm_hist_${id}`); __idbDel(`hmm_draft_${id}`);
+    __mem.delete(`hmm_chat_${id}`); __mem.delete(`hmm_hist_${id}`); __mem.delete(`hmm_draft_${id}`); __mem.delete(`hmm_assist_${id}`);
+    __idbDel(`hmm_chat_${id}`); __idbDel(`hmm_hist_${id}`); __idbDel(`hmm_draft_${id}`); __idbDel(`hmm_assist_${id}`);
   },
   clearAll: () => new Promise(res => {
     __mem.clear();
@@ -1139,8 +1146,13 @@ const GistSync = {
   },
   buildPayload() {
     const chars = S.chars();
-    const chats = {}, histories = {};
-    chars.forEach(c => { chats[c.id] = S.chat(c.id); histories[c.id] = S.history(c.id); });
+    const chats = {}, histories = {}, assistChats = {};
+    chars.forEach(c => {
+      chats[c.id] = S.chat(c.id);
+      histories[c.id] = S.history(c.id);
+      const ac = S.assistChat(c.id);
+      if (ac.length) assistChats[c.id] = ac; // only carry non-empty ones
+    });
     // Strip all secrets — never sync API keys to a gist (they get auto-disabled if detected)
     const { apiKey, openrouterKey, localApiKey, globalPrompt, ...safeSettings } = S.settings();
     return {
@@ -1154,6 +1166,7 @@ const GistSync = {
       histories,
       lorebook: S.lorebook(),
       scripts: S.scripts(),
+      assistChats,
     };
   },
   restorePayload(data) {
@@ -1175,8 +1188,9 @@ const GistSync = {
     if (Array.isArray(data.characters)) {
       S.saveChars(data.characters);
       data.characters.forEach(c => {
-        if (data.chats?.[c.id])     S.saveChat(c.id, data.chats[c.id]);
-        if (data.histories?.[c.id]) S.saveHistory(c.id, data.histories[c.id]);
+        if (data.chats?.[c.id])        S.saveChat(c.id, data.chats[c.id]);
+        if (data.histories?.[c.id])    S.saveHistory(c.id, data.histories[c.id]);
+        if (data.assistChats?.[c.id])  S.saveAssistChat(c.id, data.assistChats[c.id]);
       });
     }
   },

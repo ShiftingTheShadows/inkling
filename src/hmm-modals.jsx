@@ -670,17 +670,17 @@ function CharAIAssist({ form, setForm, onClose }) {
   // assistant can see the live draft each turn. History is saved per draft so
   // it survives closing the panel / reopening the editor.
   const [mode, setMode] = useState('generate'); // 'generate' | 'chat'
-  const chatKey = `inkling.charAssistChat.${form.id || 'new'}`;
-  const [chatMsgs, setChatMsgs] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(chatKey) || '[]'); } catch { return []; }
-  });
+  // Saved characters persist their design chat in IndexedDB via S, so it syncs
+  // across devices with everything else. A not-yet-saved draft has no id to key
+  // on, so its chat stays in memory until the character is first saved.
+  const [chatMsgs, setChatMsgs] = useState(() => form.id ? S.assistChat(form.id) : []);
   const [chatInput, setChatInput] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
   const chatBodyRef = useRef(null);
 
-  useEffect(() => {
-    try { localStorage.setItem(chatKey, JSON.stringify(chatMsgs)); } catch {}
-  }, [chatMsgs, chatKey]);
+  // Persist a completed turn, not every streamed token (which would write IDB
+  // and schedule a sync hundreds of times per reply).
+  const persistChat = msgs => { if (form.id) S.saveAssistChat(form.id, msgs); };
   useEffect(() => {
     if (mode === 'chat' && chatBodyRef.current) chatBodyRef.current.scrollTop = chatBodyRef.current.scrollHeight;
   }, [chatMsgs, mode, chatBusy]);
@@ -725,14 +725,16 @@ function CharAIAssist({ form, setForm, onClose }) {
       );
       // Non-streaming providers never call onChunk — fall back to the return.
       const finalText = acc.trim() ? acc : (typeof result === 'string' ? result.trim() : '');
-      setChatMsgs(prev => { const n = [...prev]; n[n.length - 1] = { role: 'assistant', content: finalText || '(no response — try again)' }; return n; });
+      const done = [...base, { role: 'assistant', content: finalText || '(no response — try again)' }];
+      setChatMsgs(done); persistChat(done);
     } catch (e) {
-      setChatMsgs(prev => { const n = [...prev]; n[n.length - 1] = { role: 'assistant', content: `⚠ ${e.message}` }; return n; });
+      const errd = [...base, { role: 'assistant', content: `⚠ ${e.message}` }];
+      setChatMsgs(errd); persistChat(errd);
     }
     setChatBusy(false);
   };
 
-  const clearChat = () => { setChatMsgs([]); try { localStorage.removeItem(chatKey); } catch {} };
+  const clearChat = () => { setChatMsgs([]); persistChat([]); };
 
   // Ask the model to distill the whole conversation into field JSON, then run
   // it through the same preview/apply flow as Quick Generate.
