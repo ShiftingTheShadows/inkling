@@ -646,7 +646,7 @@ function CharAIAssist({ form, setForm, onClose }) {
   const ctx = useContext(AppCtx);
   const [prompt, setPrompt] = useState('');
   const [guidelines, setGuidelines] = useState('');
-  const [fields, setFields] = useState({ description: true, personality: true, scenario: false, firstMessage: true, exampleDialogues: false, systemPrompt: false });
+  const [fields, setFields] = useState({ description: true, personality: true, scenario: false, firstMessage: true, alternateGreetings: false, exampleDialogues: false, systemPrompt: false });
   const [busy, setBusy] = useState(false);
   const [busyField, setBusyField] = useState(null); // field key being regenerated
   const [preview, setPreview] = useState(null);
@@ -657,8 +657,13 @@ function CharAIAssist({ form, setForm, onClose }) {
 
   const fieldLabels = {
     description: 'Description', personality: 'Personality', scenario: 'Scenario',
-    firstMessage: 'First Message', exampleDialogues: 'Example Dialogues', systemPrompt: 'System Prompt'
+    firstMessage: 'First Message', alternateGreetings: 'Alt Greetings',
+    exampleDialogues: 'Example Dialogues', systemPrompt: 'System Prompt'
   };
+  // The generic assist pipeline moves string fields; alternateGreetings is the
+  // one array field, so a handful of spots branch on this instead of assuming
+  // a string everywhere.
+  const ARRAY_FIELDS = new Set(['alternateGreetings']);
 
   const handleRefImage = e => {
     const file = e.target.files[0];
@@ -675,20 +680,34 @@ function CharAIAssist({ form, setForm, onClose }) {
 
   // Generate/improve the given fields; `context` (other already-generated fields)
   // keeps a single-field regenerate consistent with the rest of the preview
+  // Render any field value (string or the alternateGreetings array) as prompt
+  // text. An empty/whitespace-only value returns '' so it never counts as
+  // "existing content" and wrongly flips a generate into an improve.
+  const fieldValText = (f, val) => {
+    if (ARRAY_FIELDS.has(f)) {
+      const arr = (Array.isArray(val) ? val : []).map(x => String(x || '').trim()).filter(Boolean);
+      return arr.length ? arr.map((g, i) => `${i + 1}. ${g}`).join('\n') : '';
+    }
+    return String(val ?? '').trim();
+  };
+
   const generateFields = async (selectedFields, context = null) => {
-    const existing = selectedFields.map(f => form[f] ? `${fieldLabels[f]}: ${form[f]}` : null).filter(Boolean).join('\n');
+    const existing = selectedFields
+      .map(f => { const v = fieldValText(f, form[f]); return v ? `${fieldLabels[f]}:\n${v}` : null; })
+      .filter(Boolean).join('\n\n');
     const isImprove = !!existing;
 
     const sysMsg = `You are a creative character designer for AI roleplay. Generate character details in JSON format.${settingsNow.assistStyleGuidelines?.trim() ? `\n\nStyle guidelines to follow:\n${settingsNow.assistStyleGuidelines.trim()}` : ''}${FORMAT_TEMPLATE_HINTS[settingsNow.charFormatTemplate] || ''}${guidelines ? `\n\nGuidelines to follow:\n${guidelines}` : ''}${refImage ? `\n\nA reference image is attached — base the character's physical appearance and vibe on what you see in it.` : ''}
 
 Return ONLY valid JSON with these fields (only include requested ones):
-${selectedFields.map(f => `"${f}": "..."`).join(',\n')}
+${selectedFields.map(f => ARRAY_FIELDS.has(f) ? `"${f}": ["...", "..."]` : `"${f}": "..."`).join(',\n')}
 
 Rules:
 - description: physical appearance, background, history (2-4 sentences)
 - personality: traits, mannerisms, quirks, speech patterns (2-3 sentences)
 - scenario: current situation/setting the character is in (1-2 sentences)
 - firstMessage: how the character opens the conversation — vivid, in-character, engaging (2-4 sentences, use *asterisks* for actions)
+- alternateGreetings: a JSON ARRAY of 2-3 alternative opening messages, each a DISTINCT tone or scenario from the first message and from each other (e.g. a softer one, a tense one, a different setting) — same craft as firstMessage (2-4 sentences, *asterisks* for actions). Do NOT repeat the first message.
 - exampleDialogues: 3-4 exchanges showing speech patterns, use {{user}} and {{char}}
 - systemPrompt: additional instructions for the AI when playing this character
 
@@ -696,11 +715,11 @@ Be creative, specific, and avoid clichés. Make the character feel real and thre
 
 CRITICAL OUTPUT RULES:
 - Return ONLY raw JSON, no markdown fences, no commentary before or after.
-- All field values must be JSON strings with properly escaped quotes and newlines (\\n).
+- Every field value must be a JSON string with properly escaped quotes and newlines (\\n), EXCEPT alternateGreetings, which must be a JSON array of strings.
 - For exampleDialogues, write {{user}} and {{char}} literally inside the string — they are fine inside JSON string values.`;
 
     const contextTxt = context && Object.keys(context).length
-      ? `\n\nAlready-generated fields (write the requested field to fit these — do NOT return them):\n${Object.entries(context).map(([k, v]) => `${fieldLabels[k] || k}: ${v}`).join('\n')}`
+      ? `\n\nAlready-generated fields (write the requested field to fit these — do NOT return them):\n${Object.entries(context).map(([k, v]) => `${fieldLabels[k] || k}: ${fieldValText(k, v)}`).join('\n')}`
       : '';
     const baseUserText = (isImprove
       ? `Character name: ${form.name || 'Unknown'}
@@ -734,10 +753,19 @@ EDIT RULES — this is an edit, not a rewrite:
       userText: baseUserText,
       settings: callSettings,
       content: buildContent,
-      validate: p => selectedFields.some(f => typeof p[f] === 'string' && p[f].trim()),
+      validate: p => selectedFields.some(f => ARRAY_FIELDS.has(f)
+        ? (Array.isArray(p[f]) && p[f].some(x => typeof x === 'string' && x.trim()))
+        : (typeof p[f] === 'string' && p[f].trim())),
     });
     const cleaned = {};
-    selectedFields.forEach(f => { if (typeof parsed[f] === 'string' && parsed[f].trim()) cleaned[f] = parsed[f].trim(); });
+    selectedFields.forEach(f => {
+      if (ARRAY_FIELDS.has(f)) {
+        const arr = Array.isArray(parsed[f]) ? parsed[f].map(x => String(x || '').trim()).filter(Boolean) : [];
+        if (arr.length) cleaned[f] = arr;
+      } else if (typeof parsed[f] === 'string' && parsed[f].trim()) {
+        cleaned[f] = parsed[f].trim();
+      }
+    });
     if (!Object.keys(cleaned).length) throw new Error('AI returned no usable fields. Try again.');
     return cleaned;
   };
@@ -770,6 +798,8 @@ EDIT RULES — this is an edit, not a rewrite:
 
   const apply = () => {
     if (!preview) return;
+    // Preview replaces the generated fields — same as every other field here,
+    // and the alt-greeting editor below still lets you hand-add more after.
     setForm(f => ({ ...f, ...preview }));
     // Optionally adopt the reference image as the avatar if none set
     if (refImage && (!form.avatar || form.avatar.startsWith('/assets/'))) {
@@ -850,7 +880,7 @@ EDIT RULES — this is an edit, not a rewrite:
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
         <button className="btn-primary" onClick={run} disabled={busy} style={{ flexShrink: 0 }}>
-          {busy ? '⟳ GENERATING...' : (Object.values(fields).some(Boolean) && Object.entries(fields).filter(([k,v]) => v && form[k]).length > 0 ? '✦ IMPROVE' : '✦ GENERATE')}
+          {busy ? '⟳ GENERATING...' : (Object.values(fields).some(Boolean) && Object.entries(fields).filter(([k,v]) => v && fieldValText(k, form[k])).length > 0 ? '✦ IMPROVE' : '✦ GENERATE')}
         </button>
         {preview && (
           <div style={{ flex: 1 }}>
@@ -864,8 +894,13 @@ EDIT RULES — this is an edit, not a rewrite:
                     style={{ width: 20, height: 20, flexShrink: 0, fontSize: 11, opacity: busyField && busyField !== k ? 0.4 : 1 }}
                   >{busyField === k ? '⟳' : '↻'}</button>
                   <div style={{ flex: 1, opacity: busyField === k ? 0.5 : 1 }}>
-                    <span style={{ color: 'var(--accent2)', fontWeight: 700 }}>{fieldLabels[k] || k}:</span>{' '}
-                    {String(v).slice(0, 120)}{String(v).length > 120 ? '…' : ''}
+                    <span style={{ color: 'var(--accent2)', fontWeight: 700 }}>
+                      {fieldLabels[k] || k}{Array.isArray(v) ? ` (${v.length})` : ''}:
+                    </span>{' '}
+                    {(() => {
+                      const s = Array.isArray(v) ? v.join('  •  ') : String(v);
+                      return s.slice(0, 120) + (s.length > 120 ? '…' : '');
+                    })()}
                   </div>
                 </div>
               ))}

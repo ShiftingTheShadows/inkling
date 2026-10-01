@@ -61,11 +61,33 @@ function CharCard({ char, isActive, onSelect, onFav }) {
   );
 }
 
+// Tiny localStorage-backed view preference. Sidebar grouping is a per-device
+// display choice, not character data, so it lives here and never syncs.
+function usePref(key, initial) {
+  const [val, setVal] = useState(() => {
+    try { const raw = localStorage.getItem(key); return raw == null ? initial : JSON.parse(raw); }
+    catch { return initial; }
+  });
+  const set = v => {
+    setVal(prev => {
+      const next = typeof v === 'function' ? v(prev) : v;
+      try { localStorage.setItem(key, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  };
+  return [val, set];
+}
+
 function Sidebar() {
   const ctx = useContext(AppCtx);
   const [search, setSearch] = useState('');
   const [filter, setFilter] = useState('all');
   const [tagFilter, setTagFilter] = useState(null);
+  const [grouped, setGrouped] = usePref('inkling.sidebarGrouped', false);
+  const [collapsed, setCollapsed] = usePref('inkling.sidebarCollapsed', []);
+  const collapsedSet = new Set(collapsed);
+  const toggleSection = name => setCollapsed(prev =>
+    prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
   const allTags = [...new Set(ctx.chars.flatMap(c => c.tags || []))].sort();
 
   const toggleFav = id => {
@@ -88,6 +110,22 @@ function Sidebar() {
   if (filter === 'fav') chars = chars.filter(c => c.favorite);
   if (filter === 'recent') chars = [...chars].sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
   if (tagFilter) chars = chars.filter(c => (c.tags || []).includes(tagFilter));
+
+  // Build collapsible sections for the grouped view from the already
+  // filtered/sorted `chars`. Keeps `chars` order within each group.
+  const sections = () => {
+    const out = [];
+    const favs = chars.filter(c => c.favorite);
+    if (favs.length) out.push({ name: '__fav', label: '★ Favorites', items: favs });
+    const tagsHere = [...new Set(chars.flatMap(c => (c.favorite ? [] : c.tags || [])))].sort();
+    for (const t of tagsHere) {
+      const items = chars.filter(c => !c.favorite && (c.tags || []).includes(t));
+      if (items.length) out.push({ name: `tag:${t}`, label: t, items });
+    }
+    const untagged = chars.filter(c => !c.favorite && !(c.tags || []).length);
+    if (untagged.length) out.push({ name: '__untagged', label: 'Untagged', items: untagged });
+    return out;
+  };
 
   return (
     <aside className="sidebar" style={{ width: ctx.sidebarWidth }}>
@@ -115,6 +153,11 @@ function Sidebar() {
               onClick={() => setFilter(v)}
             >{l}</button>
           ))}
+          <button
+            className={`filter-btn${grouped ? ' active' : ''}`}
+            onClick={() => setGrouped(g => !g)}
+            title="Group the list into collapsible sections (Favorites, then by tag)"
+          >⊞ GROUP</button>
         </div>
         {allTags.length > 0 && (
           <div style={{ display: 'flex', gap: 4, overflowX: 'auto', padding: '6px 10px 2px', scrollbarWidth: 'none' }}>
@@ -141,6 +184,25 @@ function Sidebar() {
                 </>
             }
           </div>
+        ) : (grouped && !search.trim()) ? (
+          // Grouped view: Favorites first, then one section per tag, then the
+          // untagged leftovers. A favorite only appears under Favorites; other
+          // characters appear under each tag they carry. Empty groups hidden.
+          sections().map(sec => {
+            const isCollapsed = collapsedSet.has(sec.name);
+            return (
+              <div key={sec.name} className="char-group">
+                <button className="char-group-head" onClick={() => toggleSection(sec.name)}>
+                  <span className={`char-group-chev${isCollapsed ? '' : ' open'}`}>▶</span>
+                  <span className="char-group-label">{sec.label}</span>
+                  <span className="char-group-count">{sec.items.length}</span>
+                </button>
+                {!isCollapsed && sec.items.map(c => (
+                  <CharCard key={c.id} char={c} isActive={ctx.currentChar?.id === c.id} onSelect={ctx.selectChar} onFav={toggleFav} />
+                ))}
+              </div>
+            );
+          })
         ) : chars.map(c => (
           <CharCard
             key={c.id}
