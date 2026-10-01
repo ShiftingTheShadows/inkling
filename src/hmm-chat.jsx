@@ -28,7 +28,7 @@ function UserAvatar({ persona, size = 32 }) {
   );
 }
 
-function Message({ msg, char, settings, isStreaming, grouped, onDelete, onCopy, onRegen, onRegenGuided, onEdit, onBranch, onPin, onChoice, onResizeTextbox }) {
+function Message({ msg, char, settings, isStreaming, isLatest, grouped, onDelete, onCopy, onRegen, onRegenGuided, onEdit, onBranch, onPin, onChoice, onResizeTextbox }) {
   const isUser = msg.role === 'user';
   const isNarrator = msg.narrator;
   const author = isNarrator ? 'NARRATOR' : (isUser ? (settings?.activePersona?.name || 'You') : char.name);
@@ -102,6 +102,7 @@ function Message({ msg, char, settings, isStreaming, grouped, onDelete, onCopy, 
             text={textContent}
             settings={settings}
             streaming={isStreaming}
+            isLatest={isLatest}
             onChoice={onChoice}
             onResize={onResizeTextbox}
           />
@@ -948,6 +949,13 @@ function ChatView() {
     ? messages.filter(m => { const t = typeof m.content === 'string' ? m.content : m.content?.find?.(c => c.type === 'text')?.text || ''; return t.toLowerCase().includes(searchQ.toLowerCase()); })
     : messages;
 
+  // Newest assistant message in the real history (not the search view) — the
+  // only one that still types out and offers clickable choices.
+  let lastAssistantId = null;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role === 'assistant') { lastAssistantId = messages[i].id; break; }
+  }
+
   // ── AI assist helpers ──────────────────────────────────────────
   const LENGTH_HINTS = {
     short:  'Keep it brief — 1-2 sentences, punchy.',
@@ -1179,6 +1187,11 @@ function ChatView() {
               key={msg.id} msg={msg}
               char={msg.role === 'assistant' && msg.charId ? (members?.find(m => m.id === msg.charId) || char) : char}
               settings={settings}
+              // Only the newest assistant reply animates its typewriter and
+              // shows live choice buttons; older boxes render instant and inert
+              // so the whole history doesn't re-type on load/resize and you
+              // can't click choices from ten turns ago.
+              isLatest={msg.id === lastAssistantId}
               isStreaming={msg.id === streamingId} grouped={grouped}
               onDelete={deleteMessage} onCopy={() => ctx.addToast('Copied', 'success')}
               onRegen={() => regenerate(null)}

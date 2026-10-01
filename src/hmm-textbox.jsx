@@ -46,9 +46,13 @@ function blip(pitch) {
   } catch { /* audio is decorative, never break rendering over it */ }
 }
 
-function Textbox({ char, text, settings, streaming, onChoice, onResize }) {
+function Textbox({ char, text, settings, streaming, isLatest = true, onChoice, onResize }) {
   const reduce = !!settings?.reduceMotion
     || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+  // Historical boxes (not the newest reply) render fully-revealed and never
+  // re-type — otherwise the whole backlog typewriters itself on page load and
+  // again on every resize. Reduced-motion forces the same instant reveal.
+  const instant = reduce || !isLatest;
 
   // While dragging, the live size lives here so the box tracks the finger
   // without a storage write per pointermove. Committed on release.
@@ -63,7 +67,7 @@ function Textbox({ char, text, settings, streaming, onChoice, onResize }) {
   const { pages, choices, tags } = parsed;
 
   const [page, setPage] = useState(0);
-  const [shown, setShown] = useState(reduce ? Infinity : 0);
+  const [shown, setShown] = useState(instant ? Infinity : 0);
   const timer = useRef(null);
 
   const current = pages[Math.min(page, pages.length - 1)] || { text: '', start: 0, map: [] };
@@ -81,14 +85,14 @@ function Textbox({ char, text, settings, streaming, onChoice, onResize }) {
   useEffect(() => {
     const pageChanged = page !== prevPageRef.current;
     const isExtension = !pageChanged && full.startsWith(prevFullRef.current);
-    if (reduce) setShown(Infinity);
+    if (instant) setShown(Infinity);
     else if (pageChanged || !isExtension) setShown(0);
     prevFullRef.current = full;
     prevPageRef.current = page;
-  }, [page, full, reduce]);
+  }, [page, full, instant]);
 
   useEffect(() => {
-    if (reduce || done) return;
+    if (instant || done) return;
     const cps = Math.max(1, settings?.textboxSpeed || 30);
     timer.current = setInterval(() => {
       setShown(n => {
@@ -99,7 +103,7 @@ function Textbox({ char, text, settings, streaming, onChoice, onResize }) {
       });
     }, 1000 / cps);
     return () => clearInterval(timer.current);
-  }, [full, done, reduce, settings?.textboxSpeed, settings?.textboxSound, char]);
+  }, [full, done, instant, settings?.textboxSpeed, settings?.textboxSound, char]);
 
   // First click doubles as the audio unlock: resume the context here, inside
   // the gesture, so blips can sound on the next message even though this one's
@@ -173,7 +177,9 @@ function Textbox({ char, text, settings, streaming, onChoice, onResize }) {
   const portrait = portraitKey ? char.expressions[portraitKey] : null;
 
   const last = page >= pages.length - 1;
-  const showChoices = choices.length > 0 && last && done && !streaming;
+  // Only the newest reply's choices are live — stale choice buttons from
+  // earlier in the thread would otherwise stay clickable and fire a new turn.
+  const showChoices = isLatest && choices.length > 0 && last && done && !streaming;
 
   return (
     <div>

@@ -23,9 +23,12 @@ const FORMAT_TEMPLATE_HINTS = {
   boostyle: `\n\nFormat description and personality in Boostyle: dense, comma-separated tags and short phrases rather than full sentences (e.g. "tall, guarded, dry humor, secretly loyal, hates small talk").`,
 };
 
-// Curated OpenRouter picks (slugs verified against openrouter.ai/api/v1/models, 2026-07)
+// Curated OpenRouter picks (slugs verified against openrouter.ai/api/v1/models, 2026-10)
 const OPENROUTER_MODELS = [
   ['anthropic/claude-sonnet-5',           'Claude Sonnet 5 (recommended)'],
+  // Stealth preview: free + 1M context. Free status is temporary — these stop
+  // being free once the real model is revealed, so expect it to vanish.
+  ['stealth/space-bunny-alpha',           'Space Bunny Alpha (free)'],
   ['anthropic/claude-opus-4.8',           'Claude Opus 4.8'],
   ['anthropic/claude-opus-4.6',           'Claude Opus 4.6'],
   ['anthropic/claude-haiku-4.5',          'Claude Haiku 4.5 (fast/cheap)'],
