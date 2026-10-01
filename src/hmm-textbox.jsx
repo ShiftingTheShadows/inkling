@@ -16,12 +16,24 @@ const MIN_ROWS = 1, MAX_ROWS = 12;
 // audio, nothing copyrighted, works offline, and per-character pitch is closer
 // to what the games do than one shared sample.
 let __audioCtx = null;
+// Create and (re)start the context. Must be called from inside a real user
+// gesture — browser autoplay policy keeps a context born outside one
+// 'suspended' forever, and nothing else ever resumes it, so without this the
+// blip is silent for the whole session.
+function ensureAudio() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    __audioCtx = __audioCtx || new Ctx();
+    if (__audioCtx.state === 'suspended') __audioCtx.resume();
+  } catch { /* audio is decorative, never break over it */ }
+}
 function blip(pitch) {
   try {
     const Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx) return;
     __audioCtx = __audioCtx || new Ctx();
-    if (__audioCtx.state === 'suspended') return; // needs a user gesture first
+    if (__audioCtx.state === 'suspended') return; // waiting on a user gesture
     const osc = __audioCtx.createOscillator();
     const gain = __audioCtx.createGain();
     osc.type = 'square';
@@ -89,7 +101,10 @@ function Textbox({ char, text, settings, streaming, onChoice, onResize }) {
     return () => clearInterval(timer.current);
   }, [full, done, reduce, settings?.textboxSpeed, settings?.textboxSound, char]);
 
-  const skip = useCallback(() => setShown(Infinity), []);
+  // First click doubles as the audio unlock: resume the context here, inside
+  // the gesture, so blips can sound on the next message even though this one's
+  // typing is being skipped.
+  const skip = useCallback(() => { ensureAudio(); setShown(Infinity); }, []);
 
   // ── Resize grip ────────────────────────────────────────────────
   // Pointer events rather than mouse+touch pairs: one code path covers mouse,
@@ -102,6 +117,7 @@ function Textbox({ char, text, settings, streaming, onChoice, onResize }) {
 
   const onGripDown = useCallback(e => {
     if (!textRef.current) return;
+    ensureAudio(); // another gesture that can unlock audio
     e.preventDefault();
     e.stopPropagation();
     e.currentTarget.setPointerCapture?.(e.pointerId);
