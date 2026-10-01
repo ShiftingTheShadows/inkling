@@ -665,6 +665,111 @@ function CharAIAssist({ form, setForm, onClose }) {
   // a string everywhere.
   const ARRAY_FIELDS = new Set(['alternateGreetings']);
 
+  // ── Conversational "Chat" mode ─────────────────────────────────
+  // A persistent back-and-forth where you talk through the character and the
+  // assistant can see the live draft each turn. History is saved per draft so
+  // it survives closing the panel / reopening the editor.
+  const [mode, setMode] = useState('generate'); // 'generate' | 'chat'
+  const chatKey = `inkling.charAssistChat.${form.id || 'new'}`;
+  const [chatMsgs, setChatMsgs] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(chatKey) || '[]'); } catch { return []; }
+  });
+  const [chatInput, setChatInput] = useState('');
+  const [chatBusy, setChatBusy] = useState(false);
+  const chatBodyRef = useRef(null);
+
+  useEffect(() => {
+    try { localStorage.setItem(chatKey, JSON.stringify(chatMsgs)); } catch {}
+  }, [chatMsgs, chatKey]);
+  useEffect(() => {
+    if (mode === 'chat' && chatBodyRef.current) chatBodyRef.current.scrollTop = chatBodyRef.current.scrollHeight;
+  }, [chatMsgs, mode, chatBusy]);
+
+  // Snapshot the draft so the assistant always reasons against current content.
+  const draftContext = () => {
+    const parts = Object.keys(fieldLabels)
+      .map(f => { const v = fieldValText(f, form[f]); return v ? `${fieldLabels[f]}:\n${v}` : null; })
+      .filter(Boolean);
+    return `Character name: ${form.name || '(unnamed)'}\n\n` +
+      (parts.length ? `Current draft:\n${parts.join('\n\n')}` : 'The draft is empty so far.');
+  };
+
+  const chatSystem = () =>
+    `You are a warm, sharp collaborator helping the user design a character for AI roleplay. ` +
+    `Talk like a creative partner: ask pointed questions, offer concrete options, push back on clichés, and build on their ideas. ` +
+    `Keep replies conversational and reasonably short unless they ask for something long. ` +
+    `You can see the current draft below and should tailor suggestions to it. ` +
+    `When you propose specific wording for a field (description, personality, first message, etc.), make it easy to spot. ` +
+    `When the user is ready they will click "Pull into fields" to commit your ideas — you do NOT output JSON here, just talk.` +
+    (settingsNow.assistStyleGuidelines?.trim() ? `\n\nStyle guidelines the user wants followed:\n${settingsNow.assistStyleGuidelines.trim()}` : '') +
+    (guidelines.trim() ? `\n\nExtra guidelines for this session:\n${guidelines.trim()}` : '') +
+    `\n\n${draftContext()}`;
+
+  const sendChat = async () => {
+    const text = chatInput.trim();
+    if (!text || chatBusy) return;
+    const base = [...chatMsgs, { role: 'user', content: text }];
+    setChatMsgs([...base, { role: 'assistant', content: '' }]);
+    setChatInput('');
+    setChatBusy(true);
+    try {
+      // callAI's onChunk delivers the CUMULATIVE text so far (not a delta), so
+      // replace rather than append.
+      let acc = '';
+      const result = await callAI(
+        base.map(m => ({ role: m.role, content: m.content })),
+        { name: 'Assistant' },
+        { ...settingsNow, webSearch: webSearchActive },
+        partial => { acc = partial; setChatMsgs(prev => { const n = [...prev]; n[n.length - 1] = { role: 'assistant', content: partial }; return n; }); },
+        { system: chatSystem() },
+      );
+      // Non-streaming providers never call onChunk — fall back to the return.
+      const finalText = acc.trim() ? acc : (typeof result === 'string' ? result.trim() : '');
+      setChatMsgs(prev => { const n = [...prev]; n[n.length - 1] = { role: 'assistant', content: finalText || '(no response — try again)' }; return n; });
+    } catch (e) {
+      setChatMsgs(prev => { const n = [...prev]; n[n.length - 1] = { role: 'assistant', content: `⚠ ${e.message}` }; return n; });
+    }
+    setChatBusy(false);
+  };
+
+  const clearChat = () => { setChatMsgs([]); try { localStorage.removeItem(chatKey); } catch {} };
+
+  // Ask the model to distill the whole conversation into field JSON, then run
+  // it through the same preview/apply flow as Quick Generate.
+  const pullIntoFields = async () => {
+    if (chatBusy || busy) return;
+    const selectedFields = Object.entries(fields).filter(([,v]) => v).map(([k]) => k);
+    if (!selectedFields.length) { ctx.addToast('Tick which fields to pull into first', 'warning'); return; }
+    if (!chatMsgs.length) { ctx.addToast('Chat with the assistant first', 'warning'); return; }
+    setBusy(true); setPreview(null); setMode('generate');
+    try {
+      const convo = chatMsgs.map(m => `${m.role === 'user' ? 'USER' : 'ASSISTANT'}: ${m.content}`).join('\n\n');
+      const sys = `You are turning a character-design conversation into finished character fields for AI roleplay.${settingsNow.assistStyleGuidelines?.trim() ? `\n\nStyle guidelines:\n${settingsNow.assistStyleGuidelines.trim()}` : ''}${FORMAT_TEMPLATE_HINTS[settingsNow.charFormatTemplate] || ''}
+
+Return ONLY valid JSON with these fields:
+${selectedFields.map(f => ARRAY_FIELDS.has(f) ? `"${f}": ["...", "..."]` : `"${f}": "..."`).join(',\n')}
+
+Base every field on what the conversation established. Where the conversation is thin, make tasteful choices consistent with it. Every value is a JSON string EXCEPT alternateGreetings, which is a JSON array of strings. No markdown, no prose outside the JSON.`;
+      const userText = `Here is the full design conversation:\n\n${convo}\n\nName: ${form.name || '(unnamed)'}\n\nProduce the requested fields as JSON.`;
+      const parsed = await generateJSON({
+        system: sys, userText, settings: { ...settingsNow, _genTemp: 0.6 },
+        validate: p => selectedFields.some(f => ARRAY_FIELDS.has(f) ? (Array.isArray(p[f]) && p[f].length) : (typeof p[f] === 'string' && p[f].trim())),
+      });
+      const cleaned = {};
+      selectedFields.forEach(f => {
+        if (ARRAY_FIELDS.has(f)) {
+          const arr = Array.isArray(parsed[f]) ? parsed[f].map(x => String(x || '').trim()).filter(Boolean) : [];
+          if (arr.length) cleaned[f] = arr;
+        } else if (typeof parsed[f] === 'string' && parsed[f].trim()) cleaned[f] = parsed[f].trim();
+      });
+      if (!Object.keys(cleaned).length) throw new Error('Nothing usable came back. Keep chatting, then try again.');
+      setPreview(cleaned);
+    } catch (e) {
+      ctx.addToast(`AI error: ${e.message}`, 'error');
+    }
+    setBusy(false);
+  };
+
   const handleRefImage = e => {
     const file = e.target.files[0];
     if (!file) return;
@@ -816,6 +921,13 @@ EDIT RULES — this is an edit, not a rewrite:
         <button className="modal-close" onClick={onClose} style={{ color: 'var(--text3)' }}>×</button>
       </div>
 
+      <div className="assist-tabs">
+        {[['generate', '✦ Quick Generate'], ['chat', '💬 Chat it out']].map(([v, l]) => (
+          <button key={v} className={`assist-tab${mode === v ? ' active' : ''}`} onClick={() => setMode(v)}>{l}</button>
+        ))}
+      </div>
+
+      {mode === 'generate' && (
       <div className="form-group" style={{ marginBottom: 10 }}>
         <label className="form-label">DESCRIBE YOUR CHARACTER / WHAT YOU WANT</label>
         <textarea
@@ -825,6 +937,7 @@ EDIT RULES — this is an edit, not a rewrite:
           style={{ minHeight: 72 }}
         />
       </div>
+      )}
 
       <div className="form-group" style={{ marginBottom: 10 }}>
         <label className="form-label">GUIDELINES (optional)</label>
@@ -837,6 +950,7 @@ EDIT RULES — this is an edit, not a rewrite:
       </div>
 
       {/* Reference image + web search */}
+      {mode === 'generate' && (
       <div style={{ display: 'flex', gap: 10, marginBottom: 12, alignItems: 'stretch' }}>
         <div style={{ flex: 1 }}>
           <label className="form-label">REFERENCE IMAGE (optional)</label>
@@ -865,9 +979,10 @@ EDIT RULES — this is an edit, not a rewrite:
           </div>
         </div>
       </div>
+      )}
 
       <div className="form-group" style={{ marginBottom: 12 }}>
-        <label className="form-label">FIELDS TO GENERATE / IMPROVE</label>
+        <label className="form-label">{mode === 'chat' ? 'FIELDS TO PULL INTO' : 'FIELDS TO GENERATE / IMPROVE'}</label>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {Object.entries(fieldLabels).map(([k, l]) => (
             <label key={k} style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer', padding: '3px 8px', background: fields[k] ? 'var(--accent3)' : 'var(--surface3)', border: `1px solid ${fields[k] ? 'var(--accent3)' : 'var(--border2)'}`, color: fields[k] ? 'var(--accent)' : 'var(--text3)', fontSize: 10, fontWeight: fields[k] ? 700 : 400 }}>
@@ -878,6 +993,49 @@ EDIT RULES — this is an edit, not a rewrite:
         </div>
       </div>
 
+      {mode === 'chat' && (
+        <div className="assist-chat">
+          <div className="assist-chat-body" ref={chatBodyRef}>
+            {chatMsgs.length === 0 && (
+              <div className="assist-chat-empty">
+                Talk through your character — concept, vibe, backstory, how they talk.
+                The assistant sees your current draft and remembers the conversation.
+                When you like where it's going, tick the fields above and hit <b>Pull into fields</b>.
+              </div>
+            )}
+            {chatMsgs.map((m, i) => (
+              <div key={i} className={`assist-msg ${m.role}`}>
+                <div className="assist-msg-who">{m.role === 'user' ? 'YOU' : '✦ ASSISTANT'}</div>
+                <div className="assist-msg-text">{m.content || (chatBusy && i === chatMsgs.length - 1 ? '…' : '')}</div>
+              </div>
+            ))}
+          </div>
+          <div className="assist-chat-input">
+            <textarea
+              className="form-textarea" rows={2} value={chatInput}
+              onChange={e => setChatInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); } }}
+              placeholder="Talk to the assistant about your character... (Enter to send, Shift+Enter for newline)"
+              style={{ minHeight: 48, flex: 1 }}
+              disabled={chatBusy}
+            />
+            <button className="btn-primary btn-sm" onClick={sendChat} disabled={chatBusy || !chatInput.trim()} style={{ flexShrink: 0 }}>
+              {chatBusy ? '⟳' : 'SEND'}
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: 6, marginTop: 8, alignItems: 'center' }}>
+            <button className="btn-primary btn-sm" onClick={pullIntoFields} disabled={busy || chatBusy || !chatMsgs.length}>
+              {busy ? '⟳ PULLING...' : '⬇ PULL INTO FIELDS'}
+            </button>
+            {chatMsgs.length > 0 && (
+              <button className="btn-secondary btn-sm" onClick={clearChat} disabled={chatBusy}>CLEAR CHAT</button>
+            )}
+            <span style={{ fontSize: 9, color: 'var(--text3)', marginLeft: 'auto' }}>history saved</span>
+          </div>
+        </div>
+      )}
+
+      {mode === 'generate' && (
       <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
         <button className="btn-primary" onClick={run} disabled={busy} style={{ flexShrink: 0 }}>
           {busy ? '⟳ GENERATING...' : (Object.values(fields).some(Boolean) && Object.entries(fields).filter(([k,v]) => v && fieldValText(k, form[k])).length > 0 ? '✦ IMPROVE' : '✦ GENERATE')}
@@ -912,6 +1070,7 @@ EDIT RULES — this is an edit, not a rewrite:
           </div>
         )}
       </div>
+      )}
     </div>
   );
 }
