@@ -989,7 +989,7 @@ EDIT RULES — this is an edit, not a rewrite:
   };
 
   return (
-    <div style={{ background: 'var(--surface2)', border: '1px solid var(--accent3)', padding: 16, marginBottom: 16 }}>
+    <div style={{ background: 'var(--surface2)', border: '1px solid var(--accent3)', padding: 16, marginBottom: 16, maxHeight: 'min(80vh, 680px)', overflowY: 'auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
         <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.16em', color: 'var(--accent)' }}>✦ AI CHARACTER ASSIST</div>
         <button className="modal-close" onClick={onClose} style={{ color: 'var(--text3)' }}>×</button>
