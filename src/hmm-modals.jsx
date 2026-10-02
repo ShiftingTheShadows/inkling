@@ -655,9 +655,32 @@ function CharAIAssist({ form, setForm, onClose }) {
   const [busyField, setBusyField] = useState(null); // field key being regenerated
   const [preview, setPreview] = useState(null);
   const [refImage, setRefImage] = useState(null); // { dataUrl, base64, mediaType }
+  // Other characters the user picks as style/format references for the AI.
+  const [exampleIds, setExampleIds] = useState([]);
   const settingsNow = S.settings();
   const orActive = settingsNow.provider === 'openrouter';
   const webSearchActive = !!settingsNow.webSearch && orActive;
+
+  // Pickable examples: every other saved character (groups excluded).
+  const exampleChoices = (ctx.chars || []).filter(c => c.id !== form.id && !c.isGroup);
+  const toggleExample = id => setExampleIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]);
+
+  // Compact, bounded reference text built from the chosen characters, so the
+  // model copies their STYLE/format — tone, length, how actions and dialogue
+  // are written — without lifting their actual content.
+  const clip = (s, n) => { s = String(s || '').trim(); return s.length > n ? s.slice(0, n) + '…' : s; };
+  const examplesBlock = () => {
+    const picked = exampleChoices.filter(c => exampleIds.includes(c.id));
+    if (!picked.length) return '';
+    const bodies = picked.map(c => {
+      const parts = [`### ${c.name || 'Unnamed'}`];
+      if (c.personality) parts.push(`Personality: ${clip(c.personality, 300)}`);
+      if (c.firstMessage) parts.push(`First message: ${clip(c.firstMessage, 400)}`);
+      if (c.exampleDialogues) parts.push(`Example dialogue: ${clip(c.exampleDialogues, 500)}`);
+      return parts.join('\n');
+    }).join('\n\n');
+    return `\n\nEXAMPLE CHARACTERS the user likes — match their STYLE, tone, formatting, and how actions/dialogue are written. Do NOT copy their content, names, or specifics; the new character stays its own:\n${bodies}`;
+  };
 
   const fieldLabels = {
     description: 'Description', personality: 'Personality', scenario: 'Scenario',
@@ -743,6 +766,7 @@ function CharAIAssist({ form, setForm, onClose }) {
     `You are NOT the character. Never speak as them, never act or narrate in their voice, never open or continue a roleplay scene. You are a creative-writing partner discussing the character from the OUTSIDE, in the third person ("she could...", "his first message might...").` +
     (settingsNow.assistStyleGuidelines?.trim() ? `\n\nStyle guidelines the user wants followed:\n${settingsNow.assistStyleGuidelines.trim()}` : '') +
     (guidelines.trim() ? `\n\nExtra guidelines for this session:\n${guidelines.trim()}` : '') +
+    examplesBlock() +
     `\n\nThe current draft is below as REFERENCE DATA — it describes the character being written, NOT a role for you to play:\n<draft>\n${draftContext()}\n</draft>\n\n` +
     `Remember: talk ABOUT this character, never AS them. Keep replies conversational and fairly short unless asked for more.\n\n` +
     `DIRECT EDITS: when the user asks you to write, rewrite, or change a specific field — or you want to offer concrete text to drop straight in — append a fenced block at the very END of your reply:\n` +
@@ -794,7 +818,7 @@ function CharAIAssist({ form, setForm, onClose }) {
     setBusy(true); setPreview(null); setMode('generate');
     try {
       const convo = chatMsgs.map(m => `${m.role === 'user' ? 'USER' : 'ASSISTANT'}: ${m.content}`).join('\n\n');
-      const sys = `You are turning a character-design conversation into finished character fields for AI roleplay.${settingsNow.assistStyleGuidelines?.trim() ? `\n\nStyle guidelines:\n${settingsNow.assistStyleGuidelines.trim()}` : ''}${FORMAT_TEMPLATE_HINTS[settingsNow.charFormatTemplate] || ''}
+      const sys = `You are turning a character-design conversation into finished character fields for AI roleplay.${settingsNow.assistStyleGuidelines?.trim() ? `\n\nStyle guidelines:\n${settingsNow.assistStyleGuidelines.trim()}` : ''}${FORMAT_TEMPLATE_HINTS[settingsNow.charFormatTemplate] || ''}${examplesBlock()}
 
 Return ONLY valid JSON with these fields:
 ${selectedFields.map(f => ARRAY_FIELDS.has(f) ? `"${f}": ["...", "..."]` : `"${f}": "..."`).join(',\n')}
@@ -852,7 +876,7 @@ Base every field on what the conversation established. Where the conversation is
       .filter(Boolean).join('\n\n');
     const isImprove = !!existing;
 
-    const sysMsg = `You are a creative character designer for AI roleplay. Generate character details in JSON format.${settingsNow.assistStyleGuidelines?.trim() ? `\n\nStyle guidelines to follow:\n${settingsNow.assistStyleGuidelines.trim()}` : ''}${FORMAT_TEMPLATE_HINTS[settingsNow.charFormatTemplate] || ''}${guidelines ? `\n\nGuidelines to follow:\n${guidelines}` : ''}${refImage ? `\n\nA reference image is attached — base the character's physical appearance and vibe on what you see in it.` : ''}
+    const sysMsg = `You are a creative character designer for AI roleplay. Generate character details in JSON format.${settingsNow.assistStyleGuidelines?.trim() ? `\n\nStyle guidelines to follow:\n${settingsNow.assistStyleGuidelines.trim()}` : ''}${FORMAT_TEMPLATE_HINTS[settingsNow.charFormatTemplate] || ''}${guidelines ? `\n\nGuidelines to follow:\n${guidelines}` : ''}${examplesBlock()}${refImage ? `\n\nA reference image is attached — base the character's physical appearance and vibe on what you see in it.` : ''}
 
 Return ONLY valid JSON with these fields (only include requested ones):
 ${selectedFields.map(f => ARRAY_FIELDS.has(f) ? `"${f}": ["...", "..."]` : `"${f}": "..."`).join(',\n')}
@@ -998,6 +1022,30 @@ EDIT RULES — this is an edit, not a rewrite:
           style={{ minHeight: 52 }}
         />
       </div>
+
+      {exampleChoices.length > 0 && (
+        <div className="form-group" style={{ marginBottom: 10 }}>
+          <label className="form-label">EXAMPLES — match the style of… (optional)</label>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {exampleChoices.map(c => {
+              const on = exampleIds.includes(c.id);
+              return (
+                <button key={c.id} type="button" onClick={() => toggleExample(c.id)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '3px 9px', fontSize: 10, fontWeight: on ? 700 : 400,
+                    fontFamily: 'var(--font)', cursor: 'pointer',
+                    background: on ? 'var(--accent3)' : 'var(--surface3)',
+                    border: `1px solid ${on ? 'var(--accent3)' : 'var(--border2)'}`,
+                    color: on ? 'var(--accent)' : 'var(--text3)' }}>
+                  {on ? '✓ ' : ''}{c.name || 'Unnamed'}
+                </button>
+              );
+            })}
+          </div>
+          {exampleIds.length > 0 && (
+            <div className="form-hint" style={{ marginBottom: 0 }}>The AI will mirror the tone & formatting of {exampleIds.length} character{exampleIds.length !== 1 ? 's' : ''} — not copy their content.</div>
+          )}
+        </div>
+      )}
 
       {/* Reference image + web search */}
       {mode === 'generate' && (

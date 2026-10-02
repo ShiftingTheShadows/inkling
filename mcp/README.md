@@ -16,25 +16,41 @@ So a character created here shows up in the app within about a minute, or immedi
 
 ## Setup
 
-Requires the sync server deployed and Railway sync enabled in the app.
+Requires Node 18+, the sync server deployed, and Railway sync enabled in the app.
 
 1. `npm install` in this directory.
-2. Register the server, substituting your own values from **Settings → Sync → Railway**:
+
+2. Get the **absolute path** to `index.js` — the commands below need the full path for your own machine, not a relative one. From this directory:
+   - macOS / Linux: `echo "$(pwd)/index.js"`
+   - Windows PowerShell: `Resolve-Path index.js`
+
+   You'll get something like `/home/you/inkling/mcp/index.js` or `C:\Users\you\inkling\mcp\index.js`. Use **that** path wherever the examples below say `<ABS_PATH>/index.js`.
+
+3. Register the server, substituting your own path and your values from **Settings → Sync → Railway**:
 
 ```bash
 claude mcp add inkling -s user \
   -e INKLING_SYNC_URL=https://your-app.up.railway.app \
   -e INKLING_SYNC_TOKEN=your-sync-token \
-  -- node C:/Users/shand/HMM/mcp/index.js
+  -- node <ABS_PATH>/index.js
 ```
 
 The token is stored in your Claude config in plaintext. It grants full read and write access to your entire backup — treat it like a password and never commit it.
 
-For **Claude Desktop**, add it to `claude_desktop_config.json` instead:
+For **Claude Desktop**, add it to `claude_desktop_config.json` instead (use the same absolute path; on Windows, escape each backslash as `\\`):
 
 ```json
-"inkling": { "command": "node", "args": ["C:\\Users\\shand\\HMM\\mcp\\index.js"] }
+"inkling": {
+  "command": "node",
+  "args": ["<ABS_PATH>/index.js"],
+  "env": {
+    "INKLING_SYNC_URL": "https://your-app.up.railway.app",
+    "INKLING_SYNC_TOKEN": "your-sync-token"
+  }
+}
 ```
+
+> Instead of putting the URL and token in every client's config, you can drop them once in `~/.inkling-mcp.json` as `{ "url": "...", "token": "..." }` — the server reads that file when the env vars aren't set.
 
 On the Microsoft Store (MSIX) build of Claude Desktop, that file is **not** in `%APPDATA%\Claude`. A stale copy often lingers there and editing it does nothing. The live one is:
 
