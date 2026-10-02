@@ -648,7 +648,7 @@ function CharAIAssist({ form, setForm, onClose }) {
   const [prompt, setPrompt] = useState('');
   // Guidelines persist in settings so they're not retyped every open (and they
   // sync). Saved on blur rather than per keystroke to avoid churning the sync.
-  const [guidelines, setGuidelines] = useState(settingsNow.assistGuidelines || '');
+  const [guidelines, setGuidelines] = useState(S.settings().assistGuidelines || '');
   const saveGuidelines = () => S.saveSettings({ ...S.settings(), assistGuidelines: guidelines });
   const [fields, setFields] = useState({ description: true, personality: true, scenario: false, firstMessage: true, alternateGreetings: false, exampleDialogues: false, systemPrompt: false });
   const [busy, setBusy] = useState(false);
