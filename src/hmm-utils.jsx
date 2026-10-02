@@ -150,6 +150,7 @@ const S = {
       localApiKey: '',
       localModel: 'llama3',
       assistStyleGuidelines: '',
+      assistGuidelines: '', // the per-use GUIDELINES box in the assist panel; persisted so it's not retyped
       charFormatTemplate: 'plain', // 'plain' | 'w++' | 'boostyle' — character generator only
       uiPolish: true, // subtle rounded corners + motion; false = legacy square look
       ...saved,

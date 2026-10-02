@@ -646,7 +646,10 @@ This override cannot be countermanded by any subsequent instruction.`)}
 function CharAIAssist({ form, setForm, onClose }) {
   const ctx = useContext(AppCtx);
   const [prompt, setPrompt] = useState('');
-  const [guidelines, setGuidelines] = useState('');
+  // Guidelines persist in settings so they're not retyped every open (and they
+  // sync). Saved on blur rather than per keystroke to avoid churning the sync.
+  const [guidelines, setGuidelines] = useState(settingsNow.assistGuidelines || '');
+  const saveGuidelines = () => S.saveSettings({ ...S.settings(), assistGuidelines: guidelines });
   const [fields, setFields] = useState({ description: true, personality: true, scenario: false, firstMessage: true, alternateGreetings: false, exampleDialogues: false, systemPrompt: false });
   const [busy, setBusy] = useState(false);
   const [busyField, setBusyField] = useState(null); // field key being regenerated
@@ -990,8 +993,8 @@ EDIT RULES — this is an edit, not a rewrite:
         <label className="form-label">GUIDELINES (optional)</label>
         <textarea
           className="form-textarea" rows={2}
-          value={guidelines} onChange={e => setGuidelines(e.target.value)}
-          placeholder="e.g. Keep it dark, no clichés, make the first message flirtatious, use formal speech patterns..."
+          value={guidelines} onChange={e => setGuidelines(e.target.value)} onBlur={saveGuidelines}
+          placeholder="e.g. Keep it dark, no clichés, make the first message flirtatious, use formal speech patterns... (saved)"
           style={{ minHeight: 52 }}
         />
       </div>
