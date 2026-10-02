@@ -760,7 +760,10 @@ function CharAIAssist({ form, setForm, onClose }) {
       const result = await callAI(
         base.map(m => ({ role: m.role, content: m.content })),
         { name: 'Assistant' },
-        { ...settingsNow, webSearch: chatWeb && orActive },
+        // Floor the budget well above the roleplay default (often 1024) — a
+        // reply plus a full edit block of field text easily overruns it, and a
+        // truncated block leaves the ```edit fence unclosed so nothing applies.
+        { ...settingsNow, webSearch: chatWeb && orActive, maxTokens: Math.max(4096, settingsNow.maxTokens || 1024) },
         partial => { acc = partial; setChatMsgs(prev => { const n = [...prev]; n[n.length - 1] = { role: 'assistant', content: stripStreamingFence(partial) }; return n; }); },
         { system: chatSystem() },
       );
