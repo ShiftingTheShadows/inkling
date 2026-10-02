@@ -677,7 +677,47 @@ function CharAIAssist({ form, setForm, onClose }) {
   const [chatMsgs, setChatMsgs] = useState(() => form.id ? S.assistChat(form.id) : []);
   const [chatInput, setChatInput] = useState('');
   const [chatBusy, setChatBusy] = useState(false);
+  const [chatWeb, setChatWeb] = useState(webSearchActive);
   const chatBodyRef = useRef(null);
+
+  // Fields the assistant may edit directly (name + the generatable fields).
+  const EDITABLE = { name: 'Name', ...fieldLabels };
+
+  // The assistant drops proposed field text in a ```edit {json} ``` block at
+  // the end of a reply. Pull it out: `clean` is the prose to show, `edits` is
+  // the applyable map (validated to known fields; alternateGreetings → array).
+  const parseAssistEdits = text => {
+    const m = String(text || '').match(/```edit\s*([\s\S]*?)```/i);
+    if (!m) return { clean: String(text || ''), edits: null };
+    const clean = String(text).replace(m[0], '').trim();
+    const obj = robustParseJSON(m[1].trim());
+    if (!obj || typeof obj !== 'object') return { clean, edits: null };
+    const edits = {};
+    Object.entries(obj).forEach(([k, v]) => {
+      if (k === 'alternateGreetings') {
+        const arr = Array.isArray(v) ? v.map(x => String(x || '').trim()).filter(Boolean) : [];
+        if (arr.length) edits[k] = arr;
+      } else if (EDITABLE[k] && typeof v === 'string' && v.trim()) {
+        edits[k] = v.trim();
+      }
+    });
+    return { clean, edits: Object.keys(edits).length ? edits : null };
+  };
+  // Hide the raw block while it streams so the user never sees JSON mid-reply.
+  const stripStreamingFence = text => String(text || '').replace(/```edit[\s\S]*$/i, '').trimEnd();
+
+  const applyEdit = (field, value) => {
+    setForm(f => {
+      if (field === 'alternateGreetings') {
+        const have = (Array.isArray(f.alternateGreetings) ? f.alternateGreetings : []).filter(x => (x || '').trim());
+        const add = (Array.isArray(value) ? value : [value]).filter(x => (x || '').trim());
+        return { ...f, alternateGreetings: [...have, ...add] };
+      }
+      return { ...f, [field]: value };
+    });
+    ctx.addToast(`${EDITABLE[field] || field} updated`, 'success');
+  };
+  const applyAllEdits = edits => { Object.entries(edits).forEach(([k, v]) => applyEdit(k, v)); };
 
   // Persist a completed turn, not every streamed token (which would write IDB
   // and schedule a sync hundreds of times per reply).
@@ -701,7 +741,10 @@ function CharAIAssist({ form, setForm, onClose }) {
     (settingsNow.assistStyleGuidelines?.trim() ? `\n\nStyle guidelines the user wants followed:\n${settingsNow.assistStyleGuidelines.trim()}` : '') +
     (guidelines.trim() ? `\n\nExtra guidelines for this session:\n${guidelines.trim()}` : '') +
     `\n\nThe current draft is below as REFERENCE DATA — it describes the character being written, NOT a role for you to play:\n<draft>\n${draftContext()}\n</draft>\n\n` +
-    `Remember: talk ABOUT this character, never AS them. Keep replies conversational and fairly short unless asked for more. When you suggest text for a field, make it easy to spot. When the user is ready they click "Pull into fields" to commit ideas — you never output JSON yourself, just talk.`;
+    `Remember: talk ABOUT this character, never AS them. Keep replies conversational and fairly short unless asked for more.\n\n` +
+    `DIRECT EDITS: when the user asks you to write, rewrite, or change a specific field — or you want to offer concrete text to drop straight in — append a fenced block at the very END of your reply:\n` +
+    '```edit\n{"firstMessage": "...", "personality": "..."}\n```\n' +
+    `Keep your normal conversational reply ABOVE the block (a sentence on what you did is plenty — do NOT paste the full field text in the prose too). Valid keys: name, description, personality, scenario, firstMessage, alternateGreetings (a JSON array of strings), exampleDialogues, systemPrompt. Include ONLY the fields you're actually proposing text for, as JSON strings with escaped newlines. The user gets one-click Apply buttons for each. Omit the block entirely when you're just discussing. Do not output JSON anywhere except inside that block.`;
 
   const sendChat = async () => {
     const text = chatInput.trim();
@@ -717,13 +760,14 @@ function CharAIAssist({ form, setForm, onClose }) {
       const result = await callAI(
         base.map(m => ({ role: m.role, content: m.content })),
         { name: 'Assistant' },
-        { ...settingsNow, webSearch: webSearchActive },
-        partial => { acc = partial; setChatMsgs(prev => { const n = [...prev]; n[n.length - 1] = { role: 'assistant', content: partial }; return n; }); },
+        { ...settingsNow, webSearch: chatWeb && orActive },
+        partial => { acc = partial; setChatMsgs(prev => { const n = [...prev]; n[n.length - 1] = { role: 'assistant', content: stripStreamingFence(partial) }; return n; }); },
         { system: chatSystem() },
       );
       // Non-streaming providers never call onChunk — fall back to the return.
       const finalText = acc.trim() ? acc : (typeof result === 'string' ? result.trim() : '');
-      const done = [...base, { role: 'assistant', content: finalText || '(no response — try again)' }];
+      const { clean, edits } = parseAssistEdits(finalText);
+      const done = [...base, { role: 'assistant', content: clean || '(no response — try again)', ...(edits ? { edits } : {}) }];
       setChatMsgs(done); persistChat(done);
     } catch (e) {
       const errd = [...base, { role: 'assistant', content: `⚠ ${e.message}` }];
@@ -1007,6 +1051,19 @@ EDIT RULES — this is an edit, not a rewrite:
               <div key={i} className={`assist-msg ${m.role}`}>
                 <div className="assist-msg-who">{m.role === 'user' ? 'YOU' : '✦ ASSISTANT'}</div>
                 <div className="assist-msg-text">{m.content || (chatBusy && i === chatMsgs.length - 1 ? '…' : '')}</div>
+                {m.edits && (
+                  <div className="assist-edits">
+                    {Object.entries(m.edits).map(([k, v]) => (
+                      <button key={k} className="assist-edit-chip" title={Array.isArray(v) ? `${v.length} greeting(s)` : String(v).slice(0, 200)}
+                        onClick={() => applyEdit(k, v)}>
+                        ✎ {EDITABLE[k] || k}{k === 'alternateGreetings' ? ` +${v.length}` : ''}
+                      </button>
+                    ))}
+                    {Object.keys(m.edits).length > 1 && (
+                      <button className="assist-edit-chip all" onClick={() => applyAllEdits(m.edits)}>✓ Apply all</button>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -1030,7 +1087,12 @@ EDIT RULES — this is an edit, not a rewrite:
             {chatMsgs.length > 0 && (
               <button className="btn-secondary btn-sm" onClick={clearChat} disabled={chatBusy}>CLEAR CHAT</button>
             )}
-            <span style={{ fontSize: 9, color: 'var(--text3)', marginLeft: 'auto' }}>history saved</span>
+            <button
+              className={`btn-secondary btn-sm${chatWeb && orActive ? ' web-on' : ''}`}
+              onClick={() => setChatWeb(w => !w)} disabled={!orActive}
+              title={orActive ? 'Ground replies in live web results (OpenRouter)' : 'Web search needs the OpenRouter provider'}
+              style={{ marginLeft: 'auto' }}
+            >🌐 WEB {!orActive ? 'N/A' : chatWeb ? 'ON' : 'OFF'}</button>
           </div>
         </div>
       )}
