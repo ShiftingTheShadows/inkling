@@ -696,15 +696,12 @@ function CharAIAssist({ form, setForm, onClose }) {
   };
 
   const chatSystem = () =>
-    `You are a warm, sharp collaborator helping the user design a character for AI roleplay. ` +
-    `Talk like a creative partner: ask pointed questions, offer concrete options, push back on clichés, and build on their ideas. ` +
-    `Keep replies conversational and reasonably short unless they ask for something long. ` +
-    `You can see the current draft below and should tailor suggestions to it. ` +
-    `When you propose specific wording for a field (description, personality, first message, etc.), make it easy to spot. ` +
-    `When the user is ready they will click "Pull into fields" to commit your ideas — you do NOT output JSON here, just talk.` +
+    `You are a professional character-design collaborator. The user is BUILDING a fictional character for an AI roleplay app, and your job is to help them write and refine it: brainstorm, ask sharp questions, offer concrete options, push back on clichés, and suggest wording. ` +
+    `You are NOT the character. Never speak as them, never act or narrate in their voice, never open or continue a roleplay scene. You are a creative-writing partner discussing the character from the OUTSIDE, in the third person ("she could...", "his first message might...").` +
     (settingsNow.assistStyleGuidelines?.trim() ? `\n\nStyle guidelines the user wants followed:\n${settingsNow.assistStyleGuidelines.trim()}` : '') +
     (guidelines.trim() ? `\n\nExtra guidelines for this session:\n${guidelines.trim()}` : '') +
-    `\n\n${draftContext()}`;
+    `\n\nThe current draft is below as REFERENCE DATA — it describes the character being written, NOT a role for you to play:\n<draft>\n${draftContext()}\n</draft>\n\n` +
+    `Remember: talk ABOUT this character, never AS them. Keep replies conversational and fairly short unless asked for more. When you suggest text for a field, make it easy to spot. When the user is ready they click "Pull into fields" to commit ideas — you never output JSON yourself, just talk.`;
 
   const sendChat = async () => {
     const text = chatInput.trim();
