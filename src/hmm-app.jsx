@@ -1,7 +1,7 @@
 // hmm-app.jsx — Root App
 const { useState, useEffect, useCallback } = React;
 const { AppCtx, S, genId, GistSync, RailwaySync, CHANGELOG } = window;
-const { Sidebar, WelcomeScreen, ChatView } = window;
+const { Sidebar, WelcomeScreen, ChatView, FoldersPage } = window;
 const { ToastStack, CommandPalette, SettingsModal, CharEditorModal, GroupEditorModal, ImportModal, HistoryModal, PersonasModal, SyncModal, LorebookModal, ChangelogModal } = window;
 
 function App() {
@@ -10,6 +10,7 @@ function App() {
   const [settings, setSettingsState]    = useState(() => S.settings());
   const [toasts, setToasts]             = useState([]);
   const [modal, setModal]               = useState(null);
+  const [page, setPage]                 = useState(null); // null = chat/welcome, 'folders' = Character Folders
   const [cmdOpen, setCmdOpen]           = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 720px)').matches);
@@ -186,7 +187,7 @@ function App() {
 
   const selectChar = useCallback(id => {
     const c = S.chars().find(x => x.id === id);
-    if (c) setCurrentChar(c);
+    if (c) { setCurrentChar(c); setPage(null); }
     // On phones, close the drawer after picking a character
     if (window.matchMedia('(max-width: 720px)').matches) setCollapsed(true);
   }, []);
@@ -269,6 +270,7 @@ function App() {
     settings, saveSettings,
     toasts, addToast,
     modal, openModal, closeModal,
+    page, setPage,
     cmdOpen, setCmdOpen,
     sidebarWidth,
     selectChar, exportAll,
@@ -293,7 +295,7 @@ function App() {
                 <path d="M3 6H21M3 12H21M3 18H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
               </svg>
             </button>
-            <div className="logo" onClick={() => setCurrentChar(null)}>
+            <div className="logo" onClick={() => { setCurrentChar(null); setPage(null); }}>
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style={{ color: 'var(--accent)', flexShrink: 0 }}>
                 <path d="M12 2C12 2 5 11 5 15.5C5 19.09 8.13 22 12 22C15.87 22 19 19.09 19 15.5C19 11 12 2 12 2Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/>
               </svg>
@@ -339,7 +341,9 @@ function App() {
             </>
           )}
           <main className="chat-area">
-            {!currentChar
+            {page === 'folders'
+              ? <FoldersPage onClose={() => setPage(null)} />
+              : !currentChar
               ? <WelcomeScreen chars={chars} onNewChar={() => openModal('char-editor', null)} onImport={() => openModal('import')} onSelectChar={selectChar} />
               : <ChatView key={currentChar.id} />
             }

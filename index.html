@@ -480,16 +480,41 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .filter-btn:hover { color: var(--text2); border-color: var(--border3); }
 .filter-btn.active { background: var(--accent3); color: var(--accent); border-color: var(--accent3); }
 .char-list { flex: 1; overflow-y: auto; }
-/* Grouped sidebar sections */
-.char-group-head { display: flex; align-items: center; gap: 7px; width: 100%; padding: 6px 12px;
-  background: var(--surface2); border: none; border-bottom: 1px solid var(--border);
-  color: var(--text2); font-family: var(--font); font-size: 9px; font-weight: 700;
-  letter-spacing: 0.12em; text-transform: uppercase; cursor: pointer; position: sticky; top: 0; z-index: 1; }
-.char-group-head:hover { color: var(--text); background: var(--surface3); }
-.char-group-chev { font-size: 7px; transform: rotate(0deg); transition: transform 0.12s; opacity: 0.7; }
-.char-group-chev.open { transform: rotate(90deg); }
-.char-group-label { flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.char-group-count { opacity: 0.55; font-weight: 700; }
+/* Character Folders page */
+.fld-page { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); overflow: hidden; }
+.fld-head { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--border2); flex-wrap: wrap; }
+.fld-title { font-size: 11px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text); }
+.fld-search { flex: 1; min-width: 140px; max-width: 320px; margin-left: auto; }
+.fld-crumbs { display: flex; align-items: center; gap: 4px; padding: 8px 16px; border-bottom: 1px solid var(--border); font-size: 11px; color: var(--text3); flex-wrap: wrap; }
+.fld-crumb { background: transparent; border: 1px solid transparent; color: var(--text2); font-family: var(--font); font-size: 11px; padding: 2px 6px; cursor: pointer; }
+.fld-crumb:hover { color: var(--accent); }
+.fld-crumb.drop, .fld-tile.drop { outline: 2px dashed var(--accent); outline-offset: -2px; background: var(--accent3); }
+.fld-body { flex: 1; overflow-y: auto; padding: 16px; }
+.fld-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px; margin-bottom: 20px; }
+.fld-tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 14px 8px 10px; background: var(--surface); border: 1px solid var(--border2); cursor: pointer; transition: background 0.12s, border-color 0.12s; }
+.fld-tile:hover { background: var(--surface2); border-color: var(--border3); }
+.fld-name { font-size: 12px; font-weight: 600; color: var(--text); max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fld-count { font-size: 10px; color: var(--text3); }
+.fld-tile-actions { position: absolute; top: 4px; right: 4px; display: flex; gap: 2px; opacity: 0; transition: opacity 0.12s; }
+.fld-tile:hover .fld-tile-actions, .fld-tile:focus-within .fld-tile-actions { opacity: 1; }
+@media (hover: none) { .fld-tile-actions, .fld-char-move { opacity: 1 !important; } }
+.fld-tile-actions button, .fld-char-move { width: 22px; height: 22px; background: var(--surface3); color: var(--text2); border: 1px solid var(--border2); font-size: 12px; line-height: 1; cursor: pointer; font-family: var(--font); }
+.fld-tile-actions button:hover, .fld-char-move:hover { color: var(--accent); border-color: var(--accent); }
+.fld-chars { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 12px; }
+.fld-char { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 6px 8px; cursor: pointer; border: 1px solid transparent; }
+.fld-char:hover { background: var(--surface2); border-color: var(--border2); }
+.fld-char-name { font-size: 11px; color: var(--text); max-width: 100%; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fld-char-move { position: absolute; top: 4px; right: 4px; opacity: 0; transition: opacity 0.12s; }
+.fld-char:hover .fld-char-move, .fld-char-move:focus { opacity: 1; }
+.fld-dialog { background: var(--surface); border: 1px solid var(--border3); padding: 18px; width: 100%; max-width: 340px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 24px 80px rgba(0,0,0,0.7); }
+.fld-dialog-title { font-size: 10px; font-weight: 700; letter-spacing: 0.18em; text-transform: uppercase; color: var(--text); }
+.fld-name-input { padding: 8px 10px; background: var(--bg); border: 1px solid var(--border2); color: var(--text); font-family: var(--font); font-size: 13px; }
+.fld-swatches { display: flex; gap: 8px; flex-wrap: wrap; }
+.fld-swatch { width: 24px; height: 24px; border: 2px solid transparent; cursor: pointer; }
+.fld-swatch.on { border-color: var(--text); }
+.fld-picker { display: flex; flex-direction: column; max-height: 50vh; overflow-y: auto; border: 1px solid var(--border2); }
+.fld-pick { text-align: left; padding: 8px 12px; background: transparent; border: none; border-bottom: 1px solid var(--border); color: var(--text); font-family: var(--font); font-size: 12px; cursor: pointer; }
+.fld-pick:hover { background: var(--surface3); }
 /* AI assist — mode tabs + chat */
 .assist-tabs { display: flex; gap: 4px; margin-bottom: 12px; }
 .assist-tab { flex: 1; padding: 6px 4px; font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
@@ -940,6 +965,7 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 <script type="text/babel" src="src/hmm-utils.jsx"></script>
 <script type="text/babel" src="src/hmm-textbox.jsx"></script>
 <script type="text/babel" src="src/hmm-sidebar.jsx"></script>
+<script type="text/babel" src="src/hmm-folders.jsx"></script>
 <script type="text/babel" src="src/hmm-chat.jsx"></script>
 <script type="text/babel" src="src/hmm-modals.jsx"></script>
 <script type="text/babel" src="src/hmm-app.jsx"></script>

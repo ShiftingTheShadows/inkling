@@ -84,6 +84,8 @@ window.InklingStorageReady = (async () => {
 const S = {
   chars: () => __get('hmm_chars', []),
   saveChars: v => __set('hmm_chars', v),
+  folders: () => __get('hmm_folders', []),
+  saveFolders: v => __set('hmm_folders', v),
   chat: id => __get(`hmm_chat_${id}`, []),
   saveChat: (id, v) => __set(`hmm_chat_${id}`, v),
   history: id => __get(`hmm_hist_${id}`, []),
@@ -168,6 +170,13 @@ const S = {
 // Changelog: newest entry first. Bump the top `version` (a date works
 // fine) whenever entries are added so returning users get an auto-popup.
 const CHANGELOG = [
+  {
+    version: '2026-10-16',
+    date: 'Oct 16, 2026',
+    items: [
+      'New: Character Folders — a visual page (📁 FOLDERS in the sidebar) to organize characters into nestable, color-coded folders. Drag characters onto folders, or use the ⇢ button on touch screens. Replaces the old sidebar GROUP toggle.',
+    ],
+  },
   {
     version: '2026-07-19',
     date: 'Jul 19, 2026',
@@ -1169,6 +1178,7 @@ const GistSync = {
       lorebook: S.lorebook(),
       scripts: S.scripts(),
       assistChats,
+      folders: S.folders(),
     };
   },
   restorePayload(data) {
@@ -1187,6 +1197,7 @@ const GistSync = {
     if (data.activePersonaId) S.setActivePersonaId(data.activePersonaId);
     if (data.lorebook)        S.saveLorebook(data.lorebook);
     if (data.scripts)         S.saveScripts(data.scripts);
+    if (Array.isArray(data.folders)) S.saveFolders(data.folders);
     if (Array.isArray(data.characters)) {
       S.saveChars(data.characters);
       data.characters.forEach(c => {

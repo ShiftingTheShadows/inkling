@@ -185,6 +185,7 @@ function CommandPalette() {
   const actions = [
     { label: 'New Character',    sub: 'Create a character',          icon: CMD_ICON.character, action: () => { ctx.openModal('char-editor', null); ctx.setCmdOpen(false); } },
     { label: 'New Group Chat',   sub: 'Multiple characters, one scene', icon: CMD_ICON.group, action: () => { ctx.openModal('group-editor', null); ctx.setCmdOpen(false); } },
+    { label: 'Character Folders', sub: 'Organize characters into folders', icon: CMD_ICON.character, action: () => { ctx.setPage('folders'); ctx.setCmdOpen(false); } },
     { label: 'Import Character', sub: 'Import from JSON or PNG card', icon: CMD_ICON.import, action: () => { ctx.openModal('import');           ctx.setCmdOpen(false); } },
     { label: 'Sync',              sub: 'Push/pull all data via Gist or Railway', icon: CMD_ICON.sync, action: () => { ctx.openModal('sync');             ctx.setCmdOpen(false); } },
     { label: 'Scripts',          sub: 'Attachable keyword-triggered world info', icon: CMD_ICON.scripts, action: () => { ctx.openModal('lorebook');         ctx.setCmdOpen(false); } },
