@@ -182,6 +182,7 @@ const CHANGELOG = [
     items: [
       'New: Web search rebuilt. The model now decides when to look something up and writes its own query, instead of your roleplay message being fed to a search engine every turn. It can also read pages, and you get a "sources" strip under the reply.',
       'New: Web search works on every provider — Claude (native search), OpenRouter, and local/custom models (built-in search tool, with a fallback for models that cannot call tools).',
+      'New: Connect Claude (MCP) setup guide — Sync → Railway or Ctrl+K. Generates copy-paste config for Claude Code, Claude Desktop, Cursor, and VS Code with your sync URL filled in.',
       'New: Search backends — Tavily or Brave (add a key) or keyless DuckDuckGo. Pick in Settings → Web Search. Keys stay on your device and are never synced.',
     ],
   },

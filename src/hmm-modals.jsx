@@ -186,6 +186,7 @@ function CommandPalette() {
     { label: 'New Character',    sub: 'Create a character',          icon: CMD_ICON.character, action: () => { ctx.openModal('char-editor', null); ctx.setCmdOpen(false); } },
     { label: 'New Group Chat',   sub: 'Multiple characters, one scene', icon: CMD_ICON.group, action: () => { ctx.openModal('group-editor', null); ctx.setCmdOpen(false); } },
     { label: 'Character Folders', sub: 'Organize characters into folders', icon: CMD_ICON.character, action: () => { ctx.setPage('folders'); ctx.setCmdOpen(false); } },
+    { label: 'Connect Claude (MCP)', sub: 'Setup guide: Claude Code, Desktop, Cursor, VS Code', icon: CMD_ICON.sync, action: () => { ctx.openModal('mcp-setup'); ctx.setCmdOpen(false); } },
     { label: 'Import Character', sub: 'Import from JSON or PNG card', icon: CMD_ICON.import, action: () => { ctx.openModal('import');           ctx.setCmdOpen(false); } },
     { label: 'Sync',              sub: 'Push/pull all data via Gist or Railway', icon: CMD_ICON.sync, action: () => { ctx.openModal('sync');             ctx.setCmdOpen(false); } },
     { label: 'Scripts',          sub: 'Attachable keyword-triggered world info', icon: CMD_ICON.scripts, action: () => { ctx.openModal('lorebook');         ctx.setCmdOpen(false); } },
@@ -2587,6 +2588,10 @@ function SyncModal({ onClose }) {
             Characters, conversations, personas, lorebook &amp; preferences get saved to a <strong>private GitHub Gist</strong> on your account.
             Load it back on any device by entering the same token + gist ID.<br/>
             <span style={{ color: 'var(--accent2)' }}>API keys &amp; your jailbreak prompt are NEVER synced — they stay only on this device.</span>
+            <div style={{ marginTop: 8 }}>
+              <button className="btn-secondary btn-sm" onClick={() => ctx.openModal('mcp-setup')}>CONNECT CLAUDE (MCP) →</button>
+              <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--text3)' }}>let Claude Code / Desktop create &amp; edit characters</span>
+            </div>
           </div>
 
           <div className="form-2col" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>

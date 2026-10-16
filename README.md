@@ -25,6 +25,9 @@ poke around, fork it, steal whatever's useful. No support is promised.
 - **Sync**: back up and restore everything (characters, chats, personas, lorebook,
   settings) via a private GitHub Gist, or your own Railway-hosted sync server. See
   [`server/README.md`](server/README.md) for the Railway option.
+- **MCP**: let Claude Code / Claude Desktop / Cursor create and edit characters from chat. The in-app
+  **Connect Claude (MCP)** guide (Sync → Railway, or Ctrl+K) generates the config; details in
+  [`mcp/README.md`](mcp/README.md).
 - **PWA**: installable, works offline for anything already loaded.
 - **In-app changelog**: pops up after an update so you don't have to go digging
   through commit history to remember what changed.
