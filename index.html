@@ -480,6 +480,20 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .filter-btn:hover { color: var(--text2); border-color: var(--border3); }
 .filter-btn.active { background: var(--accent3); color: var(--accent); border-color: var(--accent3); }
 .char-list { flex: 1; overflow-y: auto; }
+/* Web search sources */
+.search-status { font-size: 11px; color: var(--accent2); padding: 4px 0; opacity: 0.85; animation: search-pulse 1.4s ease-in-out infinite; }
+@keyframes search-pulse { 50% { opacity: 0.45; } }
+body.reduce-motion .search-status { animation: none; }
+.search-sources { font-size: 11px; color: var(--text3); margin: 4px 0 2px; }
+.search-sources summary { cursor: pointer; list-style: none; user-select: none; width: fit-content; }
+.search-sources summary:hover { color: var(--accent); }
+.search-sources[open] summary { color: var(--text2); margin-bottom: 4px; }
+.search-queries { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 4px; font-style: italic; }
+.search-sources ul { margin: 0; padding-left: 16px; }
+.search-sources li { margin: 2px 0; }
+.search-sources a { color: var(--accent2); text-decoration: none; }
+.search-sources a:hover { text-decoration: underline; }
+.search-host { opacity: 0.6; margin-left: 4px; }
 /* Character Folders page */
 .fld-page { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); overflow: hidden; }
 .fld-head { display: flex; align-items: center; gap: 10px; padding: 10px 16px; border-bottom: 1px solid var(--border2); flex-wrap: wrap; }
@@ -963,6 +977,7 @@ if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
 <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js" integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1" crossorigin="anonymous"></script>
 <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 <script type="text/babel" src="src/hmm-utils.jsx"></script>
+<script type="text/babel" src="src/hmm-search.jsx"></script>
 <script type="text/babel" src="src/hmm-textbox.jsx"></script>
 <script type="text/babel" src="src/hmm-sidebar.jsx"></script>
 <script type="text/babel" src="src/hmm-folders.jsx"></script>

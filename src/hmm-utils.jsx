@@ -154,6 +154,12 @@ const S = {
       assistStyleGuidelines: '',
       assistGuidelines: '', // the per-use GUIDELINES box in the assist panel; persisted so it's not retyped
       charFormatTemplate: 'plain', // 'plain' | 'w++' | 'boostyle' — character generator only
+      webSearch: false,
+      searchBackend: 'auto', // 'auto' | 'tavily' | 'brave' | 'ddg' | 'native' (native = Claude / OpenRouter built-in)
+      searchMaxUses: 3,      // most lookups the model may make per reply
+      searchMaxResults: 5,
+      tavilyKey: '',
+      braveKey: '',
       uiPolish: true, // subtle rounded corners + motion; false = legacy square look
       ...saved,
     };
@@ -170,6 +176,15 @@ const S = {
 // Changelog: newest entry first. Bump the top `version` (a date works
 // fine) whenever entries are added so returning users get an auto-popup.
 const CHANGELOG = [
+  {
+    version: '2026-10-17',
+    date: 'Oct 17, 2026',
+    items: [
+      'New: Web search rebuilt. The model now decides when to look something up and writes its own query, instead of your roleplay message being fed to a search engine every turn. It can also read pages, and you get a "sources" strip under the reply.',
+      'New: Web search works on every provider — Claude (native search), OpenRouter, and local/custom models (built-in search tool, with a fallback for models that cannot call tools).',
+      'New: Search backends — Tavily or Brave (add a key) or keyless DuckDuckGo. Pick in Settings → Web Search. Keys stay on your device and are never synced.',
+    ],
+  },
   {
     version: '2026-10-16',
     date: 'Oct 16, 2026',
@@ -896,6 +911,14 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
   const structured = !!opts.structured;
   const system = opts.system != null ? opts.system : buildSystemPrompt(char, resolvedSettings, messages);
 
+  // Web search runs for normal chat turns by default; utility calls that bring
+  // their own system prompt (assists, summaries) opt in with opts.search.
+  const searchOn = WebSearch.enabled(resolvedSettings) && (opts.search ?? opts.system == null);
+  const searchRoleplay = opts.roleplay ?? opts.system == null;
+  const sState = { queries: [], sources: [] };
+  const emitSearch = (active, doing = '') =>
+    opts.onSearch?.({ active, doing, queries: [...sState.queries], sources: [...sState.sources] });
+
   // Build clean API messages — preserve images (vision), handle narrator
   const apiMsgs = messages
     .filter(m => m.role === 'user' || m.role === 'assistant')
@@ -922,6 +945,7 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
   if (!apiMsgs.length) return '';
 
   let result = '';
+  let shown = ''; // visible text accumulated across tool rounds (kept on abort)
 
   // ── External provider (OpenRouter / Local / Custom OpenAI-compatible) ──
   const useExternal = resolvedSettings?.provider && resolvedSettings.provider !== 'claude';
@@ -938,10 +962,6 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
       const base = endpoint.replace(/\/+$/, '').replace(/\/v1$/, '');
       const url = base + '/v1/chat/completions';
       let model = resolvedSettings.localModel || (resolvedSettings.provider === 'openrouter' ? 'anthropic/claude-sonnet-5' : 'llama3');
-      // Web search: OpenRouter supports the :online suffix for live web access
-      if (resolvedSettings.webSearch && resolvedSettings.provider === 'openrouter' && !/:online$/.test(model)) {
-        model += ':online';
-      }
       const apiKey = resolvedSettings.localApiKey;
       // Expand multimodal messages into OpenAI vision format
       const outMsgs = apiMsgs.map(m => m._multimodal ? { role: m.role, content: m._multimodal } : { role: m.role, content: m.content });
@@ -963,51 +983,112 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
         headers['X-Title'] = 'Inkling Roleplay';
       }
 
-      let resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: opts.signal });
-      // Some models/endpoints reject response_format — retry once without it
-      if (!resp.ok && body.response_format && resp.status >= 400 && resp.status < 500) {
-        delete body.response_format;
-        resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: opts.signal });
-      }
-      if (!resp.ok) {
-        const errTxt = await resp.text().catch(() => '');
-        throw new Error(`${resp.status} ${resp.statusText} ${errTxt.slice(0, 200)}`);
+      // ── Web search ──
+      // OpenRouter "native" mode uses its web plugin; every other mode gives the
+      // model web_search/read_page tools and runs the loop client-side.
+      const nativeSearch = searchOn && resolvedSettings.provider === 'openrouter' && resolvedSettings.searchBackend === 'native';
+      let toolsOn = searchOn && !nativeSearch;
+      const convo = [{ role: 'system', content: toolsOn ? `${system}\n\n${WebSearch.note(searchRoleplay)}` : system }, ...outMsgs];
+      body.messages = convo;
+      if (nativeSearch) body.plugins = [{ id: 'web', max_results: WebSearch.maxResults(resolvedSettings) }];
+      if (toolsOn) body.tools = WebSearch.tools;
+      const rounds = toolsOn ? WebSearch.maxUses(resolvedSettings) + 1 : 1;
+
+      const send = async () => {
+        let resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: opts.signal });
+        // Some models/endpoints reject response_format — retry once without it
+        if (!resp.ok && body.response_format && resp.status >= 400 && resp.status < 500) {
+          delete body.response_format;
+          resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: opts.signal });
+        }
+        // Endpoint/model doesn't do tool calls — search once up front instead
+        if (!resp.ok && body.tools && resp.status >= 400 && resp.status < 500) {
+          delete body.tools; toolsOn = false;
+          emitSearch(true, 'searching');
+          const found = await WebSearch.preRetrieve(apiMsgs, resolvedSettings, opts.signal, sState);
+          convo[0].content = system + (found ? `\n\n${found}\n${searchRoleplay ? 'Work these facts in naturally, in character, without citing them.' : 'Use these results and name the source sites.'}` : '');
+          resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: opts.signal });
+        }
+        if (!resp.ok) {
+          const errTxt = await resp.text().catch(() => '');
+          throw new Error(`${resp.status} ${resp.statusText} ${errTxt.slice(0, 200)}`);
+        }
+        return resp;
+      };
+      const takeAnnotations = list => (list || []).forEach(a => a?.url_citation && WebSearch.addSource(sState, a.url_citation));
+
+      for (let round = 0; round < rounds; round++) {
+        if (toolsOn && round === rounds - 1) delete body.tools; // out of lookups — answer now
+        body.stream = !!onChunk;
+        const resp = await send();
+        const prefix = shown ? shown + '\n\n' : '';
+        let text = '';
+        const calls = []; // { id, name, raw }
+
+        if (onChunk) {
+          const reader = resp.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n');
+              buffer = lines.pop() || '';
+              for (const line of lines) {
+                const trimmed = line.replace(/^data: ?/, '').trim();
+                if (!trimmed || trimmed === '[DONE]') continue;
+                try {
+                  const delta = JSON.parse(trimmed).choices?.[0]?.delta;
+                  if (delta?.content) { text += delta.content; shown = prefix + text; onChunk(shown, false); }
+                  takeAnnotations(delta?.annotations);
+                  for (const tc of delta?.tool_calls || []) {
+                    const c = calls[tc.index ?? 0] || (calls[tc.index ?? 0] = { id: '', name: '', raw: '' });
+                    if (tc.id) c.id = tc.id;
+                    if (tc.function?.name) c.name += tc.function.name;
+                    if (tc.function?.arguments) c.raw += tc.function.arguments;
+                  }
+                } catch {}
+              }
+            }
+          } catch (err) {
+            // User pressed stop mid-stream — keep what was generated so far
+            if (err.name !== 'AbortError') throw err;
+          }
+        } else {
+          const j = await resp.json();
+          const msg = j.choices?.[0]?.message;
+          text = msg?.content || '';
+          takeAnnotations(msg?.annotations);
+          (msg?.tool_calls || []).forEach(tc => calls.push({ id: tc.id, name: tc.function?.name || '', raw: tc.function?.arguments || '' }));
+          if (text) shown = prefix + text;
+        }
+
+        const live = calls.filter(c => c && c.name);
+        if (opts.signal?.aborted || !body.tools || !live.length) break;
+
+        // Run the model's tool calls, feed results back, go another round
+        convo.push({
+          role: 'assistant', content: text || null,
+          tool_calls: live.map(c => ({ id: c.id, type: 'function', function: { name: c.name, arguments: c.raw || '{}' } })),
+        });
+        for (const c of live) {
+          let args = {};
+          try { args = JSON.parse(c.raw || '{}'); } catch {}
+          emitSearch(true, c.name === 'read_page' ? `reading ${WebSearch.host(String(args.url || ''))}` : `searching: ${String(args.query || '').slice(0, 80)}`);
+          const out = await WebSearch.runTool(c.name, args, resolvedSettings, opts.signal, sState);
+          convo.push({ role: 'tool', tool_call_id: c.id, content: out });
+        }
+        emitSearch(true, 'thinking');
       }
 
-      if (onChunk) {
-        const reader = resp.body.getReader();
-        const decoder = new TextDecoder();
-        let partial = '';
-        let buffer = '';
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-            for (const line of lines) {
-              const trimmed = line.replace(/^data: ?/, '').trim();
-              if (!trimmed || trimmed === '[DONE]') continue;
-              try {
-                const j = JSON.parse(trimmed);
-                const delta = j.choices?.[0]?.delta?.content;
-                if (delta) { partial += delta; onChunk(partial, false); }
-              } catch {}
-            }
-          }
-        } catch (err) {
-          // User pressed stop mid-stream — keep what was generated so far
-          if (err.name !== 'AbortError') throw err;
-        }
-        onChunk(partial, true);
-        return partial;
-      } else {
-        const j = await resp.json();
-        result = j.choices?.[0]?.message?.content || '';
-      }
+      if (searchOn) emitSearch(false);
+      if (onChunk) { onChunk(shown, true); return shown; }
+      result = shown;
     } catch(e) {
-      if (e.name === 'AbortError') { if (onChunk) onChunk('', true); return ''; }
+      if (e.name === 'AbortError') { if (searchOn) emitSearch(false); if (onChunk) onChunk(shown, true); return shown; }
+      if (searchOn) emitSearch(false);
       const providerName = resolvedSettings.provider === 'openrouter' ? 'OpenRouter' : resolvedSettings.provider === 'local' ? 'Local model' : 'Custom endpoint';
       result = `*${providerName} error: ${e.message}*\n\nCheck your endpoint URL, API key, and model ID in Settings.`;
     }
@@ -1041,11 +1122,12 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
         body: JSON.stringify({
           apiKey: resolvedSettings.apiKey,
           model: resolvedSettings.model || 'claude-haiku-4-5',
-          system,
+          system: searchOn ? `${system}\n\n${WebSearch.note(searchRoleplay, true)}` : system,
           messages: anthMsgs,
           maxTokens: structured ? Math.max(4096, resolvedSettings.maxTokens || 1024) : (resolvedSettings.maxTokens || 1024),
           temperature: resolvedSettings.temperature,
           stream: !!onChunk,
+          webSearch: searchOn ? { maxUses: WebSearch.maxUses(resolvedSettings) } : undefined,
         }),
       });
 
@@ -1055,6 +1137,7 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
           const decoder = new TextDecoder();
           let partial = '';
           let buffer = '';
+          const toolJson = {}; // block index -> accumulating server-tool input JSON
           try {
             while (true) {
               const { done, value } = await reader.read();
@@ -1066,7 +1149,20 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
                 if (!line.startsWith('data:')) continue;
                 try {
                   const j = JSON.parse(line.slice(5).trim());
-                  if (j.type === 'content_block_delta' && j.delta?.type === 'text_delta') {
+                  if (j.type === 'content_block_start') {
+                    const cb = j.content_block || {};
+                    if (cb.type === 'text' && partial) partial += '\n\n'; // text resuming after a search
+                    if (cb.type === 'server_tool_use') { toolJson[j.index] = ''; emitSearch(true, 'searching'); }
+                    if (cb.type === 'web_search_tool_result') {
+                      (Array.isArray(cb.content) ? cb.content : []).forEach(r => WebSearch.addSource(sState, r));
+                      emitSearch(true, 'thinking');
+                    }
+                  } else if (j.type === 'content_block_delta' && j.delta?.type === 'input_json_delta' && j.index in toolJson) {
+                    toolJson[j.index] += j.delta.partial_json || '';
+                  } else if (j.type === 'content_block_stop' && j.index in toolJson) {
+                    try { const q = JSON.parse(toolJson[j.index] || '{}').query; if (q) { sState.queries.push(q); emitSearch(true, `searching: ${q.slice(0, 80)}`); } } catch {}
+                    delete toolJson[j.index];
+                  } else if (j.type === 'content_block_delta' && j.delta?.type === 'text_delta') {
                     partial += j.delta.text;
                     onChunk(partial, false);
                   }
@@ -1077,11 +1173,17 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
             // User pressed stop mid-stream — keep what was generated so far
             if (err.name !== 'AbortError') throw err;
           }
+          if (searchOn) emitSearch(false);
           onChunk(partial, true);
           return partial;
         }
         const j = await resp.json();
-        result = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('');
+        (j.content || []).forEach(b => {
+          if (b.type === 'server_tool_use' && b.input?.query) sState.queries.push(b.input.query);
+          if (b.type === 'web_search_tool_result' && Array.isArray(b.content)) b.content.forEach(r => WebSearch.addSource(sState, r));
+        });
+        if (searchOn) emitSearch(false);
+        result = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n\n');
         if (j.stop_reason === 'refusal' && !result) {
           result = '*The model declined this request (safety refusal). Try rephrasing, or switch provider in Settings.*';
         }
@@ -1091,7 +1193,7 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
       }
       // 404 → functions not deployed here; fall through to the shim below
     } catch (e) {
-      if (e.name === 'AbortError') { if (onChunk) onChunk('', true); return ''; }
+      if (e.name === 'AbortError') { if (searchOn) emitSearch(false); if (onChunk) onChunk('', true); return ''; }
       console.error('Anthropic API error:', e);
     }
   }
@@ -1165,7 +1267,7 @@ const GistSync = {
       if (ac.length) assistChats[c.id] = ac; // only carry non-empty ones
     });
     // Strip all secrets — never sync API keys to a gist (they get auto-disabled if detected)
-    const { apiKey, openrouterKey, localApiKey, globalPrompt, ...safeSettings } = S.settings();
+    const { apiKey, openrouterKey, localApiKey, globalPrompt, tavilyKey, braveKey, ...safeSettings } = S.settings();
     return {
       version: 2,
       exportedAt: new Date().toISOString(),
@@ -1191,6 +1293,8 @@ const GistSync = {
         openrouterKey: current.openrouterKey,
         localApiKey: current.localApiKey,
         globalPrompt: current.globalPrompt,
+        tavilyKey: current.tavilyKey,
+        braveKey: current.braveKey,
       });
     }
     if (data.personas)        S.savePersonas(data.personas);

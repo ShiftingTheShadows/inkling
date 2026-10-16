@@ -28,6 +28,25 @@ function UserAvatar({ persona, size = 32 }) {
   );
 }
 
+// Web-search activity under a reply: live status while the model is looking
+// things up, then a collapsed list of the pages it used.
+function SearchSources({ search, streaming }) {
+  const { active, doing, queries = [], sources = [] } = search;
+  if (active && streaming) return <div className="search-status">🌐 {doing || 'searching'}…</div>;
+  if (!sources.length && !queries.length) return null;
+  return (
+    <details className="search-sources">
+      <summary>🌐 {sources.length} source{sources.length !== 1 ? 's' : ''}{queries.length ? ` · ${queries.length} search${queries.length !== 1 ? 'es' : ''}` : ''}</summary>
+      {queries.length > 0 && <div className="search-queries">{queries.map((q, i) => <span key={i}>“{q}”</span>)}</div>}
+      <ul>
+        {sources.map(s => (
+          <li key={s.url}><a href={s.url} target="_blank" rel="noopener noreferrer">{s.title}</a> <span className="search-host">{window.WebSearch.host(s.url)}</span></li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 function Message({ msg, char, settings, isStreaming, isLatest, grouped, onDelete, onCopy, onRegen, onRegenGuided, onEdit, onBranch, onPin, onChoice, onResizeTextbox }) {
   const isUser = msg.role === 'user';
   const isNarrator = msg.narrator;
@@ -114,6 +133,7 @@ function Message({ msg, char, settings, isStreaming, isLatest, grouped, onDelete
             }}
           />
         )}
+        {msg.search && <SearchSources search={msg.search} streaming={isStreaming} />}
         <div className="msg-footer">
           {hasBranches && (
             <div className="branch-nav">
@@ -354,7 +374,16 @@ function ChatView() {
   const [generating, setGenerating] = useState(false);
   const abortRef = useRef(null);
   // Fresh AbortController per generation; pass as callAI opts
-  const startAbortable = () => { abortRef.current = new AbortController(); return { signal: abortRef.current.signal }; };
+  // msgId: the streaming message to attach web-search activity/sources to
+  const startAbortable = msgId => {
+    abortRef.current = new AbortController();
+    return {
+      signal: abortRef.current.signal,
+      onSearch: msgId ? ev => setMessages(prev => prev.map(m => m.id === msgId
+        ? { ...m, search: ev.active || ev.sources.length || ev.queries.length ? ev : m.search }
+        : m)) : undefined,
+    };
+  };
   const stopGeneration = () => abortRef.current?.abort();
 
   // ── Group chat support — char.isGroup with memberIds ──────────
@@ -413,7 +442,7 @@ function ChatView() {
             saveAndSync(f); return f;
           });
         }
-      }, { ...startAbortable(), system: groupSystem(speaker, baseMsgs) });
+      }, { ...startAbortable(streamMsgId), system: groupSystem(speaker, baseMsgs), search: true, roleplay: true });
     } catch (e) {
       ctx.addToast(`Error: ${e.message}`, 'error');
       setStreamingId(null);
@@ -672,7 +701,7 @@ function ChatView() {
             saveAndSync(f); return f;
           });
         }
-      }, startAbortable());
+      }, startAbortable(streamMsgId));
     } catch (e) {
       ctx.addToast(`Error: ${e.message}`, 'error');
       setStreamingId(null);
@@ -709,7 +738,7 @@ function ChatView() {
       if (instruction && base.length && base[base.length - 1].role === 'user') {
         base = [...base.slice(0, -1), { ...base[base.length - 1], content: `${base[base.length - 1].content}\n\n[Direction: ${instruction}]` }];
       }
-      setMessages(prev => prev.map(m => m.id === gLast.id ? { ...m, content: '' } : m));
+      setMessages(prev => prev.map(m => m.id === gLast.id ? { ...m, content: '', search: undefined } : m));
       await generateAs(speaker, base, gLast.id);
       // Stopped before any text arrived → put the original reply back
       setMessages(prev => {
@@ -731,7 +760,7 @@ function ChatView() {
 
     setGenerating(true);
     setStreamingId(last.id);
-    setMessages(prev => prev.map(m => m.id === last.id ? { ...m, content: '' } : m));
+    setMessages(prev => prev.map(m => m.id === last.id ? { ...m, content: '', search: undefined } : m));
 
     try {
       await callAI(apiMsgs, char, aiSettings(), (partial, done) => {
@@ -750,7 +779,7 @@ function ChatView() {
             return f;
           });
         }
-      }, startAbortable());
+      }, startAbortable(last.id));
     } catch (e) { ctx.addToast(`Error: ${e.message}`, 'error'); setStreamingId(null); }
     finally { setGenerating(false); }
   };
@@ -790,7 +819,7 @@ function ChatView() {
             saveAndSync(f); return f;
           });
         }
-      }, startAbortable());
+      }, startAbortable(streamMsgId));
     } catch (e) { ctx.addToast(`Error: ${e.message}`, 'error'); setStreamingId(null); }
     finally { setGenerating(false); }
   };
@@ -834,7 +863,7 @@ function ChatView() {
             saveAndSync(f); return f;
           });
         }
-      }, startAbortable());
+      }, startAbortable(streamMsgId));
     } catch (e) {
       ctx.addToast(`Error: ${e.message}`, 'error');
       setStreamingId(null);

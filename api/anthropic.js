@@ -17,7 +17,7 @@ export default async (req) => {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { apiKey, model, system, messages, maxTokens, temperature, stream } = payload;
+  const { apiKey, model, system, messages, maxTokens, temperature, stream, webSearch } = payload;
   if (!apiKey) return Response.json({ error: 'Missing Anthropic API key' }, { status: 400 });
   if (!Array.isArray(messages) || !messages.length) {
     return Response.json({ error: 'Missing messages' }, { status: 400 });
@@ -30,6 +30,10 @@ export default async (req) => {
     messages,
     stream: !!stream,
   };
+  // Anthropic's server-side web search tool (must be enabled for the org in the Console)
+  if (webSearch) {
+    body.tools = [{ type: 'web_search_20250305', name: 'web_search', max_uses: Math.max(1, Math.min(Number(webSearch.maxUses) || 3, 8)) }];
+  }
   // Sampling params are rejected with a 400 on Opus 4.7+ / Sonnet 5 — only
   // forward temperature to models that still accept it.
   if (temperature != null && /^claude-(haiku-4-5|sonnet-4-6)/.test(body.model)) {

@@ -107,7 +107,7 @@ async function generateJSON({ system, userText, settings, validate, content }) {
         genChar,
         { ...settings, temperature: attempt === 0 ? (settings._genTemp ?? 0.8) : 0.4 },
         null,
-        { structured: true, system },
+        { structured: true, system, search: !!settings.webSearch },
       );
       lastResult = result;
       parsed = robustParseJSON(result);
@@ -337,15 +337,6 @@ function SettingsModal({ onClose }) {
                     />
                   </div>
                 )}
-                {form.provider === 'openrouter' && (
-                  <div className="form-group">
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12 }}>
-                      <input type="checkbox" checked={!!form.webSearch} onChange={e => set('webSearch', e.target.checked)} style={{ width: 14, height: 14, accentColor: 'var(--accent)', flexShrink: 0 }} />
-                      Enable web search in chat (appends <code style={{ fontSize: 10 }}>:online</code> to the model)
-                    </label>
-                    <div className="form-hint">Lets the character ground replies in live web results. Adds a small per-request cost on OpenRouter.</div>
-                  </div>
-                )}
               </>
             )}
 
@@ -380,6 +371,49 @@ function SettingsModal({ onClose }) {
               <label className="form-label">TOP P: {form.topP}</label>
               <input type="range" className="form-range" min={0} max={1} step={0.05} value={form.topP} onChange={e => set('topP', Number(e.target.value))} />
             </div>
+            <div className="settings-section-title" style={{ marginTop: 20 }}>WEB SEARCH</div>
+            <div className="form-group">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12 }}>
+                <input type="checkbox" checked={!!form.webSearch} onChange={e => set('webSearch', e.target.checked)} style={{ width: 14, height: 14, accentColor: 'var(--accent)', flexShrink: 0 }} />
+                Let the AI search the web and read pages
+              </label>
+              <div className="form-hint">The model decides when a lookup is needed and writes its own query — it won't search for small talk or story events. Sources show under the reply. Works with every provider.</div>
+            </div>
+            {form.webSearch && (
+              <>
+                {form.provider === 'claude' ? (
+                  <div className="form-hint" style={{ marginBottom: 12 }}>Claude uses Anthropic's built-in web search. It must be enabled for your org in the Anthropic Console (Settings → Privacy → Web search), and it bills per search.</div>
+                ) : (
+                  <div className="form-group">
+                    <label className="form-label">SEARCH BACKEND</label>
+                    <select className="form-select" value={form.searchBackend || 'auto'} onChange={e => set('searchBackend', e.target.value)}>
+                      <option value="auto">Auto — Tavily key, else Brave key, else DuckDuckGo</option>
+                      <option value="tavily">Tavily (best results, free tier)</option>
+                      <option value="brave">Brave Search</option>
+                      <option value="ddg">DuckDuckGo (no key, less reliable)</option>
+                      {form.provider === 'openrouter' && <option value="native">OpenRouter built-in (searches every message)</option>}
+                    </select>
+                  </div>
+                )}
+                {form.provider !== 'claude' && form.searchBackend !== 'native' && (
+                  <>
+                    <div className="form-group">
+                      <label className="form-label">TAVILY KEY (optional)</label>
+                      <input type="password" className="form-input" value={form.tavilyKey || ''} onChange={e => set('tavilyKey', e.target.value)} placeholder="tvly-..." />
+                    </div>
+                    <div className="form-group">
+                      <label className="form-label">BRAVE KEY (optional)</label>
+                      <input type="password" className="form-input" value={form.braveKey || ''} onChange={e => set('braveKey', e.target.value)} placeholder="BSA..." />
+                      <div className="form-hint">Keys stay on this device and are never synced. Needs the /api/search function deployed (Vercel).</div>
+                    </div>
+                  </>
+                )}
+                <div className="form-group">
+                  <label className="form-label">MAX LOOKUPS PER REPLY: {form.searchMaxUses || 3}</label>
+                  <input type="range" className="form-range" min={1} max={8} step={1} value={form.searchMaxUses || 3} onChange={e => set('searchMaxUses', Number(e.target.value))} />
+                </div>
+              </>
+            )}
           </div>
           {/* Right column */}
           <div>
@@ -659,8 +693,7 @@ function CharAIAssist({ form, setForm, onClose }) {
   // Other characters the user picks as style/format references for the AI.
   const [exampleIds, setExampleIds] = useState([]);
   const settingsNow = S.settings();
-  const orActive = settingsNow.provider === 'openrouter';
-  const webSearchActive = !!settingsNow.webSearch && orActive;
+  const webSearchActive = !!settingsNow.webSearch;
 
   // Pickable examples: every other saved character (groups excluded).
   const exampleChoices = (ctx.chars || []).filter(c => c.id !== form.id && !c.isGroup);
@@ -791,9 +824,9 @@ function CharAIAssist({ form, setForm, onClose }) {
         // Floor the budget well above the roleplay default (often 1024) — a
         // reply plus a full edit block of field text easily overruns it, and a
         // truncated block leaves the ```edit fence unclosed so nothing applies.
-        { ...settingsNow, webSearch: chatWeb && orActive, maxTokens: Math.max(4096, settingsNow.maxTokens || 1024) },
+        { ...settingsNow, webSearch: chatWeb, maxTokens: Math.max(4096, settingsNow.maxTokens || 1024) },
         partial => { acc = partial; setChatMsgs(prev => { const n = [...prev]; n[n.length - 1] = { role: 'assistant', content: stripStreamingFence(partial) }; return n; }); },
-        { system: chatSystem() },
+        { system: chatSystem(), search: chatWeb },
       );
       // Non-streaming providers never call onChunk — fall back to the return.
       const finalText = acc.trim() ? acc : (typeof result === 'string' ? result.trim() : '');
@@ -1070,10 +1103,10 @@ EDIT RULES — this is an edit, not a rewrite:
           <label className="form-label">WEB SEARCH</label>
           <div
             title="Controlled by the Web Search setting in Settings → API Configuration"
-            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: webSearchActive ? 'var(--accent3)' : 'var(--surface3)', border: `1px solid ${webSearchActive ? 'var(--accent3)' : 'var(--border2)'}`, opacity: orActive ? 1 : 0.5 }}
+            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: webSearchActive ? 'var(--accent3)' : 'var(--surface3)', border: `1px solid ${webSearchActive ? 'var(--accent3)' : 'var(--border2)'}`, }}
           >
             <span style={{ fontSize: 10, color: webSearchActive ? 'var(--accent)' : 'var(--text2)' }}>
-              {!orActive ? 'OpenRouter only' : webSearchActive ? 'ON — grounding in live web results' : 'OFF — enable in Settings'}
+              {webSearchActive ? 'ON — grounding in live web results' : 'OFF — enable in Settings'}
             </span>
           </div>
         </div>
@@ -1143,11 +1176,11 @@ EDIT RULES — this is an edit, not a rewrite:
               <button className="btn-secondary btn-sm" onClick={clearChat} disabled={chatBusy}>CLEAR CHAT</button>
             )}
             <button
-              className={`btn-secondary btn-sm${chatWeb && orActive ? ' web-on' : ''}`}
-              onClick={() => setChatWeb(w => !w)} disabled={!orActive}
-              title={orActive ? 'Ground replies in live web results (OpenRouter)' : 'Web search needs the OpenRouter provider'}
+              className={`btn-secondary btn-sm${chatWeb ? ' web-on' : ''}`}
+              onClick={() => setChatWeb(w => !w)}
+              title="Let the assistant search the web when it needs facts"
               style={{ marginLeft: 'auto' }}
-            >🌐 WEB {!orActive ? 'N/A' : chatWeb ? 'ON' : 'OFF'}</button>
+            >🌐 WEB {chatWeb ? 'ON' : 'OFF'}</button>
           </div>
         </div>
       )}
