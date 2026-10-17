@@ -1,0 +1,56 @@
+{
+  "name": "inkling-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Inkling \u2014 self-hosted AI roleplay chat, as a desktop app",
+  "author": "Inkling <noreply@inkling.local>",
+  "homepage": "https://github.com/ShiftingTheShadows/inkling",
+  "license": "MIT",
+  "main": "main.js",
+  "scripts": {
+    "prepare-app": "node prepare.mjs",
+    "start": "node prepare.mjs && electron .",
+    "dist": "node prepare.mjs && electron-builder --linux AppImage deb tar.gz --publish never",
+    "test": "node test/server.test.js"
+  },
+  "devDependencies": {
+    "@fontsource/jetbrains-mono": "^5.1.0",
+    "electron": "^44.8.0",
+    "electron-builder": "^26.0.0",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "build": {
+    "appId": "app.inkling.desktop",
+    "productName": "Inkling",
+    "artifactName": "Inkling-${version}-${arch}.${ext}",
+    "files": [
+      "main.js",
+      "server.js",
+      "web/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "asar": true,
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb",
+        "tar.gz"
+      ],
+      "category": "Utility",
+      "icon": "icons",
+      "maintainer": "Inkling <noreply@inkling.local>",
+      "synopsis": "AI roleplay chat client",
+      "description": "Self-hosted AI roleplay chat: characters, group chats, lorebooks, and local or cloud models. All data stays on your machine.",
+      "executableName": "inkling",
+      "syncDesktopName": true
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ShiftingTheShadows/inkling.git"
+  },
+  "desktopName": "inkling.desktop"
+}

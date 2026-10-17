@@ -6,7 +6,7 @@
 import { transformSync } from 'esbuild';
 import { mkdirSync, readFileSync, writeFileSync, cpSync } from 'fs';
 
-const files = ['hmm-utils.jsx', 'hmm-search.jsx', 'hmm-textbox.jsx', 'hmm-sidebar.jsx', 'hmm-folders.jsx', 'hmm-chat.jsx', 'hmm-modals.jsx', 'hmm-mcp.jsx', 'hmm-app.jsx'];
+const files = ['hmm-utils.jsx', 'hmm-search.jsx', 'hmm-textbox.jsx', 'hmm-sidebar.jsx', 'hmm-folders.jsx', 'hmm-chat.jsx', 'hmm-modals.jsx', 'hmm-mcp.jsx', 'hmm-local.jsx', 'hmm-app.jsx'];
 
 mkdirSync('dist', { recursive: true });
 

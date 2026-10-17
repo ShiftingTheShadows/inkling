@@ -1,7 +1,7 @@
 // hmm-app.jsx — Root App
 const { useState, useEffect, useCallback } = React;
 const { AppCtx, S, genId, GistSync, RailwaySync, CHANGELOG } = window;
-const { Sidebar, WelcomeScreen, ChatView, FoldersPage, McpSetupModal } = window;
+const { Sidebar, WelcomeScreen, ChatView, FoldersPage, McpSetupModal, LocalModelsModal } = window;
 const { ToastStack, CommandPalette, SettingsModal, CharEditorModal, GroupEditorModal, ImportModal, HistoryModal, PersonasModal, SyncModal, LorebookModal, ChangelogModal } = window;
 
 function App() {
@@ -378,6 +378,7 @@ function App() {
       {modal?.type === 'lorebook'    && <LorebookModal onClose={closeModal} />}
       {modal?.type === 'changelog'   && <ChangelogModal onClose={closeModal} />}
       {modal?.type === 'mcp-setup'   && <McpSetupModal onClose={closeModal} />}
+      {modal?.type === 'local-models' && <LocalModelsModal onClose={closeModal} />}
       {modal?.type === 'history' && currentChar && (
         <HistoryModal char={currentChar} onRestore={restoreHistory} onClose={closeModal} />
       )}

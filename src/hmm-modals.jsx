@@ -186,6 +186,7 @@ function CommandPalette() {
     { label: 'New Character',    sub: 'Create a character',          icon: CMD_ICON.character, action: () => { ctx.openModal('char-editor', null); ctx.setCmdOpen(false); } },
     { label: 'New Group Chat',   sub: 'Multiple characters, one scene', icon: CMD_ICON.group, action: () => { ctx.openModal('group-editor', null); ctx.setCmdOpen(false); } },
     { label: 'Character Folders', sub: 'Organize characters into folders', icon: CMD_ICON.character, action: () => { ctx.setPage('folders'); ctx.setCmdOpen(false); } },
+    { label: 'Local Models', sub: 'Self-host text models with Ollama: download, switch, delete', icon: CMD_ICON.settings, action: () => { ctx.openModal('local-models'); ctx.setCmdOpen(false); } },
     { label: 'Connect Claude (MCP)', sub: 'Setup guide: Claude Code, Desktop, Cursor, VS Code', icon: CMD_ICON.sync, action: () => { ctx.openModal('mcp-setup'); ctx.setCmdOpen(false); } },
     { label: 'Import Character', sub: 'Import from JSON or PNG card', icon: CMD_ICON.import, action: () => { ctx.openModal('import');           ctx.setCmdOpen(false); } },
     { label: 'Sync',              sub: 'Push/pull all data via Gist or Railway', icon: CMD_ICON.sync, action: () => { ctx.openModal('sync');             ctx.setCmdOpen(false); } },
@@ -306,6 +307,9 @@ function SettingsModal({ onClose }) {
                     }
                   />
                   <div className="form-hint">{form.provider === 'openrouter' ? 'Quick fill: https://openrouter.ai/api' : 'OpenAI /v1/chat/completions format expected.'}</div>
+                  {form.provider === 'local' && (
+                    <button className="btn-secondary btn-sm" style={{ marginTop: 8 }} onClick={() => { ctx.saveSettings(form); ctx.openModal('local-models'); }}>MANAGE LOCAL MODELS (OLLAMA) →</button>
+                  )}
                 </div>
                 <div className="form-group">
                   <label className="form-label">API KEY {form.provider === 'local' ? '(optional)' : ''}</label>

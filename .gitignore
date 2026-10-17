@@ -5,3 +5,6 @@ dist
 package-lock.json
 
 .vercel
+desktop/web
+desktop/release
+desktop/node_modules

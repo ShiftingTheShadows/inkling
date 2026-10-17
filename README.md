@@ -54,6 +54,32 @@ For production, `npm run build` runs esbuild once at deploy time instead of ship
 Babel and re-transpiling ~250KB of JSX in every visitor's browser. The dev workflow
 (opening `index.html` directly) is unaffected.
 
+## Linux desktop app
+
+Inkling also runs as a native Linux app (Electron). It bundles everything it needs, works
+offline, and runs the `api/` functions locally, so Claude, web search and image upload work
+without any hosting. Your data lives in the app's own profile (`~/.config/Inkling`).
+
+**Download:** grab the AppImage or `.deb` from the Releases page (built by the
+*Linux desktop build* workflow — push a `v*` tag, or run it by hand from the Actions tab).
+
+```
+chmod +x Inkling-*.AppImage && ./Inkling-*.AppImage     # AppImage
+sudo apt install ./Inkling-*.deb                         # Debian / Ubuntu
+```
+
+**Build it yourself:**
+
+```
+npm install                    # repo root (web build)
+cd desktop && npm install
+npm start                      # build + launch
+npm run dist                   # AppImage + deb + tar.gz into desktop/release/
+```
+
+It serves on `127.0.0.1:47831` (override with `INKLING_PORT`). Keep that port stable: saved
+data is tied to it.
+
 ## Running it
 
 ```
