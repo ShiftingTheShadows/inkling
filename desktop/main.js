@@ -10,8 +10,21 @@ const ROOT = path.join(__dirname, 'web');
 // refuses to start on many distros. We only ever load our own local origin.
 if (process.env.APPIMAGE) app.commandLine.appendSwitch('no-sandbox');
 
+// Black-window fix: GPU compositing is the usual culprit on Linux (Wayland,
+// NVIDIA, VMs, missing GL drivers). A text chat app doesn't need it, so
+// software rendering is the default. Set INKLING_GPU=1 to opt back in.
+if (!process.env.INKLING_GPU) app.disableHardwareAcceleration();
+
 let win = null;
 let origin = '';
+
+// Log to ~/.config/Inkling/inkling.log so a blank window can be diagnosed
+const fs = require('fs');
+const log = (...a) => {
+  const line = `${new Date().toISOString()} ${a.join(' ')}\n`;
+  process.stdout.write(line);
+  try { fs.appendFileSync(path.join(app.getPath('userData'), 'inkling.log'), line); } catch {}
+};
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -44,7 +57,7 @@ if (!app.requestSingleInstanceLock()) {
 
     win = new BrowserWindow({
       width: 1280, height: 850, minWidth: 420, minHeight: 500,
-      title: 'Inkling', backgroundColor: '#0a0a0a', autoHideMenuBar: true,
+      title: 'Inkling', backgroundColor: '#0a0a0a', autoHideMenuBar: true, show: false,
       icon: path.join(__dirname, 'icons', '512x512.png'),
       webPreferences: { contextIsolation: true, nodeIntegration: false, spellcheck: true },
     });
@@ -55,6 +68,15 @@ if (!app.requestSingleInstanceLock()) {
     win.webContents.setWindowOpenHandler(({ url }) => { external(url); return { action: 'deny' }; });
     win.webContents.on('will-navigate', (e, url) => { if (!url.startsWith(origin)) { e.preventDefault(); external(url); } });
 
+    win.webContents.on('did-fail-load', (_e, code, desc, url) => {
+      log('did-fail-load', code, desc, url);
+      win.loadURL('data:text/html,' + encodeURIComponent(
+        `<body style="background:#0a0a0a;color:#ddd;font:14px monospace;padding:40px"><h2>Inkling couldn't load</h2><p>${desc} (${code})</p><p>Log: ${path.join(app.getPath('userData'), 'inkling.log')}</p>`));
+    });
+    win.webContents.on('render-process-gone', (_e, d) => log('render-process-gone', d.reason, d.exitCode));
+    win.webContents.on('console-message', (_e, level, msg) => { if (level >= 2) log('renderer:', msg); });
+    win.once('ready-to-show', () => win.show());
+    log('starting, origin', origin, 'gpu', process.env.INKLING_GPU ? 'on' : 'off');
     win.loadURL(origin);
   });
 
