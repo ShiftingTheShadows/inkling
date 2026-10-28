@@ -79,6 +79,18 @@ export const EXTRA_TOOLS = [
       folder: { type: 'string' }, confirm: { type: 'boolean' },
     }, required: ['folder', 'confirm'] } },
 
+  { name: 'inkling_update_folder', description: 'Rename, recolor or re-parent a folder. Only the fields you pass change. parent:"" moves it to the top level; a folder cannot be moved into itself or its own subfolders.',
+    inputSchema: { type: 'object', properties: {
+      folder: { type: 'string', description: 'Folder id or name.' },
+      name: { type: 'string' }, color: { type: 'string' },
+      parent: { type: 'string', description: 'New parent folder id or name, or empty string for top level.' },
+    }, required: ['folder'] } },
+  { name: 'inkling_move_characters', description: 'Move several characters into one folder in a single write. folder:"" = top level.',
+    inputSchema: { type: 'object', properties: {
+      characters: { type: 'array', items: { type: 'string' }, description: 'Character ids or names.' },
+      folder: { type: 'string' },
+    }, required: ['characters', 'folder'] } },
+
   // scripts
   { name: 'inkling_list_scripts', description: 'List scripts (lorebooks) with type, scope and entry count.',
     inputSchema: { type: 'object', properties: {} } },
@@ -97,6 +109,17 @@ export const EXTRA_TOOLS = [
       content: { type: 'string' },
       probability: { type: 'number', description: '0-100, default 100.' },
     }, required: ['script', 'name', 'keywords', 'content'] } },
+  { name: 'inkling_update_script_entry', description: 'Edit an entry in a lorebook script. Only the fields you pass change.',
+    inputSchema: { type: 'object', properties: {
+      script: { type: 'string', description: 'Script id or name.' },
+      entry: { type: 'string', description: 'Entry id or name.' },
+      name: { type: 'string' }, keywords: { type: 'array', items: { type: 'string' } }, content: { type: 'string' },
+      probability: { type: 'number', description: '0-100.' }, enabled: { type: 'boolean' },
+    }, required: ['script', 'entry'] } },
+  { name: 'inkling_delete_script_entry', description: 'Delete one entry from a lorebook script. Confirm with the user first, then pass confirm:true.',
+    inputSchema: { type: 'object', properties: {
+      script: { type: 'string' }, entry: { type: 'string', description: 'Entry id or name.' }, confirm: { type: 'boolean' },
+    }, required: ['script', 'entry', 'confirm'] } },
 ];
 
 export async function handleExtra(name, args, { sync, ok, fail }) {
@@ -251,6 +274,56 @@ export async function handleExtra(name, args, { sync, ok, fail }) {
       return ok({ deleted: info, revision: res.revision });
     }
 
+    case 'inkling_update_folder': {
+      let updated;
+      const res = await sync.mutate(d => {
+        assertPayloadShape(d);
+        const folders = d.folders || [];
+        const f = resolveBy(folders, args.folder, 'folder');
+        const patch = {};
+        if (args.name !== undefined) {
+          if (!str(args.name).trim()) return { abort: 'name cannot be empty.' };
+          patch.name = str(args.name).trim().slice(0, 60);
+        }
+        if (args.color !== undefined) patch.color = str(args.color);
+        if (args.parent !== undefined) {
+          if (!str(args.parent).trim()) patch.parentId = undefined;
+          else {
+            const p = resolveBy(folders, args.parent, 'folder');
+            // Walk up from the new parent; hitting f means it's inside f.
+            for (let cur = p, hops = 0; cur; hops++) {
+              if (cur.id === f.id) return { abort: 'A folder cannot be moved into itself or one of its own subfolders.' };
+              if (hops > folders.length) break;
+              cur = folders.find(x => x.id === cur.parentId);
+            }
+            patch.parentId = p.id;
+          }
+        }
+        if (!Object.keys(patch).length) return { abort: 'No fields to update were provided.' };
+        Object.assign(f, patch);
+        if (f.parentId === undefined) delete f.parentId;
+        updated = f;
+      });
+      if (res.aborted) return fail(res.message);
+      return ok({ updated, revision: res.revision });
+    }
+
+    case 'inkling_move_characters': {
+      if (!Array.isArray(args.characters) || !args.characters.length) return fail('characters must be a non-empty array.');
+      let info;
+      const res = await sync.mutate(d => {
+        assertPayloadShape(d);
+        const target = str(args.folder).trim() ? resolveBy(d.folders || [], args.folder, 'folder') : null;
+        // Resolve everything first so a bad reference moves nobody.
+        const chars = args.characters.map(ref => resolveCharacter(d.characters, ref));
+        const now = new Date().toISOString();
+        for (const c of chars) { if (target) c.folderId = target.id; else delete c.folderId; c.updatedAt = now; }
+        info = { moved: chars.map(c => c.name), folder: target ? target.name : '(top level)' };
+      });
+      if (res.aborted) return fail(res.message);
+      return ok({ ...info, revision: res.revision });
+    }
+
     case 'inkling_list_scripts': {
       const { data } = await sync.pull();
       needBackup(data);
@@ -299,6 +372,42 @@ export async function handleExtra(name, args, { sync, ok, fail }) {
       });
       if (res.aborted) return fail(res.message);
       return ok({ added: { id: entry.id, name: entry.name, script: scriptName }, revision: res.revision });
+    }
+
+    case 'inkling_update_script_entry': {
+      const patch = {};
+      if (args.name !== undefined) patch.name = str(args.name).trim();
+      if (args.keywords !== undefined) patch.keywords = arr(args.keywords);
+      if (args.content !== undefined) patch.content = str(args.content);
+      if (args.probability !== undefined) patch.probability = Math.min(Math.max(Number(args.probability) || 0, 0), 100);
+      if (args.enabled !== undefined) patch.enabled = !!args.enabled;
+      if (!Object.keys(patch).length) return fail('No fields to update were provided.');
+      if ('name' in patch && !patch.name) return fail('name cannot be empty.');
+      if ('keywords' in patch && !patch.keywords.length) return fail('keywords cannot be empty.');
+      let updated, scriptName;
+      const res = await sync.mutate(d => {
+        assertPayloadShape(d);
+        const sc = resolveBy(d.scripts || [], args.script, 'script');
+        const e = resolveBy(sc.entries || [], args.entry, 'entry');
+        Object.assign(e, patch);
+        updated = e; scriptName = sc.name;
+      });
+      if (res.aborted) return fail(res.message);
+      return ok({ updated: { ...updated, script: scriptName }, changed: Object.keys(patch), revision: res.revision });
+    }
+
+    case 'inkling_delete_script_entry': {
+      if (args.confirm !== true) return fail('Refusing to delete without confirm:true. Ask the user first.');
+      let info;
+      const res = await sync.mutate(d => {
+        assertPayloadShape(d);
+        const sc = resolveBy(d.scripts || [], args.script, 'script');
+        const e = resolveBy(sc.entries || [], args.entry, 'entry');
+        sc.entries = sc.entries.filter(x => x.id !== e.id);
+        info = { id: e.id, name: e.name, script: sc.name, remaining: sc.entries.length };
+      });
+      if (res.aborted) return fail(res.message);
+      return ok({ deleted: info, revision: res.revision });
     }
 
     default:

@@ -77,8 +77,10 @@ Fully quit Claude Desktop from the tray and relaunch — it reads the config onl
 | `inkling_add_message` | Append a `user` or `assistant` message to a chat. |
 | `inkling_clear_chat` | Empty a chat, keep the character. Requires `confirm: true`. |
 | `inkling_list_folders` / `create_folder` / `delete_folder` | Nestable character folders. Deleting moves contents up a level. |
-| `inkling_move_character` | Put a character in a folder (`folder: ""` = top level). |
+| `inkling_update_folder` | Rename, recolor or re-parent a folder. Refuses to move a folder into itself or its subfolders. |
+| `inkling_move_character` / `inkling_move_characters` | Put one or many characters in a folder (`folder: ""` = top level). Bulk is all-or-nothing. |
 | `inkling_list_scripts` / `get_script` / `create_script` / `add_script_entry` | Lorebook scripts and their keyword entries. Advanced (JS) scripts are not editable here. |
+| `inkling_update_script_entry` / `inkling_delete_script_entry` | Edit or remove one lorebook entry, addressed by id or name. Delete requires `confirm: true`. |
 
 Characters can be addressed by id or by name. An ambiguous name is an error rather than a guess.
 

@@ -54,7 +54,7 @@ const call = async (name, args = {}) => {
 
 // ── tools are advertised ──────────────────────────────────
 const { tools } = await client.listTools();
-check('exposes 21 tools', tools.length === 21, tools.map(t => t.name));
+check('exposes 25 tools', tools.length === 25, tools.map(t => t.name));
 check('create requires name + first_message',
   JSON.stringify(tools.find(t => t.name === 'inkling_create_character').inputSchema.required) === '["name","first_message"]');
 
@@ -236,6 +236,34 @@ const gs = await call('inkling_get_script', { script: 'Ravenhold' });
 check('entry persisted with defaults', gs.json?.entries?.[0]?.keywords?.length === 2 && gs.json.entries[0].depth === 8 && gs.json.entries[0].probability === 100, gs.json);
 check('list_scripts counts entries', (await call('inkling_list_scripts')).json.scripts.find(s => s.name === 'Ravenhold').entries === 1);
 check('entry without keywords refused', (await call('inkling_add_script_entry', { script: 'Ravenhold', name: 'x', keywords: [], content: 'y' })).isError);
+
+// ── folder editing ────────────────────────────────────────
+const fA = (await call('inkling_create_folder', { name: 'Alpha' })).json.created;
+const fB = (await call('inkling_create_folder', { name: 'Beta', parent: 'Alpha' })).json.created;
+const uf = await call('inkling_update_folder', { folder: 'Beta', name: 'Beta2', color: '#112233' });
+check('renames and recolors folder', uf.json?.updated?.name === 'Beta2' && uf.json.updated.color === '#112233' && uf.json.updated.parentId === fA.id, uf.text);
+const cyc = await call('inkling_update_folder', { folder: 'Alpha', parent: 'Beta2' });
+check('folder cannot move into its own subfolder', cyc.isError && /subfolders/.test(cyc.text), cyc.text);
+check('folder cannot move into itself', (await call('inkling_update_folder', { folder: 'Alpha', parent: 'Alpha' })).isError);
+await call('inkling_update_folder', { folder: 'Beta2', parent: '' });
+check('empty parent moves folder to top level', (await dump()).data.folders.find(f => f.id === fB.id).parentId === undefined);
+check('update_folder with nothing errors', (await call('inkling_update_folder', { folder: 'Alpha' })).isError);
+const bulk = await call('inkling_move_characters', { characters: ['Verity', 'Mox'], folder: 'Alpha' });
+blob = await dump();
+check('bulk move places all characters', bulk.json?.moved?.length === 2 && blob.data.characters.filter(c => c.folderId === fA.id).length === 2, bulk.text);
+const badBulk = await call('inkling_move_characters', { characters: ['Verity', 'Nobody'], folder: '' });
+check('bulk move with a bad ref moves nobody', badBulk.isError && (await dump()).data.characters.filter(c => c.folderId === fA.id).length === 2);
+
+// ── lorebook entry edit/delete ────────────────────────────
+const ue = await call('inkling_update_script_entry', { script: 'Ravenhold', entry: 'The Keep', content: 'A burnt castle.', keywords: 'keep, ruins', probability: 50, enabled: false });
+check('updates entry', !ue.isError && ue.json?.updated?.content === 'A burnt castle.', ue.text);
+const ent = (await call('inkling_get_script', { script: 'Ravenhold' })).json.entries[0];
+check('entry fields changed, others kept', ent.keywords.join() === 'keep,ruins' && ent.probability === 50 && ent.enabled === false && ent.depth === 8 && ent.name === 'The Keep', ent);
+check('update entry with no fields errors', (await call('inkling_update_script_entry', { script: 'Ravenhold', entry: 'The Keep' })).isError);
+check('update entry unknown entry errors', (await call('inkling_update_script_entry', { script: 'Ravenhold', entry: 'zzz', name: 'q' })).isError);
+check('entry delete needs confirm', (await call('inkling_delete_script_entry', { script: 'Ravenhold', entry: 'The Keep', confirm: false })).isError);
+const de = await call('inkling_delete_script_entry', { script: 'Ravenhold', entry: ent.id, confirm: true });
+check('deletes entry by id', !de.isError && de.json?.deleted?.remaining === 0, de.text);
 
 // ── empty backup ──────────────────────────────────────────
 await client.close();
