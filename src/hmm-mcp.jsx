@@ -159,7 +159,7 @@ function McpSetupModal({ onClose }) {
 
           <McpStep n={5} title="Test it">
             Ask Claude: <i>"Run inkling_status."</i> You should get a connection check plus your character count. Then try <i>"Make me a grumpy lighthouse keeper named Odd."</i>
-            <div style={{ marginTop: 6 }}>Tools: <code>inkling_status</code>, <code>inkling_list_characters</code>, <code>inkling_get_character</code>, <code>inkling_create_character</code>, <code>inkling_update_character</code>, <code>inkling_delete_character</code>.</div>
+            <div style={{ marginTop: 6 }}>Tools: <code>inkling_status</code>, <code>inkling_list_characters</code>, <code>inkling_get_character</code>, <code>inkling_create_character</code>, <code>inkling_update_character</code>, <code>inkling_delete_character</code>, plus personas, chats, folders and scripts (<code>inkling_list_personas</code>, <code>inkling_get_chat</code>, <code>inkling_create_folder</code>, <code>inkling_create_script</code> and friends).</div>
           </McpStep>
 
           <McpStep n={6} title="If it doesn't work">

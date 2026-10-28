@@ -21,6 +21,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { SyncClient, assertPayloadShape } from './sync.js';
+import { EXTRA_TOOLS, handleExtra } from './extra.js';
 import { buildCharacter, normalizeInput, summarize, detail, resolveCharacter } from './characters.js';
 
 export const CONFIG_PATH = path.join(os.homedir(), '.inkling-mcp.json');
@@ -258,13 +259,15 @@ async function handle(name, args) {
       return ok({ deleted: removed, revision: res.revision });
     }
 
-    default:
-      return fail(`Unknown tool: ${name}`);
+    default: {
+      const r = await handleExtra(name, args, { sync, ok, fail });
+      return r ?? fail(`Unknown tool: ${name}`);
+    }
   }
 }
 
 const server = new Server({ name: 'inkling', version: '0.1.0' }, { capabilities: { tools: {} } });
-server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
+server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [...TOOLS, ...EXTRA_TOOLS] }));
 server.setRequestHandler(CallToolRequestSchema, async req => {
   try {
     return await handle(req.params.name, req.params.arguments || {});

@@ -54,7 +54,7 @@ const call = async (name, args = {}) => {
 
 // ── tools are advertised ──────────────────────────────────
 const { tools } = await client.listTools();
-check('exposes 6 tools', tools.length === 6, tools.map(t => t.name));
+check('exposes 21 tools', tools.length === 21, tools.map(t => t.name));
 check('create requires name + first_message',
   JSON.stringify(tools.find(t => t.name === 'inkling_create_character').inputSchema.required) === '["name","first_message"]');
 
@@ -186,6 +186,56 @@ blob = await dump();
 check('character removed', !blob.data.characters.find(c => c.id === 'c1'));
 check('its chat history removed', blob.data.chats.c1 === undefined);
 check('other characters untouched', !!blob.data.characters.find(c => c.id === 'c2'));
+
+// ── personas ──────────────────────────────────────────────
+const pl = await call('inkling_list_personas');
+check('lists personas', pl.json?.personas?.length === 1);
+const pc = await call('inkling_create_persona', { name: 'Knight', description: 'A wary knight' });
+check('creates persona', !pc.isError && pc.json?.created?.name === 'Knight', pc.text);
+check('duplicate persona refused', (await call('inkling_create_persona', { name: 'knight' })).isError);
+check('updates persona', !(await call('inkling_update_persona', { persona: 'Knight', description: 'Tired knight' })).isError);
+blob = await dump();
+check('persona persisted', blob.data.personas.find(p => p.name === 'Knight')?.description === 'Tired knight');
+check('persona delete needs confirm', (await call('inkling_delete_persona', { persona: 'Knight', confirm: false })).isError);
+check('deletes persona', !(await call('inkling_delete_persona', { persona: 'Knight', confirm: true })).isError);
+const lastP = await call('inkling_delete_persona', { persona: 'You', confirm: true });
+check('last persona cannot be deleted', lastP.isError && /only persona/.test(lastP.text), lastP.text);
+
+// ── chat ──────────────────────────────────────────────────
+for (let i = 0; i < 5; i++) await call('inkling_add_message', { character: 'Verity', role: i % 2 ? 'assistant' : 'user', content: `msg ${i}` });
+const ch = await call('inkling_get_chat', { character: 'Verity', limit: 2 });
+check('get_chat returns the latest page', ch.json?.total === 5 && ch.json.messages.map(m => m.content).join() === 'msg 3,msg 4', ch.json);
+const ch2 = await call('inkling_get_chat', { character: 'Verity', limit: 2, offset: 2 });
+check('get_chat offset pages backwards', ch2.json?.messages.map(m => m.content).join() === 'msg 1,msg 2', ch2.json);
+check('bad role refused', (await call('inkling_add_message', { character: 'Verity', role: 'system', content: 'x' })).isError);
+check('clear_chat needs confirm', (await call('inkling_clear_chat', { character: 'Verity', confirm: false })).isError);
+const cc = await call('inkling_clear_chat', { character: 'Verity', confirm: true });
+check('clear_chat empties chat', cc.json?.messagesCleared === 5 && (await dump()).data.chats.c2.length === 0, cc.text);
+
+// ── folders ───────────────────────────────────────────────
+const fo = await call('inkling_create_folder', { name: 'Allies' });
+const fo2 = await call('inkling_create_folder', { name: 'Spies', parent: 'Allies' });
+check('creates nested folders', fo.json?.created?.id && fo2.json?.created?.parentId === fo.json.created.id, fo2.text);
+await call('inkling_move_character', { character: 'Verity', folder: 'Spies' });
+check('moves character into folder', (await dump()).data.characters.find(c => c.id === 'c2').folderId === fo2.json.created.id);
+check('list_folders counts characters', (await call('inkling_list_folders')).json.folders.find(f => f.name === 'Spies').characters === 1);
+check('delete_folder needs confirm', (await call('inkling_delete_folder', { folder: 'Spies', confirm: false })).isError);
+await call('inkling_delete_folder', { folder: 'Spies', confirm: true });
+check('deleting a folder reparents its characters', (await dump()).data.characters.find(c => c.id === 'c2').folderId === fo.json.created.id);
+await call('inkling_move_character', { character: 'Verity', folder: '' });
+check('empty folder moves to top level', (await dump()).data.characters.find(c => c.id === 'c2').folderId === undefined);
+
+// ── scripts ───────────────────────────────────────────────
+const sc = await call('inkling_create_script', { name: 'Ravenhold' });
+check('creates global script', sc.json?.created?.global === true && sc.json.created.type === 'lorebook', sc.text);
+const sc2 = await call('inkling_create_script', { name: 'Verity Lore', characters: ['Verity'] });
+check('scoped script is not global', sc2.json?.created?.global === false && sc2.json.created.charIds[0] === 'c2', sc2.text);
+const en = await call('inkling_add_script_entry', { script: 'Ravenhold', name: 'The Keep', keywords: ['keep', 'castle'], content: 'A black castle.' });
+check('adds entry', !en.isError, en.text);
+const gs = await call('inkling_get_script', { script: 'Ravenhold' });
+check('entry persisted with defaults', gs.json?.entries?.[0]?.keywords?.length === 2 && gs.json.entries[0].depth === 8 && gs.json.entries[0].probability === 100, gs.json);
+check('list_scripts counts entries', (await call('inkling_list_scripts')).json.scripts.find(s => s.name === 'Ravenhold').entries === 1);
+check('entry without keywords refused', (await call('inkling_add_script_entry', { script: 'Ravenhold', name: 'x', keywords: [], content: 'y' })).isError);
 
 // ── empty backup ──────────────────────────────────────────
 await client.close();
