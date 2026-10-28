@@ -54,7 +54,7 @@ const call = async (name, args = {}) => {
 
 // ── tools are advertised ──────────────────────────────────
 const { tools } = await client.listTools();
-check('exposes 25 tools', tools.length === 25, tools.map(t => t.name));
+check('exposes 27 tools', tools.length === 27, tools.map(t => t.name));
 check('create requires name + first_message',
   JSON.stringify(tools.find(t => t.name === 'inkling_create_character').inputSchema.required) === '["name","first_message"]');
 
@@ -264,6 +264,24 @@ check('update entry unknown entry errors', (await call('inkling_update_script_en
 check('entry delete needs confirm', (await call('inkling_delete_script_entry', { script: 'Ravenhold', entry: 'The Keep', confirm: false })).isError);
 const de = await call('inkling_delete_script_entry', { script: 'Ravenhold', entry: ent.id, confirm: true });
 check('deletes entry by id', !de.isError && de.json?.deleted?.remaining === 0, de.text);
+
+// ── script edit/delete ────────────────────────────────────
+const us = await call('inkling_update_script', { script: 'Ravenhold', name: 'Ravenhold II', description: 'Updated', enabled: false });
+check('updates script settings', !us.isError && us.json?.updated?.name === 'Ravenhold II' && us.json.updated.enabled === false, us.text);
+await call('inkling_add_script_entry', { script: 'Ravenhold II', name: 'Keep2', keywords: ['k'], content: 'c' });
+const scope = await call('inkling_update_script', { script: 'Ravenhold II', characters: ['Verity'] });
+check('scoping to characters makes it non-global', scope.json?.updated?.global === false && scope.json.updated.charIds[0] === 'c2', scope.text);
+const glob = await call('inkling_update_script', { script: 'Ravenhold II', global: true });
+check('global:true clears the character list', glob.json?.updated?.global === true && glob.json.updated.charIds.length === 0, glob.text);
+check('entries survive script edits', (await call('inkling_get_script', { script: 'Ravenhold II' })).json.entries.length === 1);
+check('script rename collision refused', (await call('inkling_update_script', { script: 'Ravenhold II', name: 'Verity Lore' })).isError);
+check('global+characters together refused', (await call('inkling_update_script', { script: 'Ravenhold II', global: true, characters: ['Verity'] })).isError);
+check('empty characters list refused', (await call('inkling_update_script', { script: 'Ravenhold II', characters: [] })).isError);
+check('global:false without characters refused', (await call('inkling_update_script', { script: 'Ravenhold II', global: false })).isError);
+check('update_script with nothing errors', (await call('inkling_update_script', { script: 'Ravenhold II' })).isError);
+check('script delete needs confirm', (await call('inkling_delete_script', { script: 'Ravenhold II', confirm: false })).isError);
+const ds = await call('inkling_delete_script', { script: 'Ravenhold II', confirm: true });
+check('deletes script and reports entries', ds.json?.deleted?.entriesDeleted === 1 && !(await dump()).data.scripts.some(x => x.name === 'Ravenhold II'), ds.text);
 
 // ── empty backup ──────────────────────────────────────────
 await client.close();

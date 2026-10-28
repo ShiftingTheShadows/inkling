@@ -80,6 +80,7 @@ Fully quit Claude Desktop from the tray and relaunch — it reads the config onl
 | `inkling_update_folder` | Rename, recolor or re-parent a folder. Refuses to move a folder into itself or its subfolders. |
 | `inkling_move_character` / `inkling_move_characters` | Put one or many characters in a folder (`folder: ""` = top level). Bulk is all-or-nothing. |
 | `inkling_list_scripts` / `get_script` / `create_script` / `add_script_entry` | Lorebook scripts and their keyword entries. Advanced (JS) scripts are not editable here. |
+| `inkling_update_script` / `inkling_delete_script` | Change a script's name, description, enabled flag or scope (`global` / `characters`). Delete removes all its entries and requires `confirm: true`. |
 | `inkling_update_script_entry` / `inkling_delete_script_entry` | Edit or remove one lorebook entry, addressed by id or name. Delete requires `confirm: true`. |
 
 Characters can be addressed by id or by name. An ambiguous name is an error rather than a guess.

@@ -109,6 +109,17 @@ export const EXTRA_TOOLS = [
       content: { type: 'string' },
       probability: { type: 'number', description: '0-100, default 100.' },
     }, required: ['script', 'name', 'keywords', 'content'] } },
+  { name: 'inkling_update_script', description: 'Edit a script\'s settings: name, description, enabled, and scope. Pass characters to scope it to those bots (not global), or global:true to make it apply to every character. Entries are untouched; use the entry tools for those.',
+    inputSchema: { type: 'object', properties: {
+      script: { type: 'string', description: 'Script id or name.' },
+      name: { type: 'string' }, description: { type: 'string' }, enabled: { type: 'boolean' },
+      global: { type: 'boolean', description: 'true = applies to all characters (clears the character list).' },
+      characters: { type: 'array', items: { type: 'string' }, description: 'Character ids or names. Replaces the current list and makes the script non-global.' },
+    }, required: ['script'] } },
+  { name: 'inkling_delete_script', description: 'Delete a script AND all its entries. Not undoable. Confirm with the user first, then pass confirm:true.',
+    inputSchema: { type: 'object', properties: {
+      script: { type: 'string' }, confirm: { type: 'boolean' },
+    }, required: ['script', 'confirm'] } },
   { name: 'inkling_update_script_entry', description: 'Edit an entry in a lorebook script. Only the fields you pass change.',
     inputSchema: { type: 'object', properties: {
       script: { type: 'string', description: 'Script id or name.' },
@@ -372,6 +383,51 @@ export async function handleExtra(name, args, { sync, ok, fail }) {
       });
       if (res.aborted) return fail(res.message);
       return ok({ added: { id: entry.id, name: entry.name, script: scriptName }, revision: res.revision });
+    }
+
+    case 'inkling_update_script': {
+      if (args.global === true && args.characters !== undefined) return fail('Pass either global:true or characters, not both.');
+      let updated;
+      const res = await sync.mutate(d => {
+        assertPayloadShape(d);
+        const scripts = d.scripts || [];
+        const sc = resolveBy(scripts, args.script, 'script');
+        const patch = {};
+        if (args.name !== undefined) {
+          const n = str(args.name).trim();
+          if (!n) return { abort: 'name cannot be empty.' };
+          if (lc(n) !== lc(sc.name) && scripts.some(x => x.id !== sc.id && lc(x.name) === lc(n))) return { abort: `Another script is already named "${n}".` };
+          patch.name = n;
+        }
+        if (args.description !== undefined) patch.description = str(args.description);
+        if (args.enabled !== undefined) patch.enabled = !!args.enabled;
+        if (args.characters !== undefined) {
+          const ids = args.characters.map(ref => resolveCharacter(d.characters, ref).id);
+          if (!ids.length) return { abort: 'characters is empty. Pass global:true to apply to everyone.' };
+          patch.charIds = ids; patch.global = false;
+        } else if (args.global === true) { patch.global = true; patch.charIds = []; }
+        else if (args.global === false && sc.global !== false && !(sc.charIds || []).length) {
+          return { abort: 'global:false needs a characters list to scope to.' };
+        } else if (args.global === false) patch.global = false;
+        if (!Object.keys(patch).length) return { abort: 'No fields to update were provided.' };
+        Object.assign(sc, patch);
+        updated = { id: sc.id, name: sc.name, type: sc.type || 'lorebook', enabled: sc.enabled !== false, global: sc.global !== false, charIds: sc.charIds || [], entries: (sc.entries || []).length, changed: Object.keys(patch) };
+      });
+      if (res.aborted) return fail(res.message);
+      return ok({ updated, revision: res.revision });
+    }
+
+    case 'inkling_delete_script': {
+      if (args.confirm !== true) return fail('Refusing to delete without confirm:true. Ask the user first - this also deletes every entry in the script.');
+      let info;
+      const res = await sync.mutate(d => {
+        assertPayloadShape(d);
+        const sc = resolveBy(d.scripts || [], args.script, 'script');
+        d.scripts = d.scripts.filter(x => x.id !== sc.id);
+        info = { id: sc.id, name: sc.name, entriesDeleted: (sc.entries || []).length };
+      });
+      if (res.aborted) return fail(res.message);
+      return ok({ deleted: info, revision: res.revision });
     }
 
     case 'inkling_update_script_entry': {
