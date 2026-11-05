@@ -62,6 +62,28 @@ Fully quit Claude Desktop from the tray and relaunch — it reads the config onl
 
 3. Redeploy the sync server. This MCP server needs the `revision` column added in `server/index.js`; an older deployment will reject writes with a 400.
 
+## Remote connector (phone / claude.ai)
+
+The stdio server only works where Claude can launch a local process, so it's desktop-only. `http.js` serves the same tools over Streamable HTTP, which is what claude.ai custom connectors (and therefore the Claude mobile apps) use.
+
+```
+Claude app (phone) ──► https://<mcp-host>/mcp/<secret> ──► http.js ──► sync server ──► Postgres
+```
+
+**Deploy it as a second Railway service** in the same project as the sync server:
+
+1. **New → GitHub repo** (this repo). Under **Settings → Root Directory** set `mcp`, and **Settings → Deploy → Start Command** to `npm run http`.
+2. Variables:
+   - `INKLING_SYNC_URL`: your sync server URL (can be its private Railway URL)
+   - `INKLING_SYNC_TOKEN`: your sync token
+   - `INKLING_MCP_SECRET`: a new random string, 24+ chars: `node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`
+3. **Settings → Networking → Generate Domain.**
+4. In Claude (web or app): **Settings → Connectors → Add custom connector**, URL `https://<your-domain>/mcp/<INKLING_MCP_SECRET>`. Connectors added on the web show up on mobile.
+
+The URL is the credential: claude.ai connectors can't send auth headers, so anyone with it has full read/write on your backup. It is a separate secret from the sync token on purpose, so it can be rotated (change the variable, re-add the connector) without touching sync. Wrong or missing secrets get a plain 404. Don't paste the URL anywhere public.
+
+Local run: `INKLING_MCP_SECRET=... INKLING_SYNC_URL=... INKLING_SYNC_TOKEN=... npm run http` (port `PORT`, default 3001).
+
 ## Tools
 
 | Tool | What it does |
@@ -97,4 +119,4 @@ Every mutating tool does read → apply → write, sending the revision it read.
 npm test
 ```
 
-Runs the real MCP server over stdio against an in-memory fake of the sync backend — no Postgres, no credentials, nothing touches your real data.
+Runs the real MCP server over stdio and Streamable HTTP against an in-memory fake of the sync backend — no Postgres, no credentials, nothing touches your real data.

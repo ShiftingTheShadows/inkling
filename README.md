@@ -27,7 +27,7 @@ poke around, fork it, steal whatever's useful. No support is promised.
   [`server/README.md`](server/README.md) for the Railway option.
 - **MCP**: let Claude Code / Claude Desktop / Cursor create and edit characters from chat. The in-app
   **Connect Claude (MCP)** guide (Sync → Railway, or Ctrl+K) generates the config; details in
-  [`mcp/README.md`](mcp/README.md).
+  [`mcp/README.md`](mcp/README.md). A remote HTTP mode lets the Claude phone app use it too.
 - **PWA**: installable, works offline for anything already loaded.
 - **In-app changelog**: pops up after an update so you don't have to go digging
   through commit history to remember what changed.
