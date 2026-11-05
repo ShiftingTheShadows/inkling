@@ -4,10 +4,14 @@
   "private": true,
   "type": "module",
   "description": "MCP server for managing Inkling characters through the Railway sync backend",
-  "bin": { "inkling-mcp": "index.js" },
+  "bin": {
+    "inkling-mcp": "index.js",
+    "inkling-mcp-http": "http.js"
+  },
   "scripts": {
     "start": "node index.js",
-    "test": "node test/run.js"
+    "test": "node test/run.js && node test/http.js",
+    "http": "node http.js"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.12.0"
