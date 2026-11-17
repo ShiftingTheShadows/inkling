@@ -31,19 +31,24 @@ function UserAvatar({ persona, size = 32 }) {
 // Web-search activity under a reply: live status while the model is looking
 // things up, then a collapsed list of the pages it used.
 function SearchSources({ search, streaming }) {
-  const { active, doing, queries = [], sources = [] } = search;
+  const { active, doing, queries = [], sources = [], error } = search;
   if (active && streaming) return <div className="search-status">🌐 {doing || 'searching'}…</div>;
-  if (!sources.length && !queries.length) return null;
+  if (!sources.length && !queries.length && !error) return null;
   return (
-    <details className="search-sources">
-      <summary>🌐 {sources.length} source{sources.length !== 1 ? 's' : ''}{queries.length ? ` · ${queries.length} search${queries.length !== 1 ? 'es' : ''}` : ''}</summary>
-      {queries.length > 0 && <div className="search-queries">{queries.map((q, i) => <span key={i}>“{q}”</span>)}</div>}
-      <ul>
-        {sources.map(s => (
-          <li key={s.url}><a href={s.url} target="_blank" rel="noopener noreferrer">{s.title}</a> <span className="search-host">{window.WebSearch.host(s.url)}</span></li>
-        ))}
-      </ul>
-    </details>
+    <>
+      {error && <div className="search-status" style={{ color: 'var(--warning)' }}>🌐 search failed: {error}</div>}
+      {(sources.length > 0 || queries.length > 0) && (
+        <details className="search-sources">
+          <summary>🌐 {sources.length} source{sources.length !== 1 ? 's' : ''}{queries.length ? ` · ${queries.length} search${queries.length !== 1 ? 'es' : ''}` : ''}</summary>
+          {queries.length > 0 && <div className="search-queries">{queries.map((q, i) => <span key={i}>“{q}”</span>)}</div>}
+          <ul>
+            {sources.map(s => (
+              <li key={s.url}><a href={s.url} target="_blank" rel="noopener noreferrer">{s.title}</a> <span className="search-host">{window.WebSearch.host(s.url)}</span></li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </>
   );
 }
 
@@ -380,7 +385,7 @@ function ChatView() {
     return {
       signal: abortRef.current.signal,
       onSearch: msgId ? ev => setMessages(prev => prev.map(m => m.id === msgId
-        ? { ...m, search: ev.active || ev.sources.length || ev.queries.length ? ev : m.search }
+        ? { ...m, search: ev.active || ev.sources.length || ev.queries.length || ev.error ? ev : m.search }
         : m)) : undefined,
     };
   };
@@ -1166,6 +1171,7 @@ function ChatView() {
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M3 6H21M8 6V4C8 2.9 8.9 2 10 2H14C15.1 2 16 2.9 16 4V6M19 6V20C19 21.1 18.1 22 17 22H7C5.9 22 5 21.1 5 20V6H19Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>,
                     () => {
                       if (!window.confirm(`Delete "${char.name}"? Cannot be undone.`)) return;
+                      S.snapshotNow(`before deleting ${char.name}`);
                       ctx.setChars(prev => { const n = prev.filter(c => c.id !== char.id); S.saveChars(n); return n; });
                       S.deleteCharData(char.id);
                       ctx.setCurrentChar(null);
@@ -1327,7 +1333,7 @@ function ChatView() {
             <button className="btn-icon" style={{ width: 26, height: 26 }} title="Attach image" onClick={() => fileRef.current?.click()}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" stroke="currentColor" strokeWidth="2"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/><path d="M21 15L16 10L5 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
             </button>
-            <button className="btn-icon" style={{ width: 26, height: 26 }} title="Clear chat" onClick={() => { if (window.confirm('Clear all messages?')) { setMessages([]); S.saveChat(char.id, []); } }}>
+            <button className="btn-icon" style={{ width: 26, height: 26 }} title="Clear chat" onClick={() => { if (window.confirm('Clear all messages?')) { S.snapshotNow(`before clearing ${char.name}'s chat`); setMessages([]); S.saveChat(char.id, []); } }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M3 6H21M8 6V4C8 2.9 8.9 2 10 2H14C15.1 2 16 2.9 16 4V6M19 6V20C19 21.1 18.1 22 17 22H7C5.9 22 5 21.1 5 20V6H19Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
             </button>
           </div>

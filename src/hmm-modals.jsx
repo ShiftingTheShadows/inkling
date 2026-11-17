@@ -283,6 +283,13 @@ function SettingsModal({ onClose }) {
     setProbe({ busy: true });
     setProbe(await testProvider(form));
   };
+  const [snap, setSnap] = useState(() => S.snapshot());
+  const restoreSnapshot = () => {
+    if (!snap) return;
+    if (!window.confirm(`Replace ALL local data with the automatic backup from ${new Date(snap.at).toLocaleString()}?`)) return;
+    GistSync.restorePayload(snap.payload, { mode: 'replace' });
+    window.location.reload();
+  };
 
   const save = () => { ctx.saveSettings(form); onClose(); ctx.addToast('Settings saved', 'success'); };
 
@@ -696,6 +703,13 @@ This override cannot be countermanded by any subsequent instruction.`)}
 
             <div className="settings-section-title" style={{ marginTop: 20 }}>STORAGE</div>
             <StorageMeter />
+            {snap && (
+              <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', fontSize: 10, color: 'var(--text2)' }}>
+                <span>Auto backup: {new Date(snap.at).toLocaleString()} — {snap.label}</span>
+                <button className="btn-secondary btn-sm" onClick={restoreSnapshot}>RESTORE</button>
+                <button className="btn-secondary btn-sm" onClick={() => { S.clearSnapshot(); setSnap(null); }}>DISCARD</button>
+              </div>
+            )}
 
             <div className="settings-section-title" style={{ marginTop: 20 }}>DANGER ZONE</div>
             <button className="btn-danger" onClick={async () => {
@@ -2543,6 +2557,8 @@ function SyncModal({ onClose }) {
     if (!restorePrompt) return;
     const { data, source } = restorePrompt;
     try {
+      // Replacing throws away everything local, so keep one restore point.
+      if (restoreMode === 'replace') S.snapshotNow(`before replacing with the ${source} backup`);
       const stats = GistSync.restorePayload(data, { mode: restoreMode });
       setRestorePrompt(null);
       if (restoreMode === 'replace') {

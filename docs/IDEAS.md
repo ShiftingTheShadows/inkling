@@ -6,7 +6,7 @@ them without restating them.
 
 Effort tags: **S** ≈ under an hour, **M** ≈ an afternoon, **L** ≈ a day or more.
 
-> **Status:** D24, D27 and A3 are implemented — see
+> **Status:** D24, D27, A3, F35, D25 and A4 are implemented — see
 > [plans/2026-11-17-data-safety-three.md](superpowers/plans/2026-11-17-data-safety-three.md).
 
 ---
@@ -30,7 +30,7 @@ funnels through one OpenAI-compatible branch using a single shared
   error vs bad model vs unreachable endpoint. Today the only way to learn a key is wrong
   is to send a message and get `*Provider error…*` saved into the transcript as a fake
   assistant message. *(S)*
-- **A4.** **Kill the dead config.** `openrouterKey` / `openrouterModel` exist in the
+- **A4 — done.** **Kill the dead config.** `openrouterKey` / `openrouterModel` exist in the
   settings defaults but the UI writes `localApiKey` / `localModel` for OpenRouter. *(S)*
 - **A5.** **Live model lists.** `OPENROUTER_MODELS` is 11 hardcoded slugs "verified
   2026-10" that will rot; OpenRouter's `/api/v1/models` is public. Ollama's `/api/tags`
@@ -89,7 +89,7 @@ funnels through one OpenAI-compatible branch using a single shared
 
 - **D24 — done.** **Surface write failures.** `__idbPut` failure is only a `console.warn`; a
   quota error silently loses data. Toast plus a "storage full, export now" banner. *(S)*
-- **D25.** **Headless auto-backup** — automatic local snapshot before destructive ops
+- **D25 — done.** **Headless auto-backup** — automatic local snapshot before destructive ops
   (delete character, clear chat, import backup), plus a rolling restore point. *(M)*
 - **D26.** **Trash bin** — soft-delete characters/chats for N days. *(M)*
 - **D27 — done.** **Merge, don't replace.** `restorePayload` overwrites the characters array
@@ -116,7 +116,7 @@ funnels through one OpenAI-compatible branch using a single shared
 
 ## F. Smaller fixes noticed while reading
 
-- **F35.** Status bar shows `settings.model` even when the provider is OpenRouter/local —
+- **F35 — done.** Status bar shows `settings.model` even when the provider is OpenRouter/local —
   misleading. *(S)*
 - **F36.** Sidebar `CharCard` reads `S.chat(id)` for every row on every render. *(S)*
 - **F37.** Sidebar has no alphabetical sort (insertion order unless "recent"). *(S)*
