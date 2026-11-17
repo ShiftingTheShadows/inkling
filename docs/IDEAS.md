@@ -9,7 +9,7 @@ Effort tags: **S** ≈ under an hour, **M** ≈ an afternoon, **L** ≈ a day or
 > **Status:** D24, D27, A3, F35, D25, A4, A1, A2, A5, A6, A7, B9, B10, B11, B12,
 > A8, B13, B14, B15, B16, B17, B18, C19, C20, C21, C22, C23, D26, D28, D29, D30, E31, E32, E33, E34,
 > F36, F37, F38, F39, F40, F41, F42, F43 and F44 are implemented; batch G below is the
-> follow-up pass, where G1 is implemented and G2–G15 are open — see
+> follow-up pass, where G1 and G2 are implemented and G3–G15 are open — see
 > [plans/2026-11-17-data-safety-three.md](superpowers/plans/2026-11-17-data-safety-three.md).
 > D29's three product decisions were answered before it was built; the chosen paths are
 > recorded in its entry, so they are not open questions.
@@ -262,9 +262,18 @@ user had typed.
   composer, so there is nothing to review. State lives in three pure helpers
   (`assistReviewNext`, `assistReviewText`, `assistReviewCycle`) and the behavior is
   guarded by `test/assist.test.js`. *(M)*
-- **G2.** **Selection-scoped rewrite.** Enhance currently resends the whole composer; when
-  text is selected, rewrite only that fragment and splice it back with the cursor in place,
-  plus tone presets (more descriptive, plainer, dialogue only, shorten). *(S)*
+- **G2 — done.** **Selection-scoped rewrite.** Enhance used to resend the whole composer, so
+  tightening one line meant rewriting everything around it. With text selected, Enhance now
+  sends only that fragment and asks for a drop-in replacement; **Accept** splices it back over
+  the same span, so the rest of the draft is untouched and the caret lands right after the new
+  text. Selection edges are trimmed first, so stray spaces around the quote survive. The
+  options popover gained four tone presets — more descriptive, plainer, dialogue only, shorten
+  — which stack with whatever direction you type and are reused by **Try again**, and the
+  review sheet labels the result ENHANCED FRAGMENT with a REPLACE FRAGMENT action to make it
+  clear the rest of the message stays. With nothing selected, Enhance behaves exactly as
+  before: the whole draft is enhanced. The span logic lives in four pure helpers
+  (`assistScopeFromDraft`, `assistScopeSplice`, `assistTonePresets`, `assistToneHint`) in a
+  marked region of `hmm-utils.jsx`, guarded by `test/assist-scope.test.js`. *(S)*
 - **G3.** **Group-aware continue.** `assist('continue')` builds the prompt from the group
   record, so a group continuation is out of voice and attributed to the group rather than
   the member who spoke last; use the last message's `charId` member system prompt. *(S)*
@@ -303,17 +312,16 @@ user had typed.
 Everything marked done above is shipped; this list is only the open items, in the order they
 should be tackled.
 
-1. **G2** — selection-scoped rewrite (S)
-2. **G3** — group-aware continue (S)
-3. **G4** — undo summarize (S)
-4. **G9** — assist failure honesty and retry (S)
-5. **G6** — streaming assists with stop (M)
-6. **G5** — per-message assist actions (M)
-7. **G7** — context inspector (M)
-8. **G12** — shortcut sheet and action palette (M)
-9. **G8** — per-character assist style (S)
-10. **G13** — settings search (M)
-11. **G14** — mobile layout pass (M)
-12. **G15** — avatar crop and fallback (S)
-13. **G10** — field-scoped character generation (M)
-14. **G11** — virtualized transcript (L)
+1. **G3** — group-aware continue (S)
+2. **G4** — undo summarize (S)
+3. **G9** — assist failure honesty and retry (S)
+4. **G6** — streaming assists with stop (M)
+5. **G5** — per-message assist actions (M)
+6. **G7** — context inspector (M)
+7. **G12** — shortcut sheet and action palette (M)
+8. **G8** — per-character assist style (S)
+9. **G13** — settings search (M)
+10. **G14** — mobile layout pass (M)
+11. **G15** — avatar crop and fallback (S)
+12. **G10** — field-scoped character generation (M)
+13. **G11** — virtualized transcript (L)
