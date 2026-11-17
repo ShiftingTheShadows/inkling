@@ -6,9 +6,12 @@
   "scripts": {
     "build": "node build.mjs",
     "test": "node test/hooks-check.mjs && node test/textbox.test.js && node test/storage.test.js && node test/merge.test.js && node test/providers.test.js",
-    "test:browser": "node test/browser.mjs"
+    "test:browser": "node test/browser.mjs",
+    "lint": "eslint ."
   },
   "devDependencies": {
-    "esbuild": "^0.25.0"
+    "esbuild": "^0.25.0",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^5.2.0"
   }
 }

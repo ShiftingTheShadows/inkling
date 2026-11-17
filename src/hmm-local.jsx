@@ -2,7 +2,7 @@
 // Detects a running Ollama, lists installed models, pulls new ones with a
 // progress bar, deletes them, and points Inkling's "Local" provider at one.
 const { useState, useEffect, useContext, useRef } = React;
-const { AppCtx } = window;
+const { AppCtx, providerProfile } = window;
 
 const OLLAMA_DEFAULT = 'http://localhost:11434';
 // Approximate download sizes (Q4). Tool-capable ones can also use web search.
@@ -27,7 +27,7 @@ async function timedFetch(url, opts = {}, ms = 4000) {
 function LocalModelsModal({ onClose }) {
   const ctx = useContext(AppCtx);
   const s = ctx.settings;
-  const [endpoint, setEndpoint] = useState(s.provider === 'local' && s.localEndpoint ? s.localEndpoint : OLLAMA_DEFAULT);
+  const [endpoint, setEndpoint] = useState(providerProfile(s).provider === 'local' && providerProfile(s).endpoint ? providerProfile(s).endpoint : OLLAMA_DEFAULT);
   const [status, setStatus] = useState({ state: 'checking' });
   const [models, setModels] = useState([]);
   const [pull, setPull] = useState(null); // { name, text, pct }
@@ -49,8 +49,10 @@ function LocalModelsModal({ onClose }) {
   };
   useEffect(() => { refresh(); return () => abortRef.current?.abort(); }, []);
 
-  const useModel = name => {
-    ctx.saveSettings({ ...ctx.settings, provider: 'local', localEndpoint: base, localModel: name });
+  // Not a hook — the old `useModel` name tripped react-hooks/rules-of-hooks.
+  const applyModel = name => {
+    const providers = { ...(ctx.settings.providers || {}), local: { ...((ctx.settings.providers || {}).local || {}), endpoint: base, model: name } };
+    ctx.saveSettings({ ...ctx.settings, provider: 'local', providers });
     ctx.addToast(`Now chatting with ${name}`, 'success');
   };
 
@@ -103,7 +105,8 @@ function LocalModelsModal({ onClose }) {
 
   const installed = new Set(models.map(m => m.name.replace(/:latest$/, '')));
   const isInstalled = n => installed.has(n) || installed.has(n.replace(/:latest$/, ''));
-  const active = s.provider === 'local' ? s.localModel : null;
+  const activeProfile = providerProfile(s);
+  const active = activeProfile.provider === 'local' ? activeProfile.model : null;
   const box = { background: 'var(--surface2)', border: '1px solid var(--border2)', padding: '12px 16px', marginBottom: 16, fontSize: 11, color: 'var(--text2)', lineHeight: 1.8 };
   const code = t => <code style={{ background: 'var(--bg)', padding: '1px 5px', border: '1px solid var(--border2)' }}>{t}</code>;
 
@@ -172,7 +175,7 @@ function LocalModelsModal({ onClose }) {
                     </div>
                     <div style={{ fontSize: 10, color: 'var(--text3)' }}>{[m.details?.parameter_size, m.details?.quantization_level, fmtSize(m.size)].filter(Boolean).join(' · ')}</div>
                   </div>
-                  <button className="btn-primary btn-sm" disabled={active === m.name} onClick={() => useModel(m.name)}>USE</button>
+                  <button className="btn-primary btn-sm" disabled={active === m.name} onClick={() => applyModel(m.name)}>USE</button>
                   <button className="btn-secondary btn-sm" style={{ color: 'var(--danger)' }} onClick={() => remove(m.name)} disabled={!!pull}>DELETE</button>
                 </div>
               ))}

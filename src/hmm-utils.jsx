@@ -210,6 +210,20 @@ const S = {
   clearSnapshot: () => { __mem.delete('hmm_snapshot_auto'); __idbDel('hmm_snapshot_auto'); },
   settings: () => {
     const saved = { ...__get('hmm_settings', {}) };
+    const DEFAULT_PROVIDERS = {
+      openrouter: { endpoint: 'https://openrouter.ai/api', key: '', model: 'anthropic/claude-sonnet-5' },
+      local: { endpoint: '', key: '', model: 'llama3' },
+      custom: { endpoint: '', key: '', model: '' },
+    };
+    const savedProviders = saved.providers || {};
+    const providers = Object.fromEntries(Object.entries(DEFAULT_PROVIDERS).map(([id, def]) => [id, { ...def, ...(savedProviders[id] || {}) }]));
+    if (!saved.providers && saved.provider && saved.provider !== 'claude' && providers[saved.provider]) {
+      providers[saved.provider] = {
+        endpoint: saved.localEndpoint ?? providers[saved.provider].endpoint,
+        key: saved.localApiKey ?? providers[saved.provider].key,
+        model: saved.localModel || providers[saved.provider].model,
+      };
+    }
     // Retired Anthropic model ids saved before the 2026-07 refresh — old ids now 404
     const MODEL_MIGRATE = {
       'claude-sonnet-4-20250514': 'claude-sonnet-5',
@@ -221,14 +235,18 @@ const S = {
       temperature: 0.8,
       maxTokens: 1024,
       topP: 0.9,
+      // Provider feature parity — only sent when set, so backends that don't
+      // understand them never see them.
+      stopSequences: '', // one per line, max 4
+      presencePenalty: 0, // 0 = backend default
+      frequencyPenalty: 0,
+      topK: 0, // 0 = backend default
+      seed: '', // blank = random
       autoScroll: true,
       showTokens: true,
       theme: 'terminal',
       avatarScale: 1, // 0.4 (tiny) – 2.5 (huge)
-      provider: 'claude', // 'claude' | 'openrouter' | 'local'
-      localEndpoint: '',
-      localApiKey: '',
-      localModel: 'llama3',
+      provider: 'claude', // 'claude' | 'openrouter' | 'local' | 'custom'
       assistStyleGuidelines: '',
       assistGuidelines: '', // the per-use GUIDELINES box in the assist panel; persisted so it's not retyped
       charFormatTemplate: 'plain', // 'plain' | 'w++' | 'boostyle' — character generator only
@@ -240,11 +258,26 @@ const S = {
       braveKey: '',
       uiPolish: true, // subtle rounded corners + motion; false = legacy square look
       ...saved,
+      // One saved profile per external provider, so switching OpenRouter →
+      // Ollama → back no longer makes you retype URL, key and model. The flat
+      // localEndpoint/localApiKey/localModel fields are migrated once, for
+      // whichever provider was active when they were written.
+      providers,
     };
   },
   saveSettings: v => __set('hmm_settings', v),
   personas: () => __get('hmm_personas', null) || [{ id: 'default', name: 'You', description: '', avatar: '' }],
   savePersonas: v => __set('hmm_personas', v),
+  // Per-chat persona override, keyed by character id. Device-local on purpose:
+  // which face you present in a story is a here-and-now choice, not something
+  // to sync around.
+  chatPersonaId: charId => (__get('hmm_chat_personas', {}) || {})[charId] || '',
+  setChatPersonaId: (charId, id) => {
+    if (!charId) return;
+    const m = { ...(__get('hmm_chat_personas', {}) || {}) };
+    if (id) m[charId] = id; else delete m[charId];
+    __set('hmm_chat_personas', m);
+  },
   activePersonaId: () => localStorage.getItem('hmm_active_persona') || 'default',
   setActivePersonaId: id => { localStorage.setItem('hmm_active_persona', id); __notifyDataChange('hmm_active_persona'); },
   lastSeenChangelog: () => localStorage.getItem('hmm_changelog_seen') || '',
@@ -264,6 +297,12 @@ const CHANGELOG = [
       'Fixed: web search. DuckDuckGo started rejecting the app\'s non-browser request, so keyless search quietly returned nothing; it now uses a normal browser request, and a failed lookup is shown under the reply instead of only being told to the AI.',
       'New: the status bar shows the model of the provider you actually selected, including OpenRouter and local models.',
       'New: one automatic restore point is taken before deleting a character, clearing a chat, or replacing all data. Restore or discard it in Settings → Storage.',
+      'New: each provider (OpenRouter, local, custom) keeps its own endpoint, key and model, so switching back no longer means retyping — and a synced phone no longer inherits localhost.',
+      'New: provider presets fill the endpoint and a starting model in one pick (OpenAI, Gemini, Groq, DeepSeek, Mistral, xAI, Together, Cerebras, Fireworks, LM Studio, Ollama).',
+      'New: per-chat persona — choose a face for one story without changing the global default, with USE GLOBAL and SET AS GLOBAL in the persona menu.',
+      'New: a failed reply stays in the chat with the reason and RETRY / SWITCH PROVIDER. Transient 429/5xx errors retry twice, and a stalled provider times out after 90 seconds instead of hanging.',
+      'New: stop sequences, presence/frequency penalty, top-k and seed in Settings, plus prompt caching on Claude calls.',
+      'New: LOAD LIVE MODEL LIST in Settings pulls OpenRouter\'s current catalogue with context size and input price.',
     ],
   },
   {
@@ -1040,22 +1079,44 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
   let result = '';
   let shown = ''; // visible text accumulated across tool rounds (kept on abort)
 
-  // ── External provider (OpenRouter / Local / Custom OpenAI-compatible) ──
-  const useExternal = resolvedSettings?.provider && resolvedSettings.provider !== 'claude';
-  let endpoint = '';
-  if (useExternal) {
-    if (resolvedSettings.provider === 'openrouter') {
-      endpoint = 'https://openrouter.ai/api';
-    } else {
-      endpoint = resolvedSettings?.localEndpoint?.trim() || '';
+  // Transient failures are common (429 rate limits, 502/503 cold starts) and a
+  // failed turn used to mean retyping the prompt. Retry twice with a short
+  // backoff before surfacing the error; an abort is never retried.
+  const fetchRetry = async (url, init, timeoutMs = 90000) => {
+    for (let attempt = 0; ; attempt++) {
+      const ctl = new AbortController();
+      let timedOut = false;
+      const timer = setTimeout(() => { timedOut = true; ctl.abort(); }, timeoutMs);
+      const onAbort = () => ctl.abort();
+      init.signal?.addEventListener('abort', onAbort, { once: true });
+      try {
+        const resp = await fetch(url, { ...init, signal: ctl.signal });
+        if (resp.ok || attempt >= 2 || !(resp.status === 429 || resp.status >= 500)) return resp;
+      } catch (e) {
+        // A stalled provider used to hang a turn forever; 90s without response
+        // headers is long enough for any real model call.
+        if (timedOut) throw new Error(`timed out after ${Math.round(timeoutMs / 1000)}s`);
+        if (init.signal?.aborted) throw Object.assign(new Error('Aborted'), { name: 'AbortError' });
+        if (attempt >= 2) throw e;
+      } finally {
+        clearTimeout(timer);
+        init.signal?.removeEventListener('abort', onAbort);
+      }
+      await new Promise(resolve => setTimeout(resolve, 700 * 2 ** attempt));
     }
-  }
+  };
+
+  // ── External provider (OpenRouter / Local / Custom OpenAI-compatible) ──
+  // Per-provider profiles: the active provider supplies endpoint/key/model, so
+  // switching providers restores that provider's saved configuration.
+  const prof = providerProfile(resolvedSettings);
+  const endpoint = prof.provider !== 'claude' ? prof.endpoint : '';
   if (endpoint) {
     try {
-      const base = endpoint.replace(/\/+$/, '').replace(/\/v1$/, '');
+      const base = normalizeBaseUrl(endpoint);
       const url = base + '/v1/chat/completions';
-      let model = resolvedSettings.localModel || (resolvedSettings.provider === 'openrouter' ? 'anthropic/claude-sonnet-5' : 'llama3');
-      const apiKey = resolvedSettings.localApiKey;
+      let model = prof.model;
+      const apiKey = prof.key;
       // Expand multimodal messages into OpenAI vision format
       const outMsgs = apiMsgs.map(m => m._multimodal ? { role: m.role, content: m._multimodal } : { role: m.role, content: m.content });
       const body = {
@@ -1067,6 +1128,7 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
         max_tokens: structured ? Math.max(4096, resolvedSettings.maxTokens || 1024) : (resolvedSettings.maxTokens || 1024),
         top_p: resolvedSettings.topP,
         stream: !!onChunk,
+        ...generationExtras(resolvedSettings),
       };
       if (structured) body.response_format = { type: 'json_object' };
       const headers = { 'Content-Type': 'application/json' };
@@ -1088,11 +1150,11 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
       const rounds = toolsOn ? WebSearch.maxUses(resolvedSettings) + 1 : 1;
 
       const send = async () => {
-        let resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: opts.signal });
+        let resp = await fetchRetry(url, { method: 'POST', headers, body: JSON.stringify(body), signal: opts.signal });
         // Some models/endpoints reject response_format — retry once without it
         if (!resp.ok && body.response_format && resp.status >= 400 && resp.status < 500) {
           delete body.response_format;
-          resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: opts.signal });
+          resp = await fetchRetry(url, { method: 'POST', headers, body: JSON.stringify(body), signal: opts.signal });
         }
         // Endpoint/model doesn't do tool calls — search once up front instead
         if (!resp.ok && body.tools && resp.status >= 400 && resp.status < 500) {
@@ -1100,7 +1162,7 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
           emitSearch(true, 'searching');
           const found = await WebSearch.preRetrieve(apiMsgs, resolvedSettings, opts.signal, sState);
           convo[0].content = system + (found ? `\n\n${found}\n${searchRoleplay ? 'Work these facts in naturally, in character, without citing them.' : 'Use these results and name the source sites.'}` : '');
-          resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: opts.signal });
+          resp = await fetchRetry(url, { method: 'POST', headers, body: JSON.stringify(body), signal: opts.signal });
         }
         if (!resp.ok) {
           const errTxt = await resp.text().catch(() => '');
@@ -1208,15 +1270,24 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
       // the character's greeting (assistant), so prepend a neutral user turn
       if (anthMsgs[0]?.role === 'assistant') anthMsgs.unshift({ role: 'user', content: '[Begin roleplay]' });
 
-      const resp = await fetch('/api/anthropic', {
+      const resp = await fetchRetry('/api/anthropic', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: opts.signal,
         body: JSON.stringify({
           apiKey: resolvedSettings.apiKey,
           model: resolvedSettings.model || 'claude-haiku-4-5',
-          system: searchOn ? `${system}\n\n${WebSearch.note(searchRoleplay, true)}` : system,
+          // Cacheable block: system prompt + lorebook are re-sent every turn,
+          // so marking the prefix cuts cost and latency on long roleplays.
+          system: [{
+            type: 'text',
+            text: searchOn ? `${system}\n\n${WebSearch.note(searchRoleplay, true)}` : system,
+            cache_control: { type: 'ephemeral' },
+          }],
           messages: anthMsgs,
+          topP: resolvedSettings.topP,
+          topK: resolvedSettings.topK,
+          stopSequences: generationExtras(resolvedSettings).stop,
           maxTokens: structured ? Math.max(4096, resolvedSettings.maxTokens || 1024) : (resolvedSettings.maxTokens || 1024),
           temperature: resolvedSettings.temperature,
           stream: !!onChunk,
@@ -1338,19 +1409,55 @@ function normalizeBaseUrl(endpoint) {
   return String(endpoint || '').trim().replace(/\/+$/, '').replace(/\/v1$/, '');
 }
 
-function buildProviderProbe(settings) {
+// The single source of truth for "where do requests for this provider go?".
+// Reads the per-provider map, then falls back to the pre-profiles flat fields
+// (and to defaults) so a half-migrated settings object still works.
+// Optional sampling parameters, normalised once so every request path sends the
+// same thing. Returns only the keys the user actually set: an explicit 0 for a
+// penalty is meaningless and a blank seed means random.
+function generationExtras(settings) {
+  const s = settings || {};
+  const out = {};
+  const stops = String(s.stopSequences || '')
+    .split('\n').map(x => x.trim()).filter(Boolean).slice(0, 4);
+  if (stops.length) out.stop = stops;
+  const num = v => (v === '' || v == null ? null : Number(v));
+  const presence = num(s.presencePenalty);
+  const frequency = num(s.frequencyPenalty);
+  const topK = num(s.topK);
+  const seed = num(s.seed);
+  if (presence) out.presence_penalty = presence;
+  if (frequency) out.frequency_penalty = frequency;
+  if (topK > 0) out.top_k = topK;
+  if (seed != null && Number.isFinite(seed)) out.seed = seed;
+  return out;
+}
+
+function providerProfile(settings) {
   const s = settings || {};
   const provider = s.provider || 'claude';
+  if (provider === 'claude') return { provider, endpoint: '', key: s.apiKey || '', model: s.model || 'claude-haiku-4-5' };
+  const prof = (s.providers && s.providers[provider]) || {};
+  const endpoint = normalizeBaseUrl(prof.endpoint || s.localEndpoint || (provider === 'openrouter' ? 'https://openrouter.ai/api' : provider === 'local' ? 'http://localhost:11434' : ''));
+  const key = prof.key !== undefined ? prof.key : (s.localApiKey || '');
+  const model = prof.model || s.localModel || (provider === 'openrouter' ? 'anthropic/claude-sonnet-5' : provider === 'local' ? 'llama3' : '');
+  return { provider, endpoint, key, model };
+}
+
+function buildProviderProbe(settings) {
+  const s = settings || {};
+  const prof = providerProfile(s);
+  const provider = prof.provider;
   if (provider === 'claude') {
-    if (!s.apiKey) throw new Error('Add your Anthropic API key first');
+    if (!prof.key) throw new Error('Add your Anthropic API key first');
     return {
       url: '/api/anthropic',
       init: {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          apiKey: s.apiKey,
-          model: s.model || 'claude-haiku-4-5',
+          apiKey: prof.key,
+          model: prof.model,
           messages: [{ role: 'user', content: PROBE_PING }],
           maxTokens: 1,
           stream: false,
@@ -1358,13 +1465,12 @@ function buildProviderProbe(settings) {
       },
     };
   }
-  const endpoint = s.localEndpoint || (provider === 'openrouter' ? 'https://openrouter.ai/api' : provider === 'local' ? 'http://localhost:11434' : '');
-  const base = normalizeBaseUrl(endpoint);
+  const base = normalizeBaseUrl(prof.endpoint);
   if (!base) throw new Error('Set the endpoint URL first');
-  const model = s.localModel || (provider === 'openrouter' ? 'anthropic/claude-sonnet-5' : '');
+  const model = prof.model;
   if (!model) throw new Error('Pick or type a model id first');
   const headers = { 'Content-Type': 'application/json' };
-  if (s.localApiKey) headers.Authorization = `Bearer ${s.localApiKey}`;
+  if (prof.key) headers.Authorization = `Bearer ${prof.key}`;
   return {
     url: `${base}/v1/chat/completions`,
     init: {
@@ -1398,7 +1504,8 @@ function probeHint(status, provider) {
 // turns it into a bare 404. LM Studio and other servers have no /api/version,
 // so a null here just means "not Ollama - let the request decide".
 async function ollamaModelNote(settings, fetchImpl) {
-  const base = normalizeBaseUrl(settings && settings.localEndpoint) || 'http://localhost:11434';
+  const prof = providerProfile(settings);
+  const base = normalizeBaseUrl(prof.endpoint) || 'http://localhost:11434';
   const get = async (path, ms) => {
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), ms);
@@ -1409,7 +1516,7 @@ async function ollamaModelNote(settings, fetchImpl) {
   };
   if (!(await get('/api/version', 2000))) return null;
   const tags = await get('/api/tags', 3000);
-  const wanted = String((settings && settings.localModel) || '').trim();
+  const wanted = String(prof.model || '').trim();
   if (!tags || !wanted) return null;
   const baseName = wanted.replace(/:latest$/, '');
   const found = (tags.models || []).some(m => {
@@ -1444,7 +1551,7 @@ async function testProvider(settings, { fetchImpl = fetch, timeoutMs = 15000 } =
     if (resp.ok) {
       return {
         ok: true, provider, ms: Date.now() - started,
-        model: (provider === 'claude' ? settings.model : settings.localModel) || '',
+        model: providerProfile(settings).model,
       };
     }
     const detail = (body && (body.error?.message || (typeof body.error === 'string' ? body.error : '') || body.message)) || text.slice(0, 200) || resp.statusText || `HTTP ${resp.status}`;
@@ -1597,11 +1704,13 @@ const GistSync = {
       if (ac.length) assistChats[c.id] = ac; // only carry non-empty ones
     });
     // Strip all secrets — never sync API keys to a gist (they get auto-disabled if detected)
-    const { apiKey, openrouterKey, localApiKey, globalPrompt, tavilyKey, braveKey, imageHostApiKey, ...safeSettings } = S.settings();
+    const { apiKey, localApiKey, globalPrompt, tavilyKey, braveKey, imageHostApiKey, ...safeSettings } = S.settings();
+    // Keys now live inside settings.providers — blank every profile's key too.
+    const providers = Object.fromEntries(Object.entries(safeSettings.providers || {}).map(([id, p]) => [id, { ...p, key: '' }]));
     return {
       version: 2,
       exportedAt: new Date().toISOString(),
-      settings: safeSettings,
+      settings: { ...safeSettings, providers },
       personas: S.personas(),
       activePersonaId: S.activePersonaId(),
       characters: chars,
@@ -1628,6 +1737,8 @@ const GistSync = {
           tavilyKey: current.tavilyKey,
           braveKey: current.braveKey,
           imageHostApiKey: current.imageHostApiKey,
+          // Restored settings carry provider endpoints/models but blank keys.
+          providers: Object.fromEntries(Object.entries(d.settings.providers || {}).map(([id, p]) => [id, { ...p, key: (current.providers?.[id]?.key) ?? '' }])),
         });
       } else {
         S.saveSettings(d.settings);
@@ -1903,7 +2014,7 @@ Object.assign(window, {
   AppCtx, S, genId, estimateTokens, compressImage, uploadImage, CHANGELOG,
   formatTime, formatDate, renderMarkdown,
   charBg, charFg, buildSystemPrompt, substituteMacros, callAI, avatarPx,
-  summarizeMessages, GistSync, RailwaySync, testProvider,
+  summarizeMessages, GistSync, RailwaySync, testProvider, providerProfile, generationExtras,
   downloadCharJson, downloadCharPng,
   parseTextbox, expressionAt, resolveExpressionKey, expressionNameFromFilename, pitchForCharacter,
 });

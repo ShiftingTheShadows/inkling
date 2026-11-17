@@ -40,6 +40,24 @@ const OPENROUTER_MODELS = [
   ['mistralai/mistral-large-2512',        'Mistral Large 2512'],
 ];
 
+// One-click starting points for OpenAI-compatible providers. Picking one fills
+// the endpoint and a model id; the key is left alone. A hand-typed endpoint
+// simply shows as "Custom".
+const PROVIDER_PRESETS = [
+  ['__custom', 'Custom / already set', ''],
+  ['openai', 'OpenAI', 'https://api.openai.com/v1', 'gpt-4o-mini'],
+  ['gemini', 'Google Gemini', 'https://generativelanguage.googleapis.com/v1beta/openai', 'gemini-2.5-flash'],
+  ['groq', 'Groq', 'https://api.groq.com/openai/v1', 'llama-3.3-70b-versatile'],
+  ['deepseek', 'DeepSeek', 'https://api.deepseek.com/v1', 'deepseek-chat'],
+  ['mistral', 'Mistral', 'https://api.mistral.ai/v1', 'mistral-large-latest'],
+  ['xai', 'xAI (Grok)', 'https://api.x.ai/v1', 'grok-3'],
+  ['together', 'Together', 'https://api.together.xyz/v1', 'meta-llama/Llama-3.3-70B-Instruct-Turbo'],
+  ['cerebras', 'Cerebras', 'https://api.cerebras.ai/v1', 'llama-3.3-70b'],
+  ['fireworks', 'Fireworks', 'https://api.fireworks.ai/inference/v1', 'accounts/fireworks/models/llama-v3p3-70b-instruct'],
+  ['lmstudio', 'LM Studio (local)', 'http://localhost:1234/v1', 'local-model'],
+  ['ollama', 'Ollama (local)', 'http://localhost:11434', 'llama3.2:3b'],
+];
+
 // Robust JSON extraction — handles markdown fences, prose wrappers, balanced-brace scan, and light repair
 function robustParseJSON(text) {
   if (!text) return null;
@@ -272,7 +290,7 @@ function SettingsModal({ onClose }) {
   const ctx = useContext(AppCtx);
   const [form, setForm] = useState({ ...ctx.settings });
   const [probe, setProbe] = useState(null); // { busy } | result of testProvider
-  const PROBE_KEYS = ['provider', 'localEndpoint', 'localApiKey', 'localModel', 'apiKey', 'model'];
+  const PROBE_KEYS = ['provider', 'providers', 'localApiKey', 'apiKey', 'model'];
   const set = (k, v) => {
     setForm(f => ({ ...f, [k]: v }));
     if (PROBE_KEYS.includes(k)) setProbe(null); // a new value makes the old result stale
@@ -283,12 +301,47 @@ function SettingsModal({ onClose }) {
     setProbe({ busy: true });
     setProbe(await testProvider(form));
   };
+  // Live OpenRouter catalogue (A5): the curated list rots, the public API does
+  // not. Loaded on demand so opening Settings costs no request.
+  const [orModels, setOrModels] = useState(null);
+  const [orBusy, setOrBusy] = useState(false);
+  const loadModels = async () => {
+    setOrBusy(true);
+    try {
+      const r = await fetch('https://openrouter.ai/api/v1/models');
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json();
+      const list = (j.data || []).map(m => {
+        const ctxLen = m.context_length ? `${Math.round(m.context_length / 1000)}k ctx` : '';
+        const price = Number(m.pricing?.prompt) ? `$${(Number(m.pricing.prompt) * 1e6).toFixed(2)}/M in` : '';
+        return [m.id, [m.name || m.id, ctxLen, price].filter(Boolean).join(' · ')];
+      }).filter(([id]) => id).sort((a, b) => a[1].localeCompare(b[1]));
+      if (!list.length) throw new Error('empty list');
+      setOrModels(list);
+      ctx.addToast(`${list.length} live models loaded`, 'success');
+    } catch (e) {
+      ctx.addToast(`Could not load live models: ${e.message}`, 'error');
+    } finally { setOrBusy(false); }
+  };
   const [snap, setSnap] = useState(() => S.snapshot());
   const restoreSnapshot = () => {
     if (!snap) return;
     if (!window.confirm(`Replace ALL local data with the automatic backup from ${new Date(snap.at).toLocaleString()}?`)) return;
     GistSync.restorePayload(snap.payload, { mode: 'replace' });
     window.location.reload();
+  };
+
+  // Edits the profile of whichever provider is selected, so each keeps its own
+  // endpoint/key/model instead of overwriting the previous one.
+  const prof = (form.providers && form.providers[form.provider]) || { endpoint: '', key: '', model: '' };
+  const setProf = patch => {
+    setForm(f => ({ ...f, providers: { ...(f.providers || {}), [f.provider]: { ...((f.providers || {})[f.provider] || {}), ...patch } } }));
+    setProbe(null);
+  };
+  const presetMatch = PROVIDER_PRESETS.find(p => p[2] && p[2] === prof.endpoint) || PROVIDER_PRESETS[0];
+  const applyPreset = id => {
+    const preset = PROVIDER_PRESETS.find(p => p[0] === id);
+    if (preset && preset[2]) setProf({ endpoint: preset[2], model: preset[3] });
   };
 
   const save = () => { ctx.saveSettings(form); onClose(); ctx.addToast('Settings saved', 'success'); };
@@ -318,8 +371,15 @@ function SettingsModal({ onClose }) {
             {(form.provider === 'openrouter' || form.provider === 'custom' || form.provider === 'local') && (
               <>
                 <div className="form-group">
+                  <label className="form-label">PRESET</label>
+                  <select className="form-select" value={presetMatch[0]} onChange={e => applyPreset(e.target.value)}>
+                    {PROVIDER_PRESETS.map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+                  </select>
+                  <div className="form-hint">Fills the endpoint and a starting model id. Your key is only replaced if you change it.</div>
+                </div>
+                <div className="form-group">
                   <label className="form-label">ENDPOINT URL</label>
-                  <input className="form-input" value={form.localEndpoint || ''} onChange={e => set('localEndpoint', e.target.value)}
+                  <input className="form-input" value={prof.endpoint || ''} onChange={e => setProf({ endpoint: e.target.value })}
                     placeholder={
                       form.provider === 'openrouter' ? 'https://openrouter.ai/api' :
                       form.provider === 'local' ? 'http://localhost:11434  (Ollama) or http://localhost:1234  (LM Studio)' :
@@ -333,7 +393,7 @@ function SettingsModal({ onClose }) {
                 </div>
                 <div className="form-group">
                   <label className="form-label">API KEY {form.provider === 'local' ? '(optional)' : ''}</label>
-                  <input type="password" className="form-input" value={form.localApiKey || ''} onChange={e => set('localApiKey', e.target.value)}
+                  <input type="password" className="form-input" value={prof.key || ''} onChange={e => setProf({ key: e.target.value })}
                     placeholder={form.provider === 'openrouter' ? 'sk-or-v1-...' : form.provider === 'local' ? 'leave blank for Ollama' : 'your API key'} />
                   {form.provider === 'openrouter' && <div className="form-hint">Get a key at <span style={{ color: 'var(--accent2)' }}>openrouter.ai/keys</span></div>}
                 </div>
@@ -342,14 +402,19 @@ function SettingsModal({ onClose }) {
                     <label className="form-label">MODEL</label>
                     <select
                       className="form-select"
-                      value={OPENROUTER_MODELS.some(([v]) => v === form.localModel) ? form.localModel : '__custom'}
-                      onChange={e => set('localModel', e.target.value === '__custom' ? '' : e.target.value)}
+                      value={(orModels || OPENROUTER_MODELS).some(([v]) => v === prof.model) ? prof.model : '__custom'}
+                      onChange={e => setProf({ model: e.target.value === '__custom' ? '' : e.target.value })}
                     >
-                      {OPENROUTER_MODELS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                      {(orModels || OPENROUTER_MODELS).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                       <option value="__custom">Custom model ID…</option>
                     </select>
-                    {!OPENROUTER_MODELS.some(([v]) => v === form.localModel) && (
-                      <input className="form-input" style={{ marginTop: 6 }} value={form.localModel || ''} onChange={e => set('localModel', e.target.value)}
+                    {!orModels && (
+                      <button className="btn-secondary btn-sm" style={{ marginTop: 8 }} disabled={orBusy} onClick={loadModels}>
+                        {orBusy ? 'LOADING…' : 'LOAD LIVE MODEL LIST'}
+                      </button>
+                    )}
+                    {!((orModels || OPENROUTER_MODELS).some(([v]) => v === prof.model)) && (
+                      <input className="form-input" style={{ marginTop: 6 }} value={prof.model || ''} onChange={e => setProf({ model: e.target.value })}
                         placeholder="vendor/model-id, e.g. anthropic/claude-sonnet-5" />
                     )}
                     <div className="form-hint">Browse at <span style={{ color: 'var(--accent2)' }}>openrouter.ai/models</span> — pick Custom to paste any model ID.</div>
@@ -357,7 +422,7 @@ function SettingsModal({ onClose }) {
                 ) : (
                   <div className="form-group">
                     <label className="form-label">MODEL ID</label>
-                    <input className="form-input" value={form.localModel || ''} onChange={e => set('localModel', e.target.value)}
+                    <input className="form-input" value={prof.model || ''} onChange={e => setProf({ model: e.target.value })}
                       placeholder={form.provider === 'local' ? 'llama3, mistral, etc' : 'model-id'}
                     />
                   </div>
@@ -415,6 +480,28 @@ function SettingsModal({ onClose }) {
             <div className="form-group">
               <label className="form-label">TOP P: {form.topP}</label>
               <input type="range" className="form-range" min={0} max={1} step={0.05} value={form.topP} onChange={e => set('topP', Number(e.target.value))} />
+            </div>
+            <div className="form-group">
+              <label className="form-label">STOP SEQUENCES</label>
+              <textarea className="form-textarea" rows={2} spellCheck={false} value={form.stopSequences || ''} onChange={e => set('stopSequences', e.target.value)}
+                placeholder={'{{user}}:\n{{char}}:'} />
+              <div className="form-hint">One per line, max 4. Helps stop the model writing your next line.</div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">PRESENCE / FREQUENCY PENALTY</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input type="number" className="form-input" min={-2} max={2} step={0.1} value={form.presencePenalty ?? 0} onChange={e => set('presencePenalty', Number(e.target.value))} />
+                <input type="number" className="form-input" min={-2} max={2} step={0.1} value={form.frequencyPenalty ?? 0} onChange={e => set('frequencyPenalty', Number(e.target.value))} />
+              </div>
+              <div className="form-hint">Discourage repetition. 0 = backend default. OpenAI-compatible endpoints only.</div>
+            </div>
+            <div className="form-group">
+              <label className="form-label">TOP K / SEED</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input type="number" className="form-input" min={0} max={500} value={form.topK ?? 0} onChange={e => set('topK', Number(e.target.value))} placeholder="top k (0 = default)" />
+                <input className="form-input" value={form.seed ?? ''} onChange={e => set('seed', e.target.value)} placeholder="seed (blank = random)" />
+              </div>
+              <div className="form-hint">Seed makes a generation repeatable where the backend supports it.</div>
             </div>
             <div className="settings-section-title" style={{ marginTop: 20 }}>WEB SEARCH</div>
             <div className="form-group">

@@ -6,7 +6,8 @@ them without restating them.
 
 Effort tags: **S** ≈ under an hour, **M** ≈ an afternoon, **L** ≈ a day or more.
 
-> **Status:** D24, D27, A3, F35, D25 and A4 are implemented — see
+> **Status:** D24, D27, A3, F35, D25, A4, A1, A2, A5, A6, B9, B11, F38 and F39 are
+> implemented — see
 > [plans/2026-11-17-data-safety-three.md](superpowers/plans/2026-11-17-data-safety-three.md).
 
 ---
@@ -18,11 +19,11 @@ funnels through one OpenAI-compatible branch using a single shared
 `localEndpoint` / `localApiKey` / `localModel` (`src/hmm-modals.jsx`, `callAI` in
 `src/hmm-utils.jsx`).
 
-- **A1.** **Per-provider profiles, not one global trio.** Switching OpenRouter → Ollama
+- **A1 — done.** **Per-provider profiles, not one global trio.** Switching OpenRouter → Ollama
   → back currently makes you retype URL, key and model each time, and `provider` +
   endpoint *do* sync across devices, so a phone ends up pointed at `localhost:11434`.
   Store `providers[<id>] = { endpoint, key, model, extra }` with an active pointer. *(M)*
-- **A2.** **Preset picker instead of "custom".** Same code path, pre-filled base URLs +
+- **A2 — done.** **Preset picker instead of "custom".** Same code path, pre-filled base URLs +
   key hints + model lists: OpenAI, Google Gemini (OpenAI-compat endpoint), Groq,
   DeepSeek, Mistral, xAI, Together, Cerebras, Fireworks, LM Studio, llama.cpp, vLLM,
   plus "other". *(S)*
@@ -32,10 +33,10 @@ funnels through one OpenAI-compatible branch using a single shared
   assistant message. *(S)*
 - **A4 — done.** **Kill the dead config.** `openrouterKey` / `openrouterModel` exist in the
   settings defaults but the UI writes `localApiKey` / `localModel` for OpenRouter. *(S)*
-- **A5.** **Live model lists.** `OPENROUTER_MODELS` is 11 hardcoded slugs "verified
+- **A5 — done.** **Live model lists.** `OPENROUTER_MODELS` is 11 hardcoded slugs "verified
   2026-10" that will rot; OpenRouter's `/api/v1/models` is public. Ollama's `/api/tags`
   is already consumed. Show context length and rough price per model. *(S/M)*
-- **A6.** **Provider feature parity.** The request body is `model, messages, temperature,
+- **A6 — done.** **Provider feature parity.** The request body is `model, messages, temperature,
   max_tokens, top_p, stream`. Missing the things roleplay wants: **stop sequences**
   (`\n{{user}}:`), presence/frequency penalty, `top_k`, seed, and **Anthropic prompt
   caching** (`cache_control` on system prompt + lorebook) — a real cost and latency win
@@ -47,13 +48,13 @@ funnels through one OpenAI-compatible branch using a single shared
 
 ## B. Chat & composer QOL
 
-- **B9.** **Per-chat persona.** Active persona is global (`src/hmm-app.jsx`); playing two
+- **B9 — done.** **Per-chat persona.** Active persona is global (`src/hmm-app.jsx`); playing two
   characters means switching manually. Remember a persona per character with a "global"
   default. *(S)*
 - **B10.** **Auto-summarize at a threshold.** `summarizeContext` is manual (min 8
   messages); trigger at ~75% of context and show a collapsible "earlier context
   summarized" marker. *(M)*
-- **B11.** **Retry / error handling.** No backoff on 429/5xx, no timeout when a provider
+- **B11 — done.** **Retry / error handling.** No backoff on 429/5xx, no timeout when a provider
   stalls, and errors become chat content. Keep the bubble as an error state with
   **Retry** and **Switch provider**. *(S/M)*
 - **B12.** **Message search upgrade.** Ctrl+F filters the current chat only; add match
@@ -120,9 +121,9 @@ funnels through one OpenAI-compatible branch using a single shared
   misleading. *(S)*
 - **F36.** Sidebar `CharCard` reads `S.chat(id)` for every row on every render. *(S)*
 - **F37.** Sidebar has no alphabetical sort (insertion order unless "recent"). *(S)*
-- **F38.** No linter; `test/hooks-check.mjs` exists specifically to catch what
+- **F38 — done.** No linter; `test/hooks-check.mjs` exists specifically to catch what
   `eslint-plugin-react-hooks` would find statically. *(S/M)*
-- **F39.** CI only builds the desktop app — no workflow for `npm test` + `npm run build`.
+- **F39 — done.** CI only builds the desktop app — no workflow for `npm test` + `npm run build`.
   *(S)*
 - **F40.** `api/search.js` strips HTML with regexes and cannot handle JS-rendered pages;
   a reader fallback (e.g. Jina `r.jina.ai`, or SearXNG for keyless search) beats

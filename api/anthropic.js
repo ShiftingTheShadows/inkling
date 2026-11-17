@@ -17,7 +17,7 @@ export default async (req) => {
     return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
   }
 
-  const { apiKey, model, system, messages, maxTokens, temperature, stream, webSearch } = payload;
+  const { apiKey, model, system, messages, maxTokens, temperature, stream, webSearch, topP, topK, stopSequences } = payload;
   if (!apiKey) return Response.json({ error: 'Missing Anthropic API key' }, { status: 400 });
   if (!Array.isArray(messages) || !messages.length) {
     return Response.json({ error: 'Missing messages' }, { status: 400 });
@@ -34,10 +34,18 @@ export default async (req) => {
   if (webSearch) {
     body.tools = [{ type: 'web_search_20250305', name: 'web_search', max_uses: Math.max(1, Math.min(Number(webSearch.maxUses) || 3, 8)) }];
   }
+  // Stop sequences are accepted everywhere; they are the cheapest way to keep a
+  // model from writing the user's next line.
+  if (Array.isArray(stopSequences)) {
+    const stops = stopSequences.map(String).filter(Boolean).slice(0, 4);
+    if (stops.length) body.stop_sequences = stops;
+  }
   // Sampling params are rejected with a 400 on Opus 4.7+ / Sonnet 5 — only
-  // forward temperature to models that still accept it.
-  if (temperature != null && /^claude-(haiku-4-5|sonnet-4-6)/.test(body.model)) {
-    body.temperature = Math.max(0, Math.min(1, Number(temperature)));
+  // forward them to models that still accept them.
+  if (/^claude-(haiku-4-5|sonnet-4-6)/.test(body.model)) {
+    if (temperature != null) body.temperature = Math.max(0, Math.min(1, Number(temperature)));
+    if (topP != null) body.top_p = Math.max(0, Math.min(1, Number(topP)));
+    if (topK > 0) body.top_k = Math.max(1, Math.min(500, Number(topK)));
   }
 
   const upstream = await fetch('https://api.anthropic.com/v1/messages', {

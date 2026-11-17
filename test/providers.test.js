@@ -2,7 +2,7 @@
 // Every fetch is injected, so nothing here touches a network or a real key.
 import { loadSlice, makeRunner } from './harness.js';
 
-const { buildProviderProbe, normalizeBaseUrl, testProvider } = loadSlice(
+const { buildProviderProbe, normalizeBaseUrl, testProvider, providerProfile, generationExtras } = loadSlice(
   '/* PROVIDER-EXPORTS-START */', '/* PROVIDER-EXPORTS-END */',
 );
 const { eq, ok, done } = makeRunner();
@@ -122,6 +122,57 @@ const reply = (status, payload, statusText = '') => async () => ({
   eq('unpulled ollama model fails', r.ok, false);
   ok('unpulled message names the model', /llama3\.2:3b/.test(r.detail || ''));
   eq('no completion request is spent on an unpulled model', completionCalls, 0);
+}
+
+// ── per-provider profiles (A1) ─────────────────────────────────
+{
+  const p = providerProfile({ provider: 'custom', providers: { custom: { endpoint: 'https://a.test/v1/', key: 'sk-a', model: 'm-a' }, openrouter: { endpoint: 'https://b.test', key: 'sk-b', model: 'm-b' } } });
+  eq('profile supplies endpoint', p.endpoint, 'https://a.test');
+  eq('profile supplies key', p.key, 'sk-a');
+  eq('profile supplies model', p.model, 'm-a');
+}
+
+{
+  // Switching provider must not leak the other provider's settings.
+  const p = providerProfile({ provider: 'openrouter', providers: { custom: { endpoint: 'https://a.test', key: 'sk-a', model: 'm-a' } } });
+  eq('non-active provider is ignored', p.endpoint, 'https://openrouter.ai/api');
+  eq('missing profile falls back to default model', p.model, 'anthropic/claude-sonnet-5');
+}
+
+{
+  // Pre-profiles settings still work (flat fields belong to the active provider).
+  const p = providerProfile({ provider: 'local', localEndpoint: 'http://box:11434', localModel: 'qwen3:8b' });
+  eq('legacy endpoint honoured', p.endpoint, 'http://box:11434');
+  eq('legacy model honoured', p.model, 'qwen3:8b');
+}
+
+{
+  const p = providerProfile({ provider: 'claude', model: 'claude-opus-4-8', apiKey: 'k' });
+  eq('claude keeps its own model id', p.model, 'claude-opus-4-8');
+  eq('claude has no endpoint', p.endpoint, '');
+}
+
+// ── provider feature parity (A6) ───────────────────────────────
+{
+  eq('nothing set sends nothing', JSON.stringify(generationExtras({})), '{}');
+  eq('zero penalties are omitted', generationExtras({ presencePenalty: 0, frequencyPenalty: 0 }).presence_penalty, undefined);
+}
+
+{
+  const e = generationExtras({ stopSequences: '  {{user}}:  \n\n{{char}}: \nthird\nfourth\nfifth', presencePenalty: 0.4, frequencyPenalty: -0.2, topK: 40, seed: 7 });
+  eq('stops are trimmed and capped at four', JSON.stringify(e.stop), JSON.stringify(['{{user}}:', '{{char}}:', 'third', 'fourth']));
+  eq('presence penalty passes', e.presence_penalty, 0.4);
+  eq('frequency penalty passes', e.frequency_penalty, -0.2);
+  eq('top k passes', e.top_k, 40);
+  eq('seed passes', e.seed, 7);
+}
+
+{
+  const e = generationExtras({ topK: 0, seed: '', stopSequences: '   ' });
+  eq('zero top k is omitted', e.top_k, undefined);
+  eq('blank seed is omitted', e.seed, undefined);
+  eq('blank stops are omitted', e.stop, undefined);
+  eq('seed 0 is a real seed', generationExtras({ seed: 0 }).seed, 0);
 }
 
 done();
