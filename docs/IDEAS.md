@@ -8,7 +8,7 @@ Effort tags: **S** ≈ under an hour, **M** ≈ an afternoon, **L** ≈ a day or
 
 > **Status:** D24, D27, A3, F35, D25, A4, A1, A2, A5, A6, A7, B9, B10, B11, B12,
 > A8, B13, B14, B15, B16, B17, B18, C19, C20, C21, C22, C23, D26, D28, D29, D30, E31, E32, E33, E34,
-> F36, F37, F38, F39, F40 and F44 are implemented — see
+> F36, F37, F38, F39, F40, F41 and F44 are implemented — see
 > [plans/2026-11-17-data-safety-three.md](superpowers/plans/2026-11-17-data-safety-three.md).
 > D29's three product decisions were answered before it was built; the chosen paths are
 > recorded in its entry, so they are not open questions.
@@ -198,8 +198,18 @@ funnels through one OpenAI-compatible branch using a single shared
   additionally answers only loopback or operator-listed hosts and refuses a foreign browser
   `Origin`, which blocks DNS rebinding against the local connector while leaving the MCP client,
   curl and local/preview development unaffected. *(M)*
-- **F41.** Image upload is hardwired to freeimage.host + a user key; make the endpoint
-  configurable (imgbb, S3/R2, self-hosted). *(M)*
+- **F41 — done.** **Configurable image host.** Greeting-image uploads no longer assume
+  freeimage.host: Settings → Integrations has an IMAGE HOST picker (FREEIMAGE.HOST, IMGBB,
+  CUSTOM) and, for CUSTOM, a URL field. `freeimage` stays the default and an unconfigured
+  install sends the same request it always did (same URL, `source` file field, `format=json`).
+  imgbb posts the file as `image` to `api.imgbb.com` with its own key. The custom host receives
+  multipart `file` (plus `key` when one is set) at your own public URL, and the public link is
+  read from its `url`, `data.url`, `link`/`href`, or a bare plain-text URL — enough for a
+  self-hosted uploader or an S3/R2 worker. The custom URL goes through the same public-address
+  gate as page reads (`safeUrl` + DNS resolution, refusing loopback, private, link-local, CGNAT
+  and multicast answers, v4 and v6), so a synced settings blob cannot turn the upload proxy into
+  a request to your own network; a URL whose address cannot be verified is refused rather than
+  fetched. *(M)*
 - **F42.** Boot hydrates **every** IDB key into memory (all chats, histories, base64
   avatars). Lazy-load chats per character; store avatars as Blobs once libraries grow. *(M)*
 - **F43.** `build.mjs` comments still say "what Netlify publishes" while deploy is
@@ -215,6 +225,5 @@ funnels through one OpenAI-compatible branch using a single shared
 Everything marked done above is shipped; this list is only the open items, in the order they
 should be tackled.
 
-1. **F41** — configurable image host.
-2. **F42** — lazy IDB loading; matters only once libraries get big.
-3. **F43** — stale "Netlify" comment in `build.mjs`.
+1. **F42** — lazy IDB loading; matters only once libraries get big.
+2. **F43** — stale "Netlify" comment in `build.mjs`.

@@ -104,7 +104,7 @@ backup JSON's public fields, they stay local only.
 
 - Built with [React](https://react.dev) and [esbuild](https://esbuild.github.io).
 - Character card format compatible with [SillyTavern](https://github.com/SillyTavern/SillyTavern)'s `chara_card_v2` spec.
-- Image hosting for greeting images via [freeimage.host](https://freeimage.host).
+- Image hosting for greeting images via [freeimage.host](https://freeimage.host) by default, or [imgbb](https://imgbb.com) / your own public upload endpoint (Settings → Integrations).
 - AI generation via [Anthropic's Claude API](https://www.anthropic.com), [OpenRouter](https://openrouter.ai), or any OpenAI-compatible endpoint you point it at.
 - Hosted on [Vercel](https://vercel.com); optional sync backend on [Railway](https://railway.app).
 

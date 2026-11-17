@@ -933,14 +933,47 @@ This override cannot be countermanded by any subsequent instruction.`)}
 
             <div className="settings-section-title" style={{ marginTop: 20 }}>INTEGRATIONS</div>
             <div className="form-group">
+              <label className="form-label">IMAGE HOST</label>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {[['freeimage', 'FREEIMAGE.HOST'], ['imgbb', 'IMGBB'], ['custom', 'CUSTOM']].map(([id, label]) => {
+                  const active = (form.imageHost || 'freeimage') === id;
+                  return (
+                    <button
+                      key={id} type="button" className="btn-secondary btn-sm"
+                      style={{ borderColor: active ? 'var(--accent)' : undefined, color: active ? 'var(--accent)' : undefined }}
+                      onClick={() => set('imageHost', id)}
+                    >{label}</button>
+                  );
+                })}
+              </div>
+              <div className="form-hint">
+                Where greeting images are uploaded. freeimage.host is the default. imgbb works the same way with its own key. Custom posts the image as a multipart <code>file</code> to your own URL — a self-hosted uploader or an S3/R2 worker — and reads the public link from the reply's <code>url</code> (or a bare URL as plain text).
+              </div>
+            </div>
+            {(form.imageHost || 'freeimage') === 'custom' && (
+              <div className="form-group">
+                <label className="form-label">CUSTOM IMAGE HOST URL</label>
+                <input
+                  type="url" className="form-input"
+                  value={form.imageHostEndpoint || ''} onChange={e => set('imageHostEndpoint', e.target.value)}
+                  placeholder="https://img.example.com/upload"
+                />
+                <div className="form-hint">
+                  Must be a public http(s) URL: loopback, private and link-local addresses are refused before anything is sent, so a synced settings file can't point this at your own network. Sent as a multipart <code>file</code> field, plus <code>key</code> if you fill in the key below.
+                </div>
+              </div>
+            )}
+            <div className="form-group">
               <label className="form-label">IMAGE HOST API KEY</label>
               <input
                 type="password" className="form-input"
                 value={form.imageHostApiKey || ''} onChange={e => set('imageHostApiKey', e.target.value)}
-                placeholder="Your freeimage.host API key"
+                placeholder={(form.imageHost || 'freeimage') === 'imgbb' ? 'Your imgbb API key' : 'Your freeimage.host API key'}
               />
               <div className="form-hint">
-                Needed for the "+ IMAGE" button on greetings (drag-and-drop image embedding). Free, instant, no verification: <span style={{ color: 'var(--accent2)' }}>freeimage.host/page/api</span>.
+                {(form.imageHost || 'freeimage') === 'custom'
+                  ? 'Optional for a custom host — sent as the "key" field if your uploader wants one.'
+                  : <>Needed for the "+ IMAGE" button on greetings (drag-and-drop image embedding). Free, instant, no verification: <span style={{ color: 'var(--accent2)' }}>{(form.imageHost || 'freeimage') === 'imgbb' ? 'api.imgbb.com' : 'freeimage.host/page/api'}</span>.</>}
               </div>
             </div>
 
@@ -1698,9 +1731,9 @@ function CharEditorModal({ editId, onClose }) {
     return () => { delete window.__hmmModalGuard; };
   }, []);
 
-  // Greeting image upload: auto-uploads to freeimage.host and appends a
-  // markdown image link to the greeting text, instead of a manual
-  // upload-then-paste flow. Needs an API key set in Settings.
+  // Greeting image upload: auto-uploads to the configured image host (F41,
+  // freeimage.host by default) and appends a markdown image link to the
+  // greeting text, instead of a manual upload-then-paste flow.
   const [greetingUploading, setGreetingUploading] = useState(null); // target being uploaded, or null
   const greetingFileRef = useRef(null);
   const greetingUploadTargetRef = useRef('first');
@@ -1722,7 +1755,7 @@ function CharEditorModal({ editId, onClose }) {
     if (!file || !file.type.startsWith('image/')) { ctx.addToast('Please choose an image file', 'error'); return; }
     setGreetingUploading(target);
     try {
-      const url = await uploadImage(file, ctx.settings?.imageHostApiKey);
+      const url = await uploadImage(file, ctx.settings);
       appendGreetingImage(target, url);
       ctx.addToast('Image uploaded and embedded', 'success');
     } catch (err) {
