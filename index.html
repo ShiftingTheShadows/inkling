@@ -948,6 +948,22 @@ body.reduce-motion .tbx-next { animation: none; }
 @media (max-width: 400px) {
   .topbar-right .btn-icon:nth-child(3) { display: none; } /* export — least used on phone */
 }
+
+/* ── Present mode (C19): fullscreen story view, no chrome ───────── */
+body.present-mode .chat-view { position: fixed; inset: 0; z-index: 500; background: var(--bg); }
+body.present-mode .topbar,
+body.present-mode .sidebar,
+body.present-mode .chat-header,
+body.present-mode .input-area,
+body.present-mode .msg-footer,
+body.present-mode .search-bar { display: none !important; }
+body.present-mode .chat-body { padding: 34px max(20px, 6vw) 60px; }
+body.present-mode .messages-container { max-width: 1040px; margin: 0 auto; }
+body.present-mode .msg { max-width: 1040px; margin: 0 auto 10px; }
+body.present-mode .tbx { font-size: 19px; padding: 16px 18px; max-width: 980px; margin: 12px auto; }
+.present-exit { position: fixed; top: 12px; right: 12px; z-index: 600; font-family: var(--font); font-size: 10px; letter-spacing: 0.1em; padding: 6px 10px; background: var(--surface2); color: var(--text2); border: 1px solid var(--border3); cursor: pointer; }
+.present-exit:hover { color: var(--text); border-color: var(--accent); }
+.tbx-num { display: inline-flex; align-items: center; justify-content: center; width: 15px; height: 15px; border: 1px solid currentColor; font-size: 9px; opacity: 0.7; }
 </style>
 </head>
 <body>

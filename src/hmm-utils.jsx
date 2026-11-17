@@ -242,6 +242,10 @@ const S = {
       frequencyPenalty: 0,
       topK: 0, // 0 = backend default
       seed: '', // blank = random
+      // A7: assists, summaries and character generation can use a cheaper model
+      // than the chat. Blank = follow the chat provider/model.
+      utilityModel: '',
+      utilityProvider: '',
       autoScroll: true,
       showTokens: true,
       theme: 'terminal',
@@ -313,6 +317,12 @@ const CHANGELOG = [
       'Changed: Railway sync uses the server\'s revision, so two devices pushing at once no longer overwrite each other silently. A conflict offers merge-theirs (recommended) or overwrite-mine, and unattended auto-sync always merges.',
       'Changed: the sync server throttles requests per IP, answers CORS only for the app and local development, and has a purge path (DELETE /api/sync).',
       'New: MCP tools inkling_search_messages (full-text across every chat) and INKLING_MCP_READ_ONLY=1, which exposes read-only tools only.',
+      'New: when a chat reaches ~75% of the context window it summarizes the oldest turns by itself, and the result appears as a collapsible "Earlier context summarized" note.',
+      'New: present mode — fullscreen, hidden chrome, a larger textbox, and click/Space to advance (← back, Esc exits), from the chat menu.',
+      'New: search inside a chat shows "n of m" with prev/next jumping, and Ctrl+K now finds matching messages and lorebook entries across every chat.',
+      'New: paste or drag images straight into the composer (up to four per message), plus a camera button on mobile.',
+      'New: undo-friendly message editing — SAVE changes a message in place, SAVE & RESEND keeps the old behaviour, and swiping your own message opens the editor.',
+      'New: an optional utility model for assists, summaries and character generation, so the expensive chat model is not spent on housekeeping.',
     ],
   },
   {
@@ -1443,6 +1453,34 @@ function generationExtras(settings) {
   return out;
 }
 
+// B10: the auto-summarize decision, kept pure so it can be tested without a
+// React tree. `lastSummarizedCount` is the history length the last summary ran
+// on, which stops it firing again on every render at the same length.
+function shouldAutoSummarize({ tokenPct = 0, messageCount = 0, generating = false, lastSummarizedCount = 0, minMessages = 12, threshold = 75 } = {}) {
+  if (generating) return false;
+  if (messageCount < minMessages) return false;
+  if (messageCount === lastSummarizedCount) return false;
+  return tokenPct >= threshold;
+}
+
+// A7: settings for assists/summaries/generation. No utility choice configured
+// means exactly the chat settings, so callers can always use the result.
+function utilitySettings(settings) {
+  const s = settings || {};
+  if (!s.utilityModel && !s.utilityProvider) return s;
+  const provider = s.utilityProvider || s.provider || 'claude';
+  if (provider === 'claude') return { ...s, provider, model: s.utilityModel || s.model };
+  const prof = providerProfile({ ...s, provider });
+  return {
+    ...s,
+    provider,
+    providers: {
+      ...(s.providers || {}),
+      [provider]: { ...((s.providers || {})[provider] || {}), endpoint: prof.endpoint, key: prof.key, model: s.utilityModel || prof.model },
+    },
+  };
+}
+
 function providerProfile(settings) {
   const s = settings || {};
   const provider = s.provider || 'claude';
@@ -1576,6 +1614,7 @@ async function testProvider(settings, { fetchImpl = fetch, timeoutMs = 15000 } =
 // ── Context summarizer ────────────────────────────────────────────
 async function summarizeMessages(messages, char, settings) {
   if (messages.length < 6) return null;
+  settings = utilitySettings(settings);
   const toSummarize = messages.slice(0, -4); // keep last 4 intact
   const text = toSummarize.map(m => {
     const t = typeof m.content === 'string' ? m.content : m.content?.find?.(c=>c.type==='text')?.text||'';
@@ -2038,6 +2077,7 @@ Object.assign(window, {
   formatTime, formatDate, renderMarkdown,
   charBg, charFg, buildSystemPrompt, substituteMacros, callAI, avatarPx,
   summarizeMessages, GistSync, RailwaySync, testProvider, providerProfile, generationExtras,
+  shouldAutoSummarize, utilitySettings,
   downloadCharJson, downloadCharPng,
   parseTextbox, expressionAt, resolveExpressionKey, expressionNameFromFilename, pitchForCharacter,
 });

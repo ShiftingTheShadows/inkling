@@ -45,6 +45,9 @@ function App() {
   const [modal, setModal]               = useState(null);
   const [page, setPage]                 = useState(null); // null = chat/welcome, 'folders' = Character Folders
   const [cmdOpen, setCmdOpen]           = useState(false);
+  // B12: a palette hit for one message selects its chat and asks ChatView to
+  // scroll to and flash that message.
+  const [jumpTo, setJumpTo]             = useState(null);
   const [sidebarWidth, setSidebarWidth] = useState(260);
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 720px)').matches);
   const [collapsed, setCollapsed]       = useState(() => window.matchMedia('(max-width: 720px)').matches);
@@ -329,6 +332,7 @@ function App() {
     modal, openModal, closeModal,
     page, setPage,
     cmdOpen, setCmdOpen,
+    jumpTo, setJumpTo,
     sidebarWidth,
     selectChar, exportAll,
     personas, setPersonas,

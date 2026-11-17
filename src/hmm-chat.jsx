@@ -1,6 +1,6 @@
 // hmm-chat.jsx — Chat view, messages, input
 const { useState, useContext, useEffect, useRef, useCallback } = React;
-const { AppCtx, S, genId, estimateTokens, formatTime, renderMarkdown, charBg, charFg, callAI, buildSystemPrompt, summarizeMessages, compressImage, downloadCharJson, downloadCharPng, avatarPx, providerProfile } = window;
+const { AppCtx, S, genId, estimateTokens, formatTime, renderMarkdown, charBg, charFg, callAI, buildSystemPrompt, summarizeMessages, compressImage, downloadCharJson, downloadCharPng, avatarPx, providerProfile, shouldAutoSummarize, utilitySettings } = window;
 const { CharAvatar, Textbox } = window;
 
 function UserAvatar({ persona, size = 32 }) {
@@ -52,7 +52,7 @@ function SearchSources({ search, streaming }) {
   );
 }
 
-function Message({ msg, char, settings, isStreaming, isLatest, grouped, onDelete, onCopy, onRegen, onRegenGuided, onEdit, onBranch, onPin, onChoice, onResizeTextbox, onFix }) {
+function Message({ msg, char, settings, isStreaming, isLatest, grouped, onDelete, onCopy, onRegen, onRegenGuided, onEdit, onInPlace, onBranch, onPin, onChoice, onResizeTextbox, onFix, present }) {
   const isUser = msg.role === 'user';
   const isNarrator = msg.narrator;
   const author = isNarrator ? 'NARRATOR' : (isUser ? (settings?.activePersona?.name || 'You') : char.name);
@@ -65,11 +65,13 @@ function Message({ msg, char, settings, isStreaming, isLatest, grouped, onDelete
   if (typeof msg.content === 'string') textContent = msg.content;
   else if (Array.isArray(msg.content)) textContent = msg.content.find(c => c.type === 'text')?.text || '';
 
-  let imgEl = null;
-  if (Array.isArray(msg.content)) {
-    const ib = msg.content.find(c => c.type === 'image');
-    if (ib?.source) { const src = `data:${ib.source.media_type};base64,${ib.source.data}`; imgEl = <img className="msg-image" src={src} alt="Attached" onClick={() => window.__hmmLightbox?.(src)} style={{ cursor: 'zoom-in' }} />; }
-  }
+  // B16: a message can carry several images now.
+  const imgEls = Array.isArray(msg.content)
+    ? msg.content.filter(c => c.type === 'image' && c.source).map((ib, i) => {
+        const src = `data:${ib.source.media_type};base64,${ib.source.data}`;
+        return <img key={i} className="msg-image" src={src} alt="Attached" onClick={() => window.__hmmLightbox?.(src)} style={{ cursor: 'zoom-in' }} />;
+      })
+    : [];
 
   const hasBranches = msg.branches && msg.branches.length > 1;
 
@@ -82,9 +84,24 @@ function Message({ msg, char, settings, isStreaming, isLatest, grouped, onDelete
 
   const startEdit = () => { setEditVal(textContent); setEditing(true); setTimeout(() => editRef.current?.focus(), 40); };
   const submitEdit = () => { if (editVal.trim()) onEdit?.(msg.id, editVal.trim()); setEditing(false); };
+  const saveInPlace = () => { if (editVal.trim()) onInPlace?.(msg.id, editVal.trim()); setEditing(false); };
+
+  // B13: a horizontal swipe opens the editor on your own message, and steps
+  // through variants on a reply that has them.
+  const swipeRef = useRef(null);
+  const onTouchStart = e => { swipeRef.current = { x: e.touches[0].clientX, y: e.touches[0].clientY }; };
+  const onTouchEnd = e => {
+    const s = swipeRef.current; swipeRef.current = null;
+    if (!s) return;
+    const dx = e.changedTouches[0].clientX - s.x;
+    const dy = e.changedTouches[0].clientY - s.y;
+    if (Math.abs(dx) < 60 || Math.abs(dy) > 50) return;
+    if (isUser) startEdit();
+    else if (hasBranches) onBranch?.(msg.id, dx < 0 ? 1 : -1);
+  };
 
   return (
-    <div className={`msg${isUser ? ' user' : ' assistant'}${isNarrator ? ' narrator' : ''}${msg.pinned ? ' pinned' : ''}${grouped ? ' grouped' : ''}`} data-msg-id={msg.id} style={isNarrator ? { borderLeft: '2px solid var(--warning)', paddingLeft: 10 } : msg.pinned ? { borderLeft: '2px solid var(--accent)' } : {}}>
+    <div className={`msg${isUser ? ' user' : ' assistant'}${isNarrator ? ' narrator' : ''}${msg.pinned ? ' pinned' : ''}${grouped ? ' grouped' : ''}`} data-msg-id={msg.id} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} style={isNarrator ? { borderLeft: '2px solid var(--warning)', paddingLeft: 10 } : msg.pinned ? { borderLeft: '2px solid var(--accent)' } : {}}>
       {grouped
         ? <div className="msg-gutter">{settings?.showTimestamps !== false ? formatTime(msg.timestamp) : ''}</div>
         : isNarrator
@@ -102,7 +119,7 @@ function Message({ msg, char, settings, isStreaming, isLatest, grouped, onDelete
           {msg.pinned && <span style={{ fontSize: 10, color: 'var(--accent)', letterSpacing: '0.1em' }} title="Pinned to context">📌 PINNED</span>}
         </div>
         )}
-        {imgEl}
+        {imgEls}
         {editing ? (
           <div className="msg-edit-area">
             <textarea
@@ -117,9 +134,17 @@ function Message({ msg, char, settings, isStreaming, isLatest, grouped, onDelete
             />
             <div className="msg-edit-actions">
               <button className="btn-secondary btn-sm" onClick={() => setEditing(false)}>CANCEL</button>
+              <button className="btn-secondary btn-sm" onClick={saveInPlace}>SAVE</button>
               <button className="btn-primary btn-sm" onClick={submitEdit}>SAVE &amp; RESEND</button>
             </div>
           </div>
+        ) : msg.isSummary ? (
+          <details style={{ border: '1px solid var(--border2)', background: 'var(--surface2)', padding: '7px 10px', margin: '2px 0' }}>
+            <summary style={{ cursor: 'pointer', fontSize: 11, color: 'var(--text2)', letterSpacing: '0.06em' }}>
+              Earlier context summarized{msg.summaryCount ? ` · ${msg.summaryCount} message${msg.summaryCount === 1 ? '' : 's'}` : ''}
+            </summary>
+            <div className="msg-content" style={{ marginTop: 8, opacity: 0.85 }} dangerouslySetInnerHTML={{ __html: renderMarkdown(textContent.replace(/^\[CONTEXT SUMMARY\]\s*/, '')) }} />
+          </details>
         ) : char?.textboxStyle && char.textboxStyle !== 'none' && msg.role === 'assistant' ? (
           <Textbox
             char={char}
@@ -129,6 +154,7 @@ function Message({ msg, char, settings, isStreaming, isLatest, grouped, onDelete
             isLatest={isLatest}
             onChoice={onChoice}
             onResize={onResizeTextbox}
+            present={present}
           />
         ) : (
           <div
@@ -471,11 +497,28 @@ function ChatView() {
     }
   };
   const [inputVal, setInputVal] = useState('');
-  const [pendingImage, setPendingImage] = useState(null);
+  const [pendingImages, setPendingImages] = useState([]);
   const [showVarPanel, setShowVarPanel] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [showHeaderMenu, setShowHeaderMenu] = useState(false);
   const [searchQ, setSearchQ] = useState('');
+  const [searchIdx, setSearchIdx] = useState(0);
+  const [present, setPresent] = useState(false);
+  // C19: present mode owns the keyboard while it is open; Space/→ advance the
+  // latest textbox (registered by Textbox itself), ← goes back a page, Esc exits.
+  useEffect(() => {
+    if (!present) return;
+    document.body.classList.add('present-mode');
+    const onKey = e => {
+      if (e.key === 'Escape') { setPresent(false); return; }
+      const tag = (e.target?.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || e.target?.isContentEditable) return;
+      if (e.key === ' ' || e.key === 'ArrowRight' || e.key === 'Enter') { e.preventDefault(); window.__hmmPresentAdvance?.(); }
+      if (e.key === 'ArrowLeft') { e.preventDefault(); window.__hmmPresentBack?.(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => { document.body.classList.remove('present-mode'); window.removeEventListener('keydown', onKey); };
+  }, [present]);
   const [regenModal, setRegenModal] = useState({ open: false });
   const [tempPreset, setTempPreset] = useState('balanced');
   const [replyLen, setReplyLen] = useState('auto');
@@ -494,6 +537,7 @@ function ChatView() {
   const msgsEndRef = useRef(null);
   const inputRef = useRef(null);
   const fileRef = useRef(null);
+  const cameraRef = useRef(null);
   const regenInstrRef = useRef(null);
   // Tracks whether the user dragged the textarea's own resize handle, so
   // typing afterward doesn't fight their chosen height.
@@ -684,19 +728,19 @@ function ChatView() {
 
     if (char.isGroup) {
       if (!members?.length) { ctx.addToast('Group has no members — edit the group first', 'warning'); return; }
-      setPendingImage(null); // group scenes are text-only for now
+      setPendingImages([]); // group scenes are text-only for now
       const userMsg = { id: genId(), role: 'user', content: text, timestamp: new Date().toISOString() };
       await generateAs(pickSpeaker(text, messages), [...messages, userMsg]);
       return;
     }
 
     let userContent = text;
-    if (pendingImage) {
+    if (pendingImages.length) {
       userContent = [
-        { type: 'image', source: { type: 'base64', media_type: pendingImage.mediaType, data: pendingImage.base64 } },
+        ...pendingImages.map(img => ({ type: 'image', source: { type: 'base64', media_type: img.mediaType, data: img.base64 } })),
         { type: 'text', text }
       ];
-      setPendingImage(null);
+      setPendingImages([]);
     }
 
     const userMsg = { id: genId(), role: 'user', content: userContent, timestamp: new Date().toISOString() };
@@ -862,6 +906,15 @@ function ChatView() {
     finally { setGenerating(false); }
   };
 
+  // B13: save an edit without resending and without truncating what follows.
+  const editInPlace = (msgId, text) => {
+    setMessages(prev => {
+      const f = prev.map(m => m.id === msgId ? { ...m, content: text, edited: true } : m);
+      saveAndSync(f); return f;
+    });
+    ctx.addToast('Message updated', 'success');
+  };
+
   const deleteMessage = id => setMessages(prev => { const f = prev.filter(m => m.id !== id); saveAndSync(f); return f; });
 
   const togglePin = id => setMessages(prev => {
@@ -911,9 +964,9 @@ function ChatView() {
     }
   };
 
-  const summarizeContext = async () => {
+  const summarizeContext = async ({ auto = false } = {}) => {
     if (messages.length < 8) { ctx.addToast('Need at least 8 messages to summarize', 'warning'); return; }
-    if (!window.confirm(`Summarize the first ${messages.length - 4} messages into a compact note? The last 4 messages stay intact. Original messages can be unhidden later.`)) return;
+    if (!auto && !window.confirm(`Summarize the first ${messages.length - 4} messages into a compact note? The last 4 messages stay intact. Original messages can be unhidden later.`)) return;
     setGenerating(true);
     ctx.addToast('Generating summary...', 'info');
     try {
@@ -928,15 +981,27 @@ function ChatView() {
         narrator: true,
         pinned: true,
         isSummary: true,
+        summaryCount: messages.length - 4,
       };
       const kept = messages.slice(-4);
       const f = [summaryMsg, ...kept];
       setMessages(f);
       saveAndSync(f);
-      ctx.addToast('Conversation summarized', 'success');
+      ctx.addToast(auto ? `Context ${Math.round(tokenPct)}% full — earlier messages summarized` : 'Conversation summarized', 'success');
     } catch(e) { ctx.addToast(`Summarize error: ${e.message}`, 'error'); }
     setGenerating(false);
   };
+
+  // B10: at ~75% of the context window, fold the oldest turns into a summary on
+  // its own. The guard is the history length: one attempt per length, so a
+  // successful summary is never repeated and a failed one is retried only once
+  // the conversation has grown.
+  const autoSummaryAtRef = useRef(0);
+  useEffect(() => {
+    if (!shouldAutoSummarize({ tokenPct, messageCount: messages.length, generating, lastSummarizedCount: autoSummaryAtRef.current })) return;
+    autoSummaryAtRef.current = messages.length;
+    summarizeContext({ auto: true });
+  }, [tokenPct, messages.length, generating]);
 
   const navigateBranch = (msgId, dir) => setMessages(prev => {
     const f = prev.map(m => {
@@ -998,23 +1063,54 @@ function ChatView() {
     ctx.setCurrentChar(prev => ({ ...prev, favorite: !prev.favorite }));
   };
 
-  const handleImgAttach = e => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async ev => {
-      // Downscale before storing — keeps chat records small
-      const url = await compressImage(ev.target.result, 1024, 0.85);
-      const mediaType = url.startsWith('data:image/webp') ? 'image/webp' : file.type;
-      setPendingImage({ base64: url.split(',')[1], mediaType, name: file.name, previewUrl: url });
-    };
-    reader.readAsDataURL(file);
-    e.target.value = '';
+  // B16: one path for the picker, clipboard paste and drag-drop. Up to four
+  // images ride along with the next message; each is downscaled before storage.
+  const addImages = files => {
+    const list = Array.from(files || []).filter(f => f && f.type && f.type.startsWith('image/')).slice(0, 4);
+    list.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = async ev => {
+        const url = await compressImage(ev.target.result, 1024, 0.85);
+        const mediaType = url.startsWith('data:image/webp') ? 'image/webp' : file.type;
+        setPendingImages(prev => prev.length >= 4 ? prev : [...prev, { base64: url.split(',')[1], mediaType, name: file.name, previewUrl: url }]);
+      };
+      reader.readAsDataURL(file);
+    });
   };
+  const handleImgAttach = e => { addImages(e.target.files); e.target.value = ''; };
 
   const filtered = searchQ
     ? messages.filter(m => { const t = typeof m.content === 'string' ? m.content : m.content?.find?.(c => c.type === 'text')?.text || ''; return t.toLowerCase().includes(searchQ.toLowerCase()); })
     : messages;
+
+  // B12: a palette hit names a message id; scroll to it once the chat renders.
+  useEffect(() => {
+    if (!ctx.jumpTo || ctx.jumpTo.charId !== char.id) return;
+    const id = ctx.jumpTo.msgId;
+    const t = setTimeout(() => {
+      const el = document.querySelector(`[data-msg-id="${id}"]`);
+      if (el) {
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        el.style.outline = '2px solid var(--accent)';
+        setTimeout(() => { el.style.outline = ''; }, 1600);
+      }
+      ctx.setJumpTo(null);
+    }, 150);
+    return () => clearTimeout(t);
+  }, [ctx.jumpTo, char.id]);
+
+  // B12: match counter plus prev/next jumping inside the current chat.
+  useEffect(() => setSearchIdx(0), [searchQ]);
+  const jumpSearch = dir => {
+    if (!filtered.length) return;
+    const next = (searchIdx + dir + filtered.length) % filtered.length;
+    setSearchIdx(next);
+    const el = document.querySelector(`[data-msg-id="${filtered[next].id}"]`);
+    if (!el) return;
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    el.style.outline = '2px solid var(--accent)';
+    setTimeout(() => { el.style.outline = ''; }, 1200);
+  };
 
   // Newest assistant message in the real history (not the search view) — the
   // only one that still types out and offers clickable choices.
@@ -1039,7 +1135,8 @@ function ChatView() {
     setAiAssisting(mode);
     setAssistPopover(null);
     try {
-      const settingsNow = { ...settings, temperature: 0.9 };
+      // A7: assists use the configured utility model when there is one.
+      const settingsNow = utilitySettings({ ...settings, temperature: 0.9 });
       const styleHint = settings.assistStyleGuidelines?.trim()
         ? `\n\nStyle guidelines to follow: ${settings.assistStyleGuidelines.trim()}`
         : '';
@@ -1140,7 +1237,10 @@ function ChatView() {
   );
 
   return (
-    <div className="chat-view">
+    <div className={`chat-view${present ? ' present' : ''}`}>
+      {present && (
+        <button className="present-exit" onClick={() => setPresent(false)} title="Exit present mode (Esc)">EXIT · ESC</button>
+      )}
       {/* Header */}
       <div className="chat-header">
         <div className="chat-header-left">
@@ -1178,6 +1278,9 @@ function ChatView() {
               <>
                 <div style={{ position: 'fixed', inset: 0, zIndex: 190 }} onClick={() => setShowHeaderMenu(false)} />
                 <div className="hdr-menu" onClick={e => e.stopPropagation()}>
+                  {headerMenuItem('Present Mode',
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="2" y="4" width="20" height="16" stroke="currentColor" strokeWidth="2"/><path d="M10 9L15 12L10 15V9Z" fill="currentColor"/></svg>,
+                    () => setPresent(true))}
                   {headerMenuItem('Variations Panel',
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="18" stroke="currentColor" strokeWidth="2"/><path d="M8 3V21M16 3V21" stroke="currentColor" strokeWidth="2"/></svg>,
                     () => setShowVarPanel(v => !v))}
@@ -1229,8 +1332,18 @@ function ChatView() {
             <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="2"/>
             <path d="M21 21L16.65 16.65" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
           </svg>
-          <input autoFocus placeholder="Search messages..." value={searchQ} onChange={e => setSearchQ(e.target.value)} onKeyDown={e => e.key === 'Escape' && (setShowSearch(false), setSearchQ(''))} />
-          {searchQ && <span className="search-count">{filtered.length} match{filtered.length !== 1 ? 'es' : ''}</span>}
+          <input autoFocus placeholder="Search messages..." value={searchQ} onChange={e => setSearchQ(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Escape') { setShowSearch(false); setSearchQ(''); }
+              if (e.key === 'Enter') { e.preventDefault(); jumpSearch(e.shiftKey ? -1 : 1); }
+            }} />
+          {searchQ && <span className="search-count">{filtered.length ? `${searchIdx + 1} of ${filtered.length}` : '0 matches'}</span>}
+          {searchQ && filtered.length > 0 && (
+            <>
+              <button className="btn-icon" style={{ width: 20, height: 20, fontSize: 14 }} title="Previous match (Shift+Enter)" onClick={() => jumpSearch(-1)}>‹</button>
+              <button className="btn-icon" style={{ width: 20, height: 20, fontSize: 14 }} title="Next match (Enter)" onClick={() => jumpSearch(1)}>›</button>
+            </>
+          )}
           <button className="btn-icon" style={{ width: 22, height: 22, fontSize: 16 }} onClick={() => { setShowSearch(false); setSearchQ(''); }}>×</button>
         </div>
       )}
@@ -1264,10 +1377,11 @@ function ChatView() {
               onDelete={deleteMessage} onCopy={() => ctx.addToast('Copied', 'success')}
               onRegen={() => regenerate(null)}
               onRegenGuided={() => setRegenModal({ open: true })}
-              onEdit={editAndResend} onBranch={navigateBranch} onPin={togglePin}
+              onEdit={editAndResend} onInPlace={editInPlace} onBranch={navigateBranch} onPin={togglePin}
               onChoice={sendChoice}
               onResizeTextbox={resizeTextbox}
               onFix={() => ctx.openModal('settings')}
+              present={present}
             />
             );
           })}
@@ -1278,7 +1392,9 @@ function ChatView() {
       </div>
 
       {/* Input */}
-      <div className="input-area">
+      <div className="input-area"
+        onDragOver={e => { if (e.dataTransfer?.types?.includes('Files')) e.preventDefault(); }}
+        onDrop={e => { if (e.dataTransfer?.files?.length) { e.preventDefault(); addImages(e.dataTransfer.files); } }}>
         {char.isGroup && members?.length > 0 && (
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '7px 16px 0', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 9, color: 'var(--text3)', letterSpacing: '0.12em', flexShrink: 0 }}>SPEAK ▸</span>
@@ -1374,22 +1490,29 @@ function ChatView() {
                 updateInput(v);
               }
             }}><span style={{ fontSize: 13, fontWeight: 700 }}>"</span></button>
-            <button className="btn-icon" style={{ width: 26, height: 26 }} title="Attach image" onClick={() => fileRef.current?.click()}>
+            <button className="btn-icon" style={{ width: 26, height: 26 }} title="Attach images (or paste / drop them)" onClick={() => fileRef.current?.click()}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" stroke="currentColor" strokeWidth="2"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/><path d="M21 15L16 10L5 21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            </button>
+            <button className="btn-icon" style={{ width: 26, height: 26 }} title="Take a photo" onClick={() => cameraRef.current?.click()}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M4 8H7L9 5H15L17 8H20V19H4V8Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/><circle cx="12" cy="13" r="3.5" stroke="currentColor" strokeWidth="2"/></svg>
             </button>
             <button className="btn-icon" style={{ width: 26, height: 26 }} title="Clear chat" onClick={() => { if (window.confirm('Clear all messages?')) { S.snapshotNow(`before clearing ${char.name}'s chat`); setMessages([]); S.saveChat(char.id, []); } }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M3 6H21M8 6V4C8 2.9 8.9 2 10 2H14C15.1 2 16 2.9 16 4V6M19 6V20C19 21.1 18.1 22 17 22H7C5.9 22 5 21.1 5 20V6H19Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
             </button>
           </div>
         </div>
-        {pendingImage && (
-          <div className="image-preview-bar">
-            <img src={pendingImage.previewUrl} alt="Preview" />
+        {pendingImages.length > 0 && (
+          <div className="image-preview-bar" style={{ flexWrap: 'wrap' }}>
+            {pendingImages.map((img, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <img src={img.previewUrl} alt={img.name} />
+                <button className="btn-icon danger" title={`Remove ${img.name}`} style={{ width: 22, height: 22, fontSize: 16 }} onClick={() => setPendingImages(prev => prev.filter((_, j) => j !== i))}>×</button>
+              </div>
+            ))}
             <div className="img-info">
-              <div style={{ fontSize: 11, color: 'var(--text)' }}>{pendingImage.name}</div>
+              <div style={{ fontSize: 11, color: 'var(--text)' }}>{pendingImages.length} image{pendingImages.length === 1 ? '' : 's'}</div>
               <div style={{ fontSize: 10, color: 'var(--text3)' }}>Will be sent with next message</div>
             </div>
-            <button className="btn-icon danger" style={{ width: 26, height: 26, fontSize: 18 }} onClick={() => setPendingImage(null)}>×</button>
           </div>
         )}
         {/* Formatting toolbar */}
@@ -1537,6 +1660,10 @@ function ChatView() {
               ref={inputRef} className="msg-input" rows={1}
               placeholder={`Message ${char.name}... (Ctrl+Enter to send)`}
               value={inputVal} onChange={handleInputChange}
+              onPaste={e => {
+                const files = Array.from(e.clipboardData?.files || []);
+                if (files.some(f => f.type && f.type.startsWith('image/'))) { e.preventDefault(); addImages(files); }
+              }}
               onKeyDown={e => {
                 handleSlash(e);
                 if (settings.sendOnEnter && e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) { e.preventDefault(); sendMessage(); }
@@ -1564,7 +1691,8 @@ function ChatView() {
         </div>
       </div>
 
-      <input ref={fileRef} type="file" accept="image/*" className="sr-only" onChange={handleImgAttach} />
+      <input ref={fileRef} type="file" accept="image/*" multiple className="sr-only" onChange={handleImgAttach} />
+      <input ref={cameraRef} type="file" accept="image/*" capture="environment" className="sr-only" onChange={handleImgAttach} />
 
       {/* Avatar / image lightbox */}
       {(avatarLightbox && char.avatar || lightboxSrc) && (
