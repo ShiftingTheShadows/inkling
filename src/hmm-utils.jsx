@@ -677,6 +677,7 @@ const CHANGELOG = [
     version: '2026-11-17',
     date: 'Nov 17, 2026',
     items: [
+      'New: AI assist suggestions open in a review sheet instead of replacing your draft. Accept keeps the generated text, Try again stacks another version (the last three are kept and switchable), and Keep original closes the sheet with what you typed untouched — so Write for me, Enhance and Impersonate can never silently eat a message.',
       'Changed: chats load when you open a character instead of all at startup — a big library now boots with far less memory and no up-front history read. Message counts and previews in the sidebar and on the welcome screen still appear immediately. Character and persona avatars are now kept as compact image data on disk (about a quarter smaller) and converted back to the usual data URLs on load, so avatars and backups are unchanged.',
       'Changed: greeting images can upload to imgbb or a custom upload URL (self-hosted, S3/R2) instead of only freeimage.host — pick the host in Settings → Integrations. Unconfigured installs keep using freeimage.host exactly as before.',
       'Changed: web search reads JavaScript-rendered pages. A page that arrives as an empty shell is re-read through a renderer instead of coming back blank, and keyless search falls back to a second no-key provider when DuckDuckGo blocks the request, so search still works with no API key set. Page reads also verify where a hostname actually points (including each redirect) before fetching, and the remote MCP server refuses requests addressed to an unexpected host or coming from another site.',
@@ -3107,12 +3108,40 @@ async function downloadCharPng(char) {
   __downloadBlob(new Blob([out], { type: 'image/png' }), `${__safeFilename(char.name)}.png`);
 }
 
+/* ASSIST-REVIEW-START */
+// State for the composer's AI assist review sheet. A generated draft is offered
+// to the user instead of being written into the composer: `original` is the
+// draft that must survive, `variants` keeps the last three generations and
+// `index` is the one on screen. `retry` appends to the same review; any other
+// request starts a fresh one for the new options.
+function assistReviewNext(prev, { mode = '', direction = '', length = 'medium', original = '', text = '', retry = false } = {}) {
+  if (!text || !String(text).trim()) return prev;
+  if (retry && prev && prev.mode === mode) {
+    const variants = [...prev.variants, text].slice(-3);
+    return { ...prev, variants, index: variants.length - 1 };
+  }
+  return { mode, direction, length, original, variants: [text], index: 0 };
+}
+
+function assistReviewText(review) {
+  if (!review || !Array.isArray(review.variants) || !review.variants.length) return '';
+  const i = Math.min(Math.max(Number(review.index) || 0, 0), review.variants.length - 1);
+  return review.variants[i];
+}
+
+function assistReviewCycle(review, delta = 1) {
+  if (!review || !Array.isArray(review.variants) || review.variants.length < 2) return review;
+  const n = review.variants.length;
+  return { ...review, index: (((Number(review.index) || 0) + delta) % n + n) % n };
+}
+/* ASSIST-REVIEW-END */
+
 Object.assign(window, {
   AppCtx, S, genId, estimateTokens, compressImage, uploadImage, CHANGELOG,
   formatTime, formatDate, renderMarkdown,
   charBg, charFg, buildSystemPrompt, substituteMacros, callAI, avatarPx,
   summarizeMessages, GistSync, RailwaySync, testProvider, providerProfile, generationExtras,
-  shouldAutoSummarize, utilitySettings,
+  shouldAutoSummarize, utilitySettings, assistReviewNext, assistReviewText, assistReviewCycle,
   chatToMarkdown, chatToJson, chatToHtml, chatExportRows, trashExpired,
   parseOpenAIUsage, parseAnthropicUsage, mergeUsage, contextTokensFromMessages,
   resolveContextLength, contextMeter, modelContextLength,

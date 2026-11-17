@@ -8,7 +8,8 @@ Effort tags: **S** ≈ under an hour, **M** ≈ an afternoon, **L** ≈ a day or
 
 > **Status:** D24, D27, A3, F35, D25, A4, A1, A2, A5, A6, A7, B9, B10, B11, B12,
 > A8, B13, B14, B15, B16, B17, B18, C19, C20, C21, C22, C23, D26, D28, D29, D30, E31, E32, E33, E34,
-> F36, F37, F38, F39, F40, F41, F42, F43 and F44 are implemented — see
+> F36, F37, F38, F39, F40, F41, F42, F43 and F44 are implemented; batch G below is the
+> follow-up pass, where G1 is implemented and G2–G15 are open — see
 > [plans/2026-11-17-data-safety-three.md](superpowers/plans/2026-11-17-data-safety-three.md).
 > D29's three product decisions were answered before it was built; the chosen paths are
 > recorded in its entry, so they are not open questions.
@@ -241,6 +242,60 @@ funnels through one OpenAI-compatible branch using a single shared
   labelled from its title, moves focus inside, traps Tab and restores focus on close; icon-only
   buttons take `aria-label` from their tooltip. *(M)*
 
+## G. Assist & UI follow-ups
+
+Batch G is a fresh ranked pass written after everything above shipped. G1 was taken
+first because the composer was the last place the app could silently replace text the
+user had typed.
+
+- **G1 — done.** **Assist review sheet — accept, retry, keep original.** Write for me,
+  Enhance and Impersonate used to end with → into the composer, so a generated line
+  replaced the draft and a second run stacked style onto already-generated text. Every
+  generated draft now opens a review sheet above the composer showing the proposed text,
+  **Accept** (⌘/Ctrl+Enter) to keep it, **Try again** to generate another version (the last
+  three are kept, switchable with ‹ ›, newest selected), and **Keep original** / Escape / × to
+  close the sheet with the draft untouched. Retrying reuses the same mode, length and
+  direction, and a fresh request starts a new review. Editing the composer while a review
+  is open dismisses it, sending clears it, and switching characters clears it, so a stale
+  suggestion cannot land in the wrong chat. `continue` is unchanged: it extends the
+  character's last message (through plan-vs-question logic and branches), not the
+  composer, so there is nothing to review. State lives in three pure helpers
+  (`assistReviewNext`, `assistReviewText`, `assistReviewCycle`) and the behavior is
+  guarded by `test/assist.test.js`. *(M)*
+- **G2.** **Selection-scoped rewrite.** Enhance currently resends the whole composer; when
+  text is selected, rewrite only that fragment and splice it back with the cursor in place,
+  plus tone presets (more descriptive, plainer, dialogue only, shorten). *(S)*
+- **G3.** **Group-aware continue.** `assist('continue')` builds the prompt from the group
+  record, so a group continuation is out of voice and attributed to the group rather than
+  the member who spoke last; use the last message's `charId` member system prompt. *(S)*
+- **G4.** **Undo summarize.** Summarizing hides all but the last four messages with no way
+  back; keep the hidden ids on the summary message and offer an unhide action. *(S)*
+- **G5.** **Per-message assist actions.** Rewrite / punch up / shorten / longer / narrate on
+  the last reply, writing into the existing `branches` array so the original stays one tap
+  away. *(M)*
+- **G6.** **Streaming assists with a stop button.** Reuse generation's SSE path so long
+  assists show text as it arrives and Stop keeps the partial result. *(M)*
+- **G7.** **Context inspector.** Show the built system prompt, message count and an input
+  token estimate before sending, with a shortcut into the summarizer; say plainly when the
+  provider did not report usage. *(M)*
+- **G8.** **Per-character assist style and remembered options.** `assistStyleGuidelines`
+  is global; let a character override it and remember the last length/direction per chat. *(S)*
+- **G9.** **Assist failure honesty.** A missing key, a 401 and a rate limit all surface as
+  one generic toast with no retry; classify them and replay the exact request on Retry. *(S)*
+- **G10.** **Field-scoped character generation.** A sparkle per editor field that fills or
+  regenerates only that field with the rest as context. *(M)*
+- **G11.** **Virtualized transcript.** Every message renders today; a thousand-message chat
+  pays full DOM cost on each keystroke. Window the list, keep search highlight and
+  scroll-to-message intact. *(L)*
+- **G12.** **Shortcut sheet and action palette.** `?` lists every binding, and the palette
+  gains an action mode so typing "summarize" runs it. *(M)*
+- **G13.** **Settings search.** A keyword filter over the sections as Settings keeps
+  growing. *(M)*
+- **G14.** **Mobile layout pass.** `100dvh`, safe-area insets, composer above the keyboard,
+  and the assist UI as a bottom sheet on narrow screens. *(M)*
+- **G15.** **Avatar crop and fallback.** Pan/zoom crop on upload and an initials fallback
+  when an image fails to load. *(S)*
+
 ---
 
 ## Priority order — what's left, most to least necessary
@@ -248,5 +303,17 @@ funnels through one OpenAI-compatible branch using a single shared
 Everything marked done above is shipped; this list is only the open items, in the order they
 should be tackled.
 
-No open items — every idea catalogued above is implemented. New follow-ups belong in a fresh
-entry above, ranked the same way.
+1. **G2** — selection-scoped rewrite (S)
+2. **G3** — group-aware continue (S)
+3. **G4** — undo summarize (S)
+4. **G9** — assist failure honesty and retry (S)
+5. **G6** — streaming assists with stop (M)
+6. **G5** — per-message assist actions (M)
+7. **G7** — context inspector (M)
+8. **G12** — shortcut sheet and action palette (M)
+9. **G8** — per-character assist style (S)
+10. **G13** — settings search (M)
+11. **G14** — mobile layout pass (M)
+12. **G15** — avatar crop and fallback (S)
+13. **G10** — field-scoped character generation (M)
+14. **G11** — virtualized transcript (L)
