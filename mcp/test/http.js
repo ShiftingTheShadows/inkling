@@ -2,6 +2,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { startFakeSync } from './fake-server.js';
+import http from 'node:http';
 
 const TOKEN = 'test-token-1234';
 const SECRET = 'a'.repeat(32);
@@ -45,6 +46,43 @@ check('no secret -> 404', (await post('/mcp')).status === 404);
 check('GET on endpoint -> 405', (await fetch(`${base}/mcp/${SECRET}`)).status === 405);
 check('bad JSON -> 400', (await post(`/mcp/${SECRET}`, '{nope')).status === 400);
 check('health is open', (await fetch(`${base}/health`)).status === 200);
+
+// ── DNS rebinding / cross-site guard (F40) ────────────────
+// These go through node:http because fetch() refuses to set a Host header.
+const rawRequest = (path, headers = {}, method = 'GET', body = null) => new Promise((resolve, reject) => {
+  const req = http.request({
+    host: '127.0.0.1', port: httpServer.address().port, path, method, headers,
+  }, res => {
+    let data = '';
+    res.on('data', c => { data += c; });
+    res.on('end', () => resolve({ status: res.statusCode, body: data }));
+  });
+  req.on('error', reject);
+  if (body) req.write(body);
+  req.end();
+});
+
+const rebound = await rawRequest('/health', { Host: 'evil.example' });
+check('a rebinding Host header is refused', rebound.status === 403, rebound);
+const reboundMcp = await rawRequest(`/mcp/${SECRET}`, {
+  Host: 'evil.example', 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream',
+}, 'POST', '{}');
+check('a rebinding Host cannot reach the MCP endpoint', reboundMcp.status === 403, reboundMcp.status);
+const crossSite = await rawRequest('/health', { Host: 'evil.example', Origin: 'http://evil.example' });
+check('a rebinding host is refused even with a matching Origin', crossSite.status === 403, crossSite.status);
+const foreignOrigin = await rawRequest('/health', { Origin: 'https://evil.example' });
+check('a cross-site Origin is refused on a good Host', foreignOrigin.status === 403, foreignOrigin.status);
+const sameOrigin = await rawRequest('/health', { Origin: base });
+check('a same-origin request is still served', sameOrigin.status === 200, sameOrigin.status);
+const noOrigin = await rawRequest('/health', { Host: new URL(base).host });
+check('a server-to-server request (no Origin) is still served', noOrigin.status === 200, noOrigin.status);
+
+process.env.INKLING_MCP_ALLOWED_HOSTS = 'mcp.example.com';
+const listedHost = await rawRequest('/health', { Host: 'mcp.example.com' });
+check('an operator-listed host is served', listedHost.status === 200, listedHost.status);
+const unlistedHost = await rawRequest('/health', { Host: 'other.example.com' });
+check('an unlisted public host is still refused', unlistedHost.status === 403, unlistedHost.status);
+delete process.env.INKLING_MCP_ALLOWED_HOSTS;
 
 httpServer.close();
 await sync.close?.();

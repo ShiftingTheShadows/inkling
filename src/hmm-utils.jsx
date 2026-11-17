@@ -468,6 +468,7 @@ const CHANGELOG = [
     version: '2026-11-17',
     date: 'Nov 17, 2026',
     items: [
+      'Changed: web search reads JavaScript-rendered pages. A page that arrives as an empty shell is re-read through a renderer instead of coming back blank, and keyless search falls back to a second no-key provider when DuckDuckGo blocks the request, so search still works with no API key set. Page reads also verify where a hostname actually points (including each redirect) before fetching, and the remote MCP server refuses requests addressed to an unexpected host or coming from another site.',
       'New: an A→Z sort for the character sidebar, alongside ALL, ★ FAV and RECENT. The choice is saved with your settings, so it is still selected after a reload.',
       'Changed: the character sidebar no longer re-reads every chat to draw its preview lines. A one-line summary is written when a chat is saved and the list reads that, so big libraries no longer scan every message on every render; existing chats are summarized once on the next load.',
       'New: MCP can edit or delete a single chat message by id or position instead of clearing the chat, read the folder structure as a nested tree, and fetch only the character fields it needs — so long backups stop flooding the assistant\'s context.',
