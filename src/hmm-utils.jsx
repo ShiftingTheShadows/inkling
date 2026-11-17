@@ -339,6 +339,7 @@ const CHANGELOG = [
     version: '2026-11-17',
     date: 'Nov 17, 2026',
     items: [
+      'New: per-character textbox blips. Each character can override the global typing-sound setting (on, off, or follow Settings) and set its own volume, alongside the blip pitch it already had — all on the character record, so it syncs with the rest of the character.',
       'New: long textbox replies can turn their own pages (Settings → Appearance → Auto-advance textbox pages). The newest reply types, waits two seconds, then moves to the next page until the box is done; clicking or using the arrows takes over and stops it.',
       'New: end-to-end encryption for Railway sync. The backup is stored as an AES-GCM envelope keyed by a passphrase the server never sees, unlocked once per device (optionally remembered). Enabling encrypts and replaces the plaintext backup, LOCK NOW drops the key, and changing the passphrase re-encrypts and re-uploads the backup; a forgotten passphrase cannot be recovered, so download a plaintext backup first.',
       'Changed: a locked or unencrypted browser refuses to push plaintext over an encrypted backup, and MCP says it cannot read or edit ciphertext instead of writing over it.',
@@ -1181,6 +1182,24 @@ function shouldAutoAdvancePage({ enabled, instant, isLatest, streaming, done, pa
   if (!enabled || instant || !isLatest || streaming || !done || paused) return false;
   if (!Number.isInteger(page) || !Number.isInteger(pageCount)) return false;
   return page >= 0 && page < pageCount - 1;
+}
+
+// C22: per-character blip volume and on/off. `textboxSound` in Settings stays
+// the global switch; a character may override it (a whisper, a shout, a silent
+// one in a group scene) and scale the blip's gain. A missing override means
+// "follow the global setting at full volume", so every existing character
+// sounds exactly as it did before this existed.
+const DEFAULT_BLIP_VOLUME = 1;
+function clampBlipVolume(v) {
+  if (typeof v !== 'number' || !Number.isFinite(v)) return DEFAULT_BLIP_VOLUME;
+  return Math.min(1, Math.max(0, v));
+}
+function blipForCharacter(char, settings) {
+  const override = char?.blipSound;
+  const followsGlobal = override !== true && override !== false;
+  const on = followsGlobal ? !!settings?.textboxSound : override;
+  const volume = clampBlipVolume(char?.blipVolume);
+  return { on: on && volume > 0, pitch: pitchForCharacter(char), volume };
 }
 /* TEXTBOX-EXPORTS-END */
 
@@ -2715,4 +2734,5 @@ Object.assign(window, {
   downloadCharJson, downloadCharPng,
   parseTextbox, expressionAt, resolveExpressionKey, expressionNameFromFilename, pitchForCharacter,
   textboxAutoAdvanceMs, shouldAutoAdvancePage,
+  clampBlipVolume, blipForCharacter,
 });
