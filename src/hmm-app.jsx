@@ -113,13 +113,16 @@ function App() {
     styleTag.textContent = settings.customCSS || '';
   }, [settings.customCSS]);
 
-  // Restore last character on mount
+  // Restore last character on mount. F42: its chat lives on disk until opened,
+  // so read it before showing the conversation.
   useEffect(() => {
     const lastId = localStorage.getItem('hmm_current');
-    if (lastId) {
-      const c = S.chars().find(x => x.id === lastId);
-      if (c) setCurrentChar(c);
-    }
+    if (!lastId) return;
+    const c = S.chars().find(x => x.id === lastId);
+    if (!c) return;
+    let alive = true;
+    S.loadChats(c.id).then(() => { if (alive) setCurrentChar(c); });
+    return () => { alive = false; };
   }, []);
 
   // Auto-popup "What's New" for returning users after an update — skip on a
@@ -260,7 +263,7 @@ function App() {
           if (revision != null) S.setSyncRevision(revision);
           // Merge, never replace: an unattended poll must not discard what was
           // typed here since the last push. Only reload when something landed.
-          const stats = GistSync.restorePayload(data, { mode: 'merge' });
+          const stats = await GistSync.restorePayload(data, { mode: 'merge' });
           // Store the server's updated_at (from the meta check above), not
           // data.exportedAt: that's the *other* device's client clock, which
           // would make this device think its own pull is instantly stale again.
@@ -307,17 +310,22 @@ function App() {
     document.documentElement.setAttribute('data-theme', (!s.theme || s.theme === 'terminal') ? '' : s.theme);
   }, []);
 
-  const selectChar = useCallback(id => {
+  const selectChar = useCallback(async id => {
     const c = S.chars().find(x => x.id === id);
-    if (c) { setCurrentChar(c); setPage(null); }
+    if (!c) return;
+    // F42: a chat is read from IDB when its character is opened, not at boot.
+    await S.loadChats(id);
+    setCurrentChar(c); setPage(null);
     // On phones, close the drawer after picking a character
     if (window.matchMedia('(max-width: 720px)').matches) setCollapsed(true);
   }, []);
 
-  const exportAll = useCallback(() => {
+  const exportAll = useCallback(async () => {
     // Same payload shape as GistSync (characters, chats, histories, lorebook,
     // scripts, personas, secret-stripped settings) so this file round-trips
     // through both the gist sync and the Import Character file picker.
+    // F42: the backup needs every chat, which boot no longer keeps in memory.
+    await S.loadAllChats();
     const data = GistSync.buildPayload();
     const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }));
     Object.assign(document.createElement('a'), {

@@ -229,40 +229,48 @@ function CommandPalette() {
 
   const q = query.toLowerCase();
   // B12: full-text across every chat and every lorebook entry, not just the
-  // names in the command list. Capped so typing stays responsive.
-  const deepResults = useMemo(() => {
-    if (q.length < 2) return [];
-    const out = [];
-    for (const c of ctx.chars) {
-      const msgs = S.chat(c.id) || [];
-      for (let i = msgs.length - 1; i >= 0 && out.length < 12; i--) {
-        const m = msgs[i];
-        const text = typeof m.content === 'string' ? m.content : (m.content?.find?.(p => p.type === 'text')?.text) || '';
-        const at = text.toLowerCase().indexOf(q);
-        if (at === -1) continue;
-        out.push({
-          label: text.slice(Math.max(0, at - 30), at + q.length + 50).replace(/\s+/g, ' ').trim(),
-          sub: `${c.name} · ${m.role} · message`,
-          icon: '💬',
-          action: () => { ctx.selectChar(c.id); ctx.setJumpTo({ charId: c.id, msgId: m.id }); ctx.setCmdOpen(false); },
-        });
+  // names in the command list. Capped so typing stays responsive. F42: chat
+  // bodies are lazy now, so the chat half waits for the one-time full load
+  // (S.loadAllChats) before scanning; the scripts half is synchronous.
+  const [deepResults, setDeepResults] = useState([]);
+  useEffect(() => {
+    if (q.length < 2) { setDeepResults([]); return; }
+    let alive = true;
+    S.loadAllChats().then(() => {
+      if (!alive) return;
+      const out = [];
+      for (const c of ctx.chars) {
+        const msgs = S.chat(c.id) || [];
+        for (let i = msgs.length - 1; i >= 0 && out.length < 12; i--) {
+          const m = msgs[i];
+          const text = typeof m.content === 'string' ? m.content : (m.content?.find?.(p => p.type === 'text')?.text) || '';
+          const at = text.toLowerCase().indexOf(q);
+          if (at === -1) continue;
+          out.push({
+            label: text.slice(Math.max(0, at - 30), at + q.length + 50).replace(/\s+/g, ' ').trim(),
+            sub: `${c.name} · ${m.role} · message`,
+            icon: '💬',
+            action: () => { ctx.selectChar(c.id); ctx.setJumpTo({ charId: c.id, msgId: m.id }); ctx.setCmdOpen(false); },
+          });
+        }
       }
-    }
-    for (const s of (S.scripts() || [])) {
-      for (const e of (s.entries || [])) {
-        if (out.length >= 18) break;
-        const hay = `${e.name || ''} ${(e.keywords || []).join(' ')} ${e.content || ''}`.toLowerCase();
-        const at = hay.indexOf(q);
-        if (at === -1) continue;
-        out.push({
-          label: `${s.name}: ${e.name || (e.keywords || [])[0] || 'entry'}`,
-          sub: (e.content || '').replace(/\s+/g, ' ').slice(0, 70),
-          icon: '§',
-          action: () => { ctx.openModal('lorebook'); ctx.setCmdOpen(false); },
-        });
+      for (const s of (S.scripts() || [])) {
+        for (const e of (s.entries || [])) {
+          if (out.length >= 18) break;
+          const hay = `${e.name || ''} ${(e.keywords || []).join(' ')} ${e.content || ''}`.toLowerCase();
+          const at = hay.indexOf(q);
+          if (at === -1) continue;
+          out.push({
+            label: `${s.name}: ${e.name || (e.keywords || [])[0] || 'entry'}`,
+            sub: (e.content || '').replace(/\s+/g, ' ').slice(0, 70),
+            icon: '§',
+            action: () => { ctx.openModal('lorebook'); ctx.setCmdOpen(false); },
+          });
+        }
       }
-    }
-    return out;
+      setDeepResults(out);
+    }).catch(() => { if (alive) setDeepResults([]); });
+    return () => { alive = false; };
   }, [q, ctx.chars]);
   const filtered = q ? [...deepResults, ...actions.filter(a => a.label.toLowerCase().includes(q) || a.sub.toLowerCase().includes(q))] : actions;
 
@@ -429,10 +437,10 @@ function SettingsModal({ onClose }) {
   };
   const [snap, setSnap] = useState(() => S.snapshot());
   const [trash, setTrash] = useState(() => S.trash());
-  const restoreSnapshot = () => {
+  const restoreSnapshot = async () => {
     if (!snap) return;
     if (!window.confirm(`Replace ALL local data with the automatic backup from ${new Date(snap.at).toLocaleString()}?`)) return;
-    GistSync.restorePayload(snap.payload, { mode: 'replace' });
+    await GistSync.restorePayload(snap.payload, { mode: 'replace' });
     window.location.reload();
   };
 
@@ -2425,7 +2433,7 @@ function ImportModal({ onClose }) {
       if (Array.isArray(raw.characters)) {
         // Same merge rules as sync, but add-only: an old file must not replace
         // a live character or an in-progress conversation.
-        const stats = GistSync.restorePayload(raw, { mode: 'merge', policy: 'import' }) || {};
+        const stats = await GistSync.restorePayload(raw, { mode: 'merge', policy: 'import' }) || {};
         charsRef.current = S.chars();
         ctx.setChars(charsRef.current);
         if (Array.isArray(raw.personas)) ctx.setPersonas(S.personas());
@@ -2920,9 +2928,11 @@ function SyncModal({ onClose }) {
   // overwrite. previewRestore is read-only, so cancelling changes nothing.
   const [restorePrompt, setRestorePrompt] = useState(null); // { data, source, stats }
   const [restoreMode, setRestoreMode] = useState('merge');
-  const askRestore = (data, source) => {
+  const askRestore = async (data, source) => {
     setRestoreMode('merge');
-    setRestorePrompt({ data, source, stats: GistSync.previewRestore(data) });
+    // F42: chats are lazy now, so comparing counts waits for the full load.
+    const stats = await GistSync.previewRestore(data);
+    setRestorePrompt({ data, source, stats });
   };
   const restoreCounts = st => {
     if (!st) return 'No local data to compare.';
@@ -2937,13 +2947,13 @@ function SyncModal({ onClose }) {
       p.added ? `${p.added} new persona${p.added === 1 ? '' : 's'}` : null,
     ].filter(Boolean).join(' · ');
   };
-  const applyRestore = () => {
+  const applyRestore = async () => {
     if (!restorePrompt) return;
     const { data, source } = restorePrompt;
     try {
       // Replacing throws away everything local, so keep one restore point.
-      if (restoreMode === 'replace') S.snapshotNow(`before replacing with the ${source} backup`);
-      const stats = GistSync.restorePayload(data, { mode: restoreMode });
+      if (restoreMode === 'replace') await S.snapshotNow(`before replacing with the ${source} backup`);
+      const stats = await GistSync.restorePayload(data, { mode: restoreMode });
       setRestorePrompt(null);
       if (restoreMode === 'replace') {
         setS('success', `Replaced local data with the ${source} backup — reloading…`);

@@ -8,7 +8,7 @@ Effort tags: **S** ≈ under an hour, **M** ≈ an afternoon, **L** ≈ a day or
 
 > **Status:** D24, D27, A3, F35, D25, A4, A1, A2, A5, A6, A7, B9, B10, B11, B12,
 > A8, B13, B14, B15, B16, B17, B18, C19, C20, C21, C22, C23, D26, D28, D29, D30, E31, E32, E33, E34,
-> F36, F37, F38, F39, F40, F41 and F44 are implemented — see
+> F36, F37, F38, F39, F40, F41, F42 and F44 are implemented — see
 > [plans/2026-11-17-data-safety-three.md](superpowers/plans/2026-11-17-data-safety-three.md).
 > D29's three product decisions were answered before it was built; the chosen paths are
 > recorded in its entry, so they are not open questions.
@@ -210,8 +210,22 @@ funnels through one OpenAI-compatible branch using a single shared
   and multicast answers, v4 and v6), so a synced settings blob cannot turn the upload proxy into
   a request to your own network; a URL whose address cannot be verified is refused rather than
   fetched. *(M)*
-- **F42.** Boot hydrates **every** IDB key into memory (all chats, histories, base64
-  avatars). Lazy-load chats per character; store avatars as Blobs once libraries grow. *(M)*
+- **F42 — done.** **Lazy chat loading.** Boot no longer pulls every chat and saved
+  session into memory. It keeps the small records (characters, settings, folders, personas,
+  scripts, the chat-summary map) synchronous and remembers which characters have a chat on disk;
+  `S.loadChats(id)` reads one character's chat + session history from IndexedDB when that
+  character is opened, and `S.loadAllChats()` does the full read for the few paths that genuinely
+  need every conversation (sync push, backup export, auto snapshot, command-palette deep search,
+  restore/merge). The sidebar and welcome screen still show per-character message counts and
+  previews without loading anything, because both read the F36 summary map. A save is refused if
+  the chat exists on disk but has not been loaded, so a view that mounted too early cannot
+  overwrite a real history with an empty one; restoring a backup marks the incoming chats loaded
+  and writes them deliberately. Measured with the same store before and after: the old boot held
+  6 keys and 18 message/session entries in memory, the new boot holds 3 keys and no message
+  bodies, deferring both characters until one is opened. Avatar storage is unchanged: avatars
+  ride `hmm_chars` as base64 because the gist/Railway payload and the PNG card export carry them
+  in that form, so moving them to Blobs is a separate storage-format change rather than a boot
+  cost. *(M)*
 - **F43.** `build.mjs` comments still say "what Netlify publishes" while deploy is
   Vercel. *(S)*
 - **F44 — done.** **Modal dialog semantics** — every modal is `role="dialog"` + `aria-modal`,
@@ -225,5 +239,4 @@ funnels through one OpenAI-compatible branch using a single shared
 Everything marked done above is shipped; this list is only the open items, in the order they
 should be tackled.
 
-1. **F42** — lazy IDB loading; matters only once libraries get big.
-2. **F43** — stale "Netlify" comment in `build.mjs`.
+1. **F43** — stale "Netlify" comment in `build.mjs`.
