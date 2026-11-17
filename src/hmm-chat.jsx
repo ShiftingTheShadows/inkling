@@ -2,6 +2,7 @@
 const { useState, useContext, useEffect, useRef, useCallback } = React;
 const { AppCtx, S, genId, estimateTokens, contextTokensFromMessages, modelContextLength,
   assistReviewNext, assistReviewText, assistReviewCycle,
+  assistScopeFromDraft, assistScopeSplice, assistTonePresets, assistToneHint,
   nextGroupSpeaker, parseDirectorChoice, normalizeGroupReplies, formatTime, renderMarkdown, charBg, charFg, callAI, buildSystemPrompt, summarizeMessages, compressImage, downloadCharJson, downloadCharPng, avatarPx, providerProfile, shouldAutoSummarize, utilitySettings, chatToMarkdown, chatToJson, chatToHtml } = window;
 const { CharAvatar, Textbox } = window;
 
@@ -582,6 +583,7 @@ function ChatView() {
   const [assistReview, setAssistReview] = useState(null); // {mode,direction,length,original,variants,index}
   const [assistDir, setAssistDir] = useState('');
   const [assistLen, setAssistLen] = useState('medium');
+  const [assistTone, setAssistTone] = useState('');
   const personas = ctx.personas;
   // `activePersona` above already resolves to this chat's persona.
 
@@ -1224,6 +1226,13 @@ function ChatView() {
   const assist = async (mode, opts = {}) => {
     if (generating || aiAssisting) return;
     const originalDraft = inputVal;
+    // G2: read the composer selection now — the popover takes focus before the
+    // request runs — and only Enhance rewrites a fragment.
+    const composerEl = inputRef.current;
+    const scope = mode === 'enhance'
+      ? assistScopeFromDraft(inputVal, composerEl?.selectionStart ?? 0, composerEl?.selectionEnd ?? 0)
+      : null;
+    const tone = mode === 'enhance' ? (opts.tone || '') : '';
     const direction = (opts.direction || '').trim();
     const length = opts.length || 'medium';
     const lengthHint = LENGTH_HINTS[length] || LENGTH_HINTS.medium;
@@ -1249,15 +1258,24 @@ function ChatView() {
         result = await callAI(fakeMsgs, fakeChar, settingsNow, null, { system: sysMsg });
 
       } else if (mode === 'enhance') {
-        const draft = inputVal.trim();
+        const scoped = !!scope?.scoped;
+        const draft = (scoped ? scope.text : inputVal).trim();
         if (!draft) { ctx.addToast('Type something to enhance first', 'warning'); setAiAssisting(null); return; }
         const history = messages.slice(-6).map(m => {
           const t = typeof m.content === 'string' ? m.content : m.content?.find?.(c=>c.type==='text')?.text||'';
           return `${m.role === 'user' ? (activePersona?.name||'You') : char.name}: ${t}`;
         }).join('\n');
-        const sysMsg = `You are a creative writing assistant. Enhance the user's draft message for a roleplay — make it more vivid, expressive and immersive while keeping the same core intent. ${lengthHint}${dirHint}${styleHint}\n\nReturn ONLY the enhanced message — no explanation, no quotes.`;
+        const toneHint = tone ? `\n\nRewrite instruction: ${assistToneHint(tone)}` : '';
+        // A scoped rewrite has to be a drop-in replacement for the selection, so
+        // the prompt asks for the fragment alone and the rest of the draft is
+        // never sent as the thing to rewrite.
+        const sysMsg = scoped
+          ? `You are a creative writing assistant. Rewrite ONLY the fragment the user selected from their roleplay message. The reply must be a drop-in replacement for that fragment: same core intent and point of view, no greeting, no label, no quotes, no surrounding text. ${lengthHint}${dirHint}${toneHint}${styleHint}\n\nReturn ONLY the rewritten fragment — no explanation, no quotes.`
+          : `You are a creative writing assistant. Enhance the user's draft message for a roleplay — make it more vivid, expressive and immersive while keeping the same core intent. ${lengthHint}${dirHint}${toneHint}${styleHint}\n\nReturn ONLY the enhanced message — no explanation, no quotes.`;
         const fakeChar = { name: 'Assistant', description: '', personality: '', scenario: '', firstMessage: '', exampleDialogues: '', systemPrompt: '' };
-        const fakeMsgs = [{ role: 'user', content: `Recent context:\n${history}\n\nMy draft: "${draft}"\n\nEnhance it.` }];
+        const fakeMsgs = [{ role: 'user', content: scoped
+          ? `Recent context:\n${history}\n\nMy draft: "${inputVal.trim()}"\n\nRewrite only this fragment: "${draft}"`
+          : `Recent context:\n${history}\n\nMy draft: "${draft}"\n\nEnhance it.` }];
         result = await callAI(fakeMsgs, fakeChar, settingsNow, null, { system: sysMsg });
 
       } else if (mode === 'continue') {
@@ -1302,6 +1320,8 @@ function ChatView() {
         // review sheet so the user decides what happens to their text.
         setAssistReview(prev => assistReviewNext(prev, {
           mode, direction, length, original: originalDraft, text: clean, retry: !!opts.retry,
+          ...(scope ? { scope } : {}),
+          ...(tone ? { tone } : {}),
         }));
       }
     } catch(e) { ctx.addToast(`Assist error: ${e.message}`, 'error'); }
@@ -1311,20 +1331,25 @@ function ChatView() {
   const acceptAssist = () => {
     if (!assistReview) return;
     const v = assistReviewText(assistReview);
+    // G2: a fragment rewrite goes back over the span it was generated for, so
+    // the rest of the draft and the text around it are untouched.
+    const out = assistScopeSplice(assistReview.original, assistReview.scope, v);
+    const scoped = !!assistReview.scope?.scoped;
     setAssistReview(null);
-    updateInput(v);
+    updateInput(out.value);
     requestAnimationFrame(() => {
       const ta = inputRef.current;
       if (!ta) return;
       ta.style.height = 'auto';
       ta.style.height = Math.min(ta.scrollHeight, 320) + 'px';
       ta.focus();
+      if (scoped) ta.setSelectionRange(out.start, out.end);
     });
   };
 
   const retryAssist = () => {
     if (!assistReview || aiAssisting || generating) return;
-    assist(assistReview.mode, { direction: assistReview.direction, length: assistReview.length, retry: true });
+    assist(assistReview.mode, { direction: assistReview.direction, length: assistReview.length, tone: assistReview.tone, retry: true });
   };
 
   // Slash command handler
@@ -1719,7 +1744,7 @@ function ChatView() {
           <div className="assist-review" role="region" aria-label="AI assist suggestion">
             <div className="assist-review-head">
               <span className="assist-review-label">
-                ✦ {assistReview.mode === 'write' ? 'WRITE FOR ME' : assistReview.mode === 'enhance' ? 'ENHANCED DRAFT' : 'IMPERSONATION'}
+                ✦ {assistReview.mode === 'write' ? 'WRITE FOR ME' : assistReview.mode === 'enhance' ? (assistReview.scope?.scoped ? 'ENHANCED FRAGMENT' : 'ENHANCED DRAFT') : 'IMPERSONATION'}
               </span>
               <span className="assist-review-count">{assistReview.index + 1}/{assistReview.variants.length}</span>
               <button className="btn-icon" style={{ width: 20, height: 20, fontSize: 15 }} title="Previous variant"
@@ -1733,7 +1758,9 @@ function ChatView() {
             </div>
             <div className="assist-review-text">{assistReviewText(assistReview)}</div>
             <div className="assist-review-actions">
-              <button className="btn-primary btn-sm" onClick={acceptAssist}>ACCEPT · CTRL+ENTER</button>
+              <button className="btn-primary btn-sm" onClick={acceptAssist}>
+                {assistReview.scope?.scoped ? 'REPLACE FRAGMENT · CTRL+ENTER' : 'ACCEPT · CTRL+ENTER'}
+              </button>
               <button className="btn-secondary btn-sm" onClick={retryAssist} disabled={!!aiAssisting || generating}>
                 {aiAssisting ? '⟳ GENERATING…' : 'TRY AGAIN'}
               </button>
@@ -1753,7 +1780,7 @@ function ChatView() {
               <button
                 key={mode}
                 title={`${label} — ${tip}\nClick for options · Slash: /${mode.slice(0,1)} + Tab`}
-                onClick={() => { setAssistDir(''); setAssistPopover(assistPopover === mode ? null : mode); }}
+                onClick={() => { setAssistDir(''); setAssistTone(''); setAssistPopover(assistPopover === mode ? null : mode); }}
                 disabled={!!aiAssisting || generating}
                 style={{
                   width: 36, height: 36,
@@ -1802,19 +1829,35 @@ function ChatView() {
                   </div>
                 </div>
 
+                {assistPopover === 'enhance' && (
+                  <div style={{ marginBottom: 10 }}>
+                    <label style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--text3)', display: 'block', marginBottom: 4 }}>TONE</label>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+                      {assistTonePresets().map(p => (
+                        <button key={p.id}
+                          title={p.hint}
+                          onClick={() => setAssistTone(t => t === p.id ? '' : p.id)}
+                          style={{ padding: '5px 6px', fontSize: 9, fontWeight: 700, letterSpacing: '0.06em', fontFamily: 'var(--font)', background: assistTone===p.id?'var(--accent3)':'var(--surface2)', border: `1px solid ${assistTone===p.id?'var(--accent3)':'var(--border2)'}`, color: assistTone===p.id?'var(--accent)':'var(--text3)', cursor: 'pointer' }}
+                        >{p.label.toUpperCase()}</button>
+                      ))}
+                    </div>
+                    <div style={{ fontSize: 9, color: 'var(--text3)', marginTop: 4 }}>With text selected, only that part is rewritten.</div>
+                  </div>
+                )}
+
                 <div style={{ marginBottom: 10 }}>
                   <label style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', color: 'var(--text3)', display: 'block', marginBottom: 4 }}>WHAT DO YOU WANT? (optional)</label>
                   <textarea
                     autoFocus
                     value={assistDir}
                     onChange={e => setAssistDir(e.target.value)}
-                    onKeyDown={e => { if (e.ctrlKey && e.key === 'Enter') assist(assistPopover, { direction: assistDir, length: assistLen }); if (e.key === 'Escape') setAssistPopover(null); }}
+                    onKeyDown={e => { if (e.ctrlKey && e.key === 'Enter') assist(assistPopover, { direction: assistDir, length: assistLen, tone: assistTone }); if (e.key === 'Escape') setAssistPopover(null); }}
                     placeholder={assistPopover === 'enhance' ? 'e.g. more tension, darker tone, add body language...' : assistPopover === 'continue' ? 'e.g. escalate, introduce a twist, slow it down...' : 'e.g. flirtatious, suspicious, change the subject to...'}
                     style={{ width: '100%', minHeight: 54, padding: '6px 8px', fontSize: 11, lineHeight: 1.5, resize: 'vertical', background: 'var(--surface2)', border: '1px solid var(--border2)', color: 'var(--text)', fontFamily: 'var(--font)' }}
                   />
                 </div>
 
-                <button className="btn-primary" style={{ width: '100%' }} onClick={() => assist(assistPopover, { direction: assistDir, length: assistLen })}>
+                <button className="btn-primary" style={{ width: '100%' }} onClick={() => assist(assistPopover, { direction: assistDir, length: assistLen, tone: assistTone })}>
                   RUN {assistDir.trim() ? 'WITH DIRECTION' : ''} →
                 </button>
                 <div style={{ fontSize: 9, color: 'var(--text3)', textAlign: 'center', marginTop: 5 }}>Ctrl+Enter to run</div>

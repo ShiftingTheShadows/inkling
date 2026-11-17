@@ -677,6 +677,7 @@ const CHANGELOG = [
     version: '2026-11-17',
     date: 'Nov 17, 2026',
     items: [
+      'New: Enhance can rewrite only the part of your message you selected — select a sentence, run Enhance, and accepting replaces just that fragment with the rest of the draft untouched. The assist menu also gained tone presets (more descriptive, plainer, dialogue only, shorten) that stack with your own direction and carry into Try again.',
       'New: AI assist suggestions open in a review sheet instead of replacing your draft. Accept keeps the generated text, Try again stacks another version (the last three are kept and switchable), and Keep original closes the sheet with what you typed untouched — so Write for me, Enhance and Impersonate can never silently eat a message.',
       'Changed: chats load when you open a character instead of all at startup — a big library now boots with far less memory and no up-front history read. Message counts and previews in the sidebar and on the welcome screen still appear immediately. Character and persona avatars are now kept as compact image data on disk (about a quarter smaller) and converted back to the usual data URLs on load, so avatars and backups are unchanged.',
       'Changed: greeting images can upload to imgbb or a custom upload URL (self-hosted, S3/R2) instead of only freeimage.host — pick the host in Settings → Integrations. Unconfigured installs keep using freeimage.host exactly as before.',
@@ -3136,12 +3137,60 @@ function assistReviewCycle(review, delta = 1) {
 }
 /* ASSIST-REVIEW-END */
 
+/* ASSIST-SCOPE-START */
+// G2: Enhance can rewrite one fragment of the composer instead of the whole
+// draft. `assistScopeFromDraft` decides the span (the selection, trimmed so
+// surrounding spaces stay put, or the whole draft), `assistScopeSplice` puts the
+// accepted rewrite back and reports where the caret should land, and the tone
+// presets below add a rewrite instruction on top of whatever direction the user
+// typed.
+const ASSIST_TONES = [
+  { id: 'descriptive', label: 'More descriptive', hint: 'More descriptive: add sensory, physical and environmental detail without changing what happens.' },
+  { id: 'plainer', label: 'Plainer', hint: 'Plainer: use simpler words and shorter sentences while keeping the same meaning and voice.' },
+  { id: 'dialogue', label: 'Dialogue only', hint: 'Dialogue only: turn it into spoken lines with at most a short action beat and no narration.' },
+  { id: 'shorten', label: 'Shorten', hint: 'Shorter: cut it down to its strongest sentence or two, keeping the same intent.' },
+];
+
+function assistTonePresets() {
+  return ASSIST_TONES;
+}
+
+function assistToneHint(id) {
+  const tone = ASSIST_TONES.find(t => t.id === id);
+  return tone ? tone.hint : '';
+}
+
+function assistScopeFromDraft(draft, start = 0, end = 0) {
+  const val = typeof draft === 'string' ? draft : '';
+  const clamp = n => Math.max(0, Math.min(Math.round(Number(n) || 0), val.length));
+  let s = clamp(start);
+  let e = Math.max(s, clamp(end));
+  const whole = { scoped: false, text: val, start: 0, end: val.length };
+  if (s === e) return whole;
+  while (s < e && /\s/.test(val[s])) s++;
+  while (e > s && /\s/.test(val[e - 1])) e--;
+  if (s === e) return whole;
+  return { scoped: true, text: val.slice(s, e), start: s, end: e };
+}
+
+function assistScopeSplice(draft, scope, text) {
+  const val = typeof draft === 'string' ? draft : '';
+  const body = typeof text === 'string' ? text : '';
+  if (!scope || !scope.scoped) return { value: body, start: body.length, end: body.length };
+  const s = Math.max(0, Math.min(Math.round(Number(scope.start) || 0), val.length));
+  const e = Math.max(s, Math.min(Math.round(Number(scope.end) || 0), val.length));
+  const at = s + body.length;
+  return { value: val.slice(0, s) + body + val.slice(e), start: at, end: at };
+}
+/* ASSIST-SCOPE-END */
+
 Object.assign(window, {
   AppCtx, S, genId, estimateTokens, compressImage, uploadImage, CHANGELOG,
   formatTime, formatDate, renderMarkdown,
   charBg, charFg, buildSystemPrompt, substituteMacros, callAI, avatarPx,
   summarizeMessages, GistSync, RailwaySync, testProvider, providerProfile, generationExtras,
   shouldAutoSummarize, utilitySettings, assistReviewNext, assistReviewText, assistReviewCycle,
+  assistScopeFromDraft, assistScopeSplice, assistTonePresets, assistToneHint,
   chatToMarkdown, chatToJson, chatToHtml, chatExportRows, trashExpired,
   parseOpenAIUsage, parseAnthropicUsage, mergeUsage, contextTokensFromMessages,
   resolveContextLength, contextMeter, modelContextLength,
