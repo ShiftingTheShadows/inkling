@@ -1666,7 +1666,8 @@ function CharEditorModal({ editId, onClose }) {
     name: '', description: '', personality: '', scenario: '',
     firstMessage: '', exampleDialogues: '', systemPrompt: '',
     tags: '', avatar: '', alternateGreetings: [],
-    textboxStyle: 'none', blipPitch: null, expressions: {}, defaultExpression: '',
+    textboxStyle: 'none', blipPitch: null, blipSound: null, blipVolume: null,
+    expressions: {}, defaultExpression: '',
     ...(existing ? { ...existing, tags: (existing.tags || []).join(', '), alternateGreetings: existing.alternateGreetings || [] } : {}),
   });
   const [avatarPreview, setAvatarPreview] = useState(existing?.avatar || '');
@@ -2048,6 +2049,39 @@ function CharEditorModal({ editId, onClose }) {
                   onChange={e => set('blipPitch', Number(e.target.value))} />
                 <button type="button" className="btn-secondary btn-sm" style={{ marginTop: 6 }}
                   onClick={() => set('blipPitch', null)}>RESET TO AUTO</button>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">
+                  BLIP SOUND: {form.blipSound === true ? 'on (always)' : form.blipSound === false ? 'off (muted)' : 'follow Settings'}
+                </label>
+                <div style={{ display: 'flex', gap: 4 }}>
+                  {[[null, 'FOLLOW SETTINGS'], [true, 'ON'], [false, 'OFF']].map(([v, l]) => (
+                    <button key={l} type="button" onClick={() => set('blipSound', v)}
+                      style={{ flex: 1, padding: '6px', fontSize: 9, fontWeight: 700, letterSpacing: '0.08em',
+                        fontFamily: 'var(--font)',
+                        background: (form.blipSound ?? null) === v ? 'var(--accent3)' : 'var(--surface3)',
+                        border: `1px solid ${(form.blipSound ?? null) === v ? 'var(--accent3)' : 'var(--border2)'}`,
+                        color: (form.blipSound ?? null) === v ? 'var(--accent)' : 'var(--text3)', cursor: 'pointer' }}>{l}</button>
+                  ))}
+                </div>
+                <div className="form-hint" style={{ marginTop: 4 }}>
+                  FOLLOW SETTINGS uses the global Textbox typing sound switch in Settings → Appearance. ON and OFF override it for this character only.
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">
+                  BLIP VOLUME: {Math.round((typeof form.blipVolume === 'number' ? form.blipVolume : 1) * 100)}%
+                </label>
+                <input type="range" className="form-range" min={0} max={100} step={5}
+                  value={Math.round((typeof form.blipVolume === 'number' ? form.blipVolume : 1) * 100)}
+                  onChange={e => set('blipVolume', Number(e.target.value) / 100)} />
+                <button type="button" className="btn-secondary btn-sm" style={{ marginTop: 6 }}
+                  onClick={() => set('blipVolume', null)}>RESET TO FULL</button>
+                <div className="form-hint" style={{ marginTop: 4 }}>
+                  Scales this character's typing blip. 0% is the same as muting it. Saved on the character, so it syncs.
+                </div>
               </div>
 
               <div className="form-group">

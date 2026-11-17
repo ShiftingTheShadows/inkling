@@ -107,6 +107,8 @@ const TOOLS = [
         alternate_greetings: { type: 'array', items: { type: 'string' }, description: 'Additional opening messages you can swipe between.' },
         avatar: { type: 'string', description: 'Optional image URL or data URI.' },
         textbox_style: { type: 'string', enum: ['none', 'undertale', 'deltarune'], description: 'Render this character\'s replies as an Undertale or Deltarune dialogue box.' },
+        blip_sound: { type: ['boolean', 'null'], description: 'Typing-blip sound for this character: true forces it on, false mutes it, null follows the global Settings switch.' },
+        blip_volume: { type: ['number', 'null'], description: 'Typing-blip volume for this character, 0 to 1 (0 mutes). Null means full volume.' },
       },
       required: ['name', 'first_message'],
     },
@@ -129,6 +131,8 @@ const TOOLS = [
         alternate_greetings: { type: 'array', items: { type: 'string' } },
         avatar: { type: 'string' },
         textbox_style: { type: 'string', enum: ['none', 'undertale', 'deltarune'], description: 'Render this character\'s replies as an Undertale or Deltarune dialogue box.' },
+        blip_sound: { type: ['boolean', 'null'], description: 'Typing-blip sound for this character: true forces it on, false mutes it, null follows the global Settings switch.' },
+        blip_volume: { type: ['number', 'null'], description: 'Typing-blip volume for this character, 0 to 1 (0 mutes). Null means full volume.' },
       },
       required: ['character'],
     },
@@ -154,6 +158,8 @@ const ARG_MAP = {
   system_prompt: 'systemPrompt',
   alternate_greetings: 'alternateGreetings',
   textbox_style: 'textboxStyle',
+  blip_sound: 'blipSound',
+  blip_volume: 'blipVolume',
 };
 const toFields = args => {
   const out = {};

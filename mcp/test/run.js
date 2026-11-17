@@ -181,6 +181,18 @@ blob = await dump();
 check('textboxStyle persisted',
   blob.data.characters.find(c => c.name === 'Mox').textboxStyle === 'deltarune');
 
+const blip = await call('inkling_update_character', { character: 'Mox', blip_sound: false, blip_volume: 0.4 });
+check('blip volume/toggle round-trip', !blip.isError, blip.text);
+blob = await dump();
+const moxBlip = blob.data.characters.find(c => c.name === 'Mox');
+check('blipSound persisted', moxBlip.blipSound === false, moxBlip.blipSound);
+check('blipVolume persisted', moxBlip.blipVolume === 0.4, moxBlip.blipVolume);
+
+const clearBlip = await call('inkling_update_character', { character: 'Mox', blip_sound: null, blip_volume: null });
+blob = await dump();
+check('null clears the blip override back to Settings',
+  !clearBlip.isError && blob.data.characters.find(c => c.name === 'Mox').blipSound === null, clearBlip.text);
+
 // ── delete ────────────────────────────────────────────────
 const unconfirmed = await call('inkling_delete_character', { character: 'Late', confirm: false });
 check('delete without confirm refused', unconfirmed.isError && /confirm:true/.test(unconfirmed.text));

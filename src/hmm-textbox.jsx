@@ -3,8 +3,8 @@
 // box. It knows nothing about chat, sending or storage, so the later
 // fullscreen "present mode" can reuse it unchanged.
 const { useState, useEffect, useRef, useMemo, useCallback } = React;
-const { parseTextbox, expressionAt, resolveExpressionKey, pitchForCharacter,
-  shouldAutoAdvancePage, textboxAutoAdvanceMs } = window;
+const { parseTextbox, expressionAt, resolveExpressionKey,
+  shouldAutoAdvancePage, textboxAutoAdvanceMs, blipForCharacter } = window;
 
 const DEFAULT_COLS = 46;
 const DEFAULT_ROWS = 3;
@@ -29,17 +29,21 @@ function ensureAudio() {
     if (__audioCtx.state === 'suspended') __audioCtx.resume();
   } catch { /* audio is decorative, never break over it */ }
 }
-function blip(pitch) {
+function blip(pitch, volume = 1) {
   try {
     const Ctx = window.AudioContext || window.webkitAudioContext;
     if (!Ctx) return;
     __audioCtx = __audioCtx || new Ctx();
     if (__audioCtx.state === 'suspended') return; // waiting on a user gesture
+    // The old fixed 0.04 peak is full volume; a character's own volume scales
+    // it, and zero is a deliberate mute rather than a near-silent blip.
+    const peak = 0.04 * Math.min(1, Math.max(0, Number(volume) || 0));
+    if (!(peak > 0)) return;
     const osc = __audioCtx.createOscillator();
     const gain = __audioCtx.createGain();
     osc.type = 'square';
     osc.frequency.value = pitch;
-    gain.gain.setValueAtTime(0.04, __audioCtx.currentTime);
+    gain.gain.setValueAtTime(peak, __audioCtx.currentTime);
     gain.gain.exponentialRampToValueAtTime(0.001, __audioCtx.currentTime + 0.05);
     osc.connect(gain).connect(__audioCtx.destination);
     osc.start();
@@ -74,6 +78,13 @@ function Textbox({ char, text, settings, streaming, isLatest = true, onChoice, o
   const [autoPaused, setAutoPaused] = useState(false);
   const timer = useRef(null);
 
+  // C22: the character's own volume/on-off override, resolved against the
+  // global Settings switch once per character/settings change, not per letter.
+  const blipSpec = useMemo(
+    () => blipForCharacter(char, settings),
+    [char, settings?.textboxSound]
+  );
+
   const current = pages[Math.min(page, pages.length - 1)] || { text: '', start: 0, map: [] };
   const full = current.text;
   const done = shown >= full.length;
@@ -102,12 +113,12 @@ function Textbox({ char, text, settings, streaming, isLatest = true, onChoice, o
       setShown(n => {
         const next = n + 1;
         const ch = full[n];
-        if (settings?.textboxSound && ch && !/\s|[.,!?;:]/.test(ch)) blip(pitchForCharacter(char));
+        if (blipSpec.on && ch && !/\s|[.,!?;:]/.test(ch)) blip(blipSpec.pitch, blipSpec.volume);
         return next;
       });
     }, 1000 / cps);
     return () => clearInterval(timer.current);
-  }, [full, done, instant, settings?.textboxSpeed, settings?.textboxSound, char]);
+  }, [full, done, instant, settings?.textboxSpeed, settings?.textboxSound, char, blipSpec]);
 
   // C23: a different message (a chat switch, or a regenerated reply) gets its
   // own auto-advance; a longer prefix of the same reply does not, so pausing

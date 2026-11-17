@@ -7,7 +7,7 @@ them without restating them.
 Effort tags: **S** ≈ under an hour, **M** ≈ an afternoon, **L** ≈ a day or more.
 
 > **Status:** D24, D27, A3, F35, D25, A4, A1, A2, A5, A6, A7, B9, B10, B11, B12,
-> A8, B13, B14, B15, B16, B17, B18, C19, C20, C21, C23, D26, D28, D29, D30, E31, E32, E34, F38,
+> A8, B13, B14, B15, B16, B17, B18, C19, C20, C21, C22, C23, D26, D28, D29, D30, E31, E32, E34, F38,
 > F39 and F44 are implemented — see
 > [plans/2026-11-17-data-safety-three.md](superpowers/plans/2026-11-17-data-safety-three.md).
 > D29's three product decisions were answered before it was built; the chosen paths are
@@ -103,8 +103,12 @@ funnels through one OpenAI-compatible branch using a single shared
   absent from the sync payload and exported backups, so another device re-uploads its own; a
   proportional font warns (measured `i` vs `W`) instead of blocking, because the textbox only
   needs monospace for alignment. *(S)*
-- **C22.** **Blip volume / on-off per character** — `textboxSound` is global, `blipPitch`
-  is already per character. *(S)*
+- **C22 — done.** **Per-character blip volume / on-off.** The character editor's Textbox tab
+  gains a BLIP SOUND choice — follow the global Settings switch, always on, or muted — and a
+  BLIP VOLUME slider from 0–100% (0% is a mute), both stored on the character record so they
+  sync and appear in backups. The typing path resolves them once per character
+  (`blipForCharacter`), scales the synthesized blip's gain, and leaves the existing global
+  switch as the default, so a character with no override sounds exactly as before. *(S)*
 - **C23 — done.** **Auto-advance pages.** A Settings → Appearance checkbox
   (`textboxAutoAdvance`, off by default) makes the newest textbox turn its own pages: it types,
   waits two seconds, then shows the next page, repeating until the last one. Historical replies
@@ -185,11 +189,10 @@ funnels through one OpenAI-compatible branch using a single shared
 Everything marked done above is shipped; this list is only the open items, in the order they
 should be tackled.
 
-1. **C22** — per-character blip volume/toggle.
-2. **E33** — message edit/delete, folder tree, and `fields` selection for lighter MCP payloads.
-3. **F36** — stop reading every chat in the sidebar render.
-4. **F37** — alphabetical sort option in the sidebar.
-5. **F40** — better page reading and keyless search; DNS-rebinding hardening.
-6. **F41** — configurable image host.
-7. **F42** — lazy IDB loading; matters only once libraries get big.
-8. **F43** — stale "Netlify" comment in `build.mjs`.
+1. **E33** — message edit/delete, folder tree, and `fields` selection for lighter MCP payloads.
+2. **F36** — stop reading every chat in the sidebar render.
+3. **F37** — alphabetical sort option in the sidebar.
+4. **F40** — better page reading and keyless search; DNS-rebinding hardening.
+5. **F41** — configurable image host.
+6. **F42** — lazy IDB loading; matters only once libraries get big.
+7. **F43** — stale "Netlify" comment in `build.mjs`.

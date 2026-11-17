@@ -249,4 +249,28 @@ ok('different names differ',
   ok('auto-advance ignores a nonsensical page', M.shouldAutoAdvancePage({ ...base, page: NaN }) === false);
 }
 
+// C22: a character's own blip volume/on-off, resolved against the global
+// Settings switch. Nothing set means "follow Settings at full volume", which
+// keeps existing characters sounding exactly as they did.
+{
+  ok('volume defaults to full', M.clampBlipVolume(null) === 1 && M.clampBlipVolume(undefined) === 1);
+  ok('volume must be a number', M.clampBlipVolume('0.5') === 1 && M.clampBlipVolume(NaN) === 1);
+  ok('volume clamps to 0..1', M.clampBlipVolume(-2) === 0 && M.clampBlipVolume(4) === 1);
+  ok('volume keeps a real value', M.clampBlipVolume(0.45) === 0.45);
+
+  const globalOn = { textboxSound: true };
+  const globalOff = { textboxSound: false };
+  eq('no override follows the global switch on', M.blipForCharacter({ name: 'Vera' }, globalOn).on, true);
+  eq('no override follows the global switch off', M.blipForCharacter({ name: 'Vera' }, globalOff).on, false);
+  eq('a character override beats the global off', M.blipForCharacter({ name: 'Vera', blipSound: true }, globalOff).on, true);
+  eq('a character mute beats the global on', M.blipForCharacter({ name: 'Vera', blipSound: false }, globalOn).on, false);
+  eq('zero volume is a mute even with sound on', M.blipForCharacter({ name: 'Vera', blipVolume: 0 }, globalOn).on, false);
+  eq('a character volume is honoured', M.blipForCharacter({ name: 'Vera', blipVolume: 0.35 }, globalOn).volume, 0.35);
+  eq('a missing volume is full volume', M.blipForCharacter({ name: 'Vera' }, globalOn).volume, 1);
+  ok('the blip pitch still comes from the character',
+    M.blipForCharacter({ name: 'Vera', blipPitch: 440 }, globalOn).pitch === 440);
+  eq('no global settings means silent without an override', M.blipForCharacter({ name: 'Vera' }).on, false);
+  eq('an override can sound with no global settings at all', M.blipForCharacter({ name: 'Vera', blipSound: true }).on, true);
+}
+
 done();

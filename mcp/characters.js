@@ -6,7 +6,7 @@ export const CHAR_FIELDS = [
   'name', 'description', 'personality', 'scenario',
   'firstMessage', 'exampleDialogues', 'systemPrompt',
   'tags', 'avatar', 'alternateGreetings',
-  'textboxStyle', 'blipPitch', 'defaultExpression',
+  'textboxStyle', 'blipPitch', 'blipSound', 'blipVolume', 'defaultExpression',
 ];
 
 // Matches genId() in src/hmm-utils.jsx
@@ -19,7 +19,8 @@ export function normalizeInput(input = {}) {
   for (const k of CHAR_FIELDS) {
     if (input[k] === undefined) continue;
     if (k === 'tags' || k === 'alternateGreetings') out[k] = asArray(input[k]);
-    else if (k === 'blipPitch') out[k] = input[k] === null ? null : Number(input[k]);
+    else if (k === 'blipPitch' || k === 'blipVolume') out[k] = input[k] === null ? null : Number(input[k]);
+    else if (k === 'blipSound') out[k] = input[k] === null ? null : !!input[k];
     else out[k] = String(input[k] ?? '');
   }
   return out;
