@@ -339,6 +339,7 @@ const CHANGELOG = [
     version: '2026-11-17',
     date: 'Nov 17, 2026',
     items: [
+      'New: long textbox replies can turn their own pages (Settings → Appearance → Auto-advance textbox pages). The newest reply types, waits two seconds, then moves to the next page until the box is done; clicking or using the arrows takes over and stops it.',
       'New: end-to-end encryption for Railway sync. The backup is stored as an AES-GCM envelope keyed by a passphrase the server never sees, unlocked once per device (optionally remembered). Enabling encrypts and replaces the plaintext backup, LOCK NOW drops the key, and changing the passphrase re-encrypts and re-uploads the backup; a forgotten passphrase cannot be recovered, so download a plaintext backup first.',
       'Changed: a locked or unencrypted browser refuses to push plaintext over an encrypted backup, and MCP says it cannot read or edit ciphertext instead of writing over it.',
       'Note for self-hosted sync servers: the encrypted-backup flag on /api/sync/meta takes effect once server/ is redeployed. Until then pulls still detect and decrypt encrypted backups, but a browser without the passphrase cannot be warned before it pushes.',
@@ -1164,6 +1165,22 @@ function pitchForCharacter(char) {
   let h = 0;
   for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h);
   return 200 + (Math.abs(h) % 600);
+}
+
+// C23: how long a finished page sits before the box turns itself. Long enough
+// to read the last line, short enough that a four-page reply does not feel
+// stuck; once typing is done the reader can always click to go faster.
+const TEXTBOX_AUTO_ADVANCE_MS = 2000;
+function textboxAutoAdvanceMs() { return TEXTBOX_AUTO_ADVANCE_MS; }
+
+// Whether the newest textbox should turn its own page. Historical boxes are
+// already fully revealed and must stay still, a streaming reply is still
+// growing, the last page has nowhere to go, and `paused` is set the moment the
+// reader pages by hand so they keep control of that box.
+function shouldAutoAdvancePage({ enabled, instant, isLatest, streaming, done, page, pageCount, paused } = {}) {
+  if (!enabled || instant || !isLatest || streaming || !done || paused) return false;
+  if (!Number.isInteger(page) || !Number.isInteger(pageCount)) return false;
+  return page >= 0 && page < pageCount - 1;
 }
 /* TEXTBOX-EXPORTS-END */
 
@@ -2697,4 +2714,5 @@ Object.assign(window, {
   deriveSyncKey, syncKeyFingerprint, newSyncSalt,
   downloadCharJson, downloadCharPng,
   parseTextbox, expressionAt, resolveExpressionKey, expressionNameFromFilename, pitchForCharacter,
+  textboxAutoAdvanceMs, shouldAutoAdvancePage,
 });

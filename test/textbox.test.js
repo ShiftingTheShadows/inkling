@@ -230,4 +230,23 @@ ok('explicit blipPitch wins', M.pitchForCharacter({ name: 'Vera', blipPitch: 440
 ok('different names differ',
   M.pitchForCharacter({ name: 'Vera' }) !== M.pitchForCharacter({ name: 'Mox' }));
 
+// C23: auto-advance turns the newest, finished, multi-page box by itself once
+// the reading pause is over.
+{
+  const base = { enabled: true, instant: false, isLatest: true, streaming: false, done: true, page: 0, pageCount: 3, paused: false };
+  ok('auto-advance pauses two seconds per page', M.textboxAutoAdvanceMs() === 2000);
+  ok('auto-advance turns a finished page', M.shouldAutoAdvancePage(base) === true);
+  ok('auto-advance fires on later pages', M.shouldAutoAdvancePage({ ...base, page: 1 }) === true);
+  ok('auto-advance stops on the last page', M.shouldAutoAdvancePage({ ...base, page: 2 }) === false);
+  ok('auto-advance stays put on a single-page box', M.shouldAutoAdvancePage({ ...base, pageCount: 1 }) === false);
+  ok('auto-advance needs the setting', M.shouldAutoAdvancePage({ ...base, enabled: false }) === false);
+  ok('auto-advance leaves historical boxes alone', M.shouldAutoAdvancePage({ ...base, isLatest: false }) === false);
+  ok('auto-advance leaves instantly-revealed boxes alone', M.shouldAutoAdvancePage({ ...base, instant: true }) === false);
+  ok('auto-advance waits for the typewriter', M.shouldAutoAdvancePage({ ...base, done: false }) === false);
+  ok('auto-advance waits for the stream to end', M.shouldAutoAdvancePage({ ...base, streaming: true }) === false);
+  ok('a manual page turn pauses auto-advance', M.shouldAutoAdvancePage({ ...base, paused: true }) === false);
+  ok('auto-advance tolerates missing state', M.shouldAutoAdvancePage() === false);
+  ok('auto-advance ignores a nonsensical page', M.shouldAutoAdvancePage({ ...base, page: NaN }) === false);
+}
+
 done();

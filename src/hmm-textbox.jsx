@@ -3,7 +3,8 @@
 // box. It knows nothing about chat, sending or storage, so the later
 // fullscreen "present mode" can reuse it unchanged.
 const { useState, useEffect, useRef, useMemo, useCallback } = React;
-const { parseTextbox, expressionAt, resolveExpressionKey, pitchForCharacter } = window;
+const { parseTextbox, expressionAt, resolveExpressionKey, pitchForCharacter,
+  shouldAutoAdvancePage, textboxAutoAdvanceMs } = window;
 
 const DEFAULT_COLS = 46;
 const DEFAULT_ROWS = 3;
@@ -68,6 +69,9 @@ function Textbox({ char, text, settings, streaming, isLatest = true, onChoice, o
 
   const [page, setPage] = useState(0);
   const [shown, setShown] = useState(instant ? Infinity : 0);
+  // C23: set the moment the reader pages by hand, so auto-advance hands the
+  // box back to them instead of fighting for the next page.
+  const [autoPaused, setAutoPaused] = useState(false);
   const timer = useRef(null);
 
   const current = pages[Math.min(page, pages.length - 1)] || { text: '', start: 0, map: [] };
@@ -105,6 +109,28 @@ function Textbox({ char, text, settings, streaming, isLatest = true, onChoice, o
     return () => clearInterval(timer.current);
   }, [full, done, instant, settings?.textboxSpeed, settings?.textboxSound, char]);
 
+  // C23: a different message (a chat switch, or a regenerated reply) gets its
+  // own auto-advance; a longer prefix of the same reply does not, so pausing
+  // mid-stream stays paused.
+  const prevTextRef = useRef(text);
+  useEffect(() => {
+    if (!String(text || '').startsWith(String(prevTextRef.current || ''))) setAutoPaused(false);
+    prevTextRef.current = text;
+  }, [text]);
+
+  // C23: turn the finished page by itself after the reading pause. Only the
+  // newest reply does this, and only while nothing is still streaming in.
+  useEffect(() => {
+    const on = shouldAutoAdvancePage({
+      enabled: !!settings?.textboxAutoAdvance,
+      instant, isLatest, streaming, done, page,
+      pageCount: pages.length, paused: autoPaused,
+    });
+    if (!on) return undefined;
+    const id = setTimeout(() => setPage(p => Math.min(pages.length - 1, p + 1)), textboxAutoAdvanceMs());
+    return () => clearTimeout(id);
+  }, [settings?.textboxAutoAdvance, instant, isLatest, streaming, done, page, pages.length, autoPaused]);
+
   // First click doubles as the audio unlock: resume the context here, inside
   // the gesture, so blips can sound on the next message even though this one's
   // typing is being skipped.
@@ -113,10 +139,11 @@ function Textbox({ char, text, settings, streaming, isLatest = true, onChoice, o
   // C20: one click does the obvious next thing — finish the typewriter, then
   // turn the page — instead of making the little ▼ the only way forward.
   const advance = useCallback(() => {
+    setAutoPaused(true);
     if (!done) { skip(); return; }
     setPage(p => Math.min(pages.length - 1, p + 1));
   }, [done, pages.length, skip]);
-  const back = useCallback(() => setPage(p => Math.max(0, p - 1)), []);
+  const back = useCallback(() => { setAutoPaused(true); setPage(p => Math.max(0, p - 1)); }, []);
 
   // ── Resize grip ────────────────────────────────────────────────
   // Pointer events rather than mouse+touch pairs: one code path covers mouse,
@@ -233,13 +260,13 @@ function Textbox({ char, text, settings, streaming, isLatest = true, onChoice, o
           {pages.length > 1 && (
             <>
               <button className="tbx-nav" disabled={page === 0}
-                onClick={() => setPage(p => Math.max(0, p - 1))}>◀ BACK</button>
+                onClick={back}>◀ BACK</button>
               <span className="tbx-counter">{Math.min(page + 1, pages.length)}/{pages.length}</span>
             </>
           )}
           {!last && done && (
             <button className="tbx-nav tbx-next"
-              onClick={() => setPage(p => Math.min(pages.length - 1, p + 1))}>▼</button>
+              onClick={advance}>▼</button>
           )}
         </div>
         {onResize && (
