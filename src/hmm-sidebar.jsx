@@ -1,6 +1,7 @@
 // hmm-sidebar.jsx — Character list sidebar
 const { useState, useContext } = React;
-const { AppCtx, S, charBg, charFg, avatarPx, sidebarRows } = window;
+const { AppCtx, S, charBg, charFg, avatarPx, sidebarRows,
+  sidebarSortOptions, sidebarSortValue, withSidebarSort, sidebarSortCharacters } = window;
 
 function CharAvatar({ char, size = 40 }) {
   const [failed, setFailed] = useState(false);
@@ -61,8 +62,10 @@ function CharCard({ row, isActive, onSelect, onFav }) {
 function Sidebar() {
   const ctx = useContext(AppCtx);
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState('all');
   const [tagFilter, setTagFilter] = useState(null);
+  // F37: the order choice lives in settings, so a reload keeps it selected.
+  const sortMode = sidebarSortValue(ctx.settings);
+  const setSort = mode => ctx.saveSettings(withSidebarSort(ctx.settings, mode));
   const allTags = [...new Set(ctx.chars.flatMap(c => c.tags || []))].sort();
 
   const toggleFav = id => {
@@ -82,9 +85,10 @@ function Sidebar() {
       (c.description || '').toLowerCase().includes(q)
     );
   }
-  if (filter === 'fav') chars = chars.filter(c => c.favorite);
-  if (filter === 'recent') chars = [...chars].sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+  if (sortMode === 'fav') chars = chars.filter(c => c.favorite);
   if (tagFilter) chars = chars.filter(c => (c.tags || []).includes(tagFilter));
+  // Sorting last so a filter never reshuffles the order unexpectedly.
+  chars = sidebarSortCharacters(chars, sortMode);
   // One metadata read for the whole list, after filtering, so a 500-character
   // library costs the same as a 5-character one.
   const rows = sidebarRows(chars, S);
@@ -108,11 +112,11 @@ function Sidebar() {
           )}
         </div>
         <div className="char-filters">
-          {[['all', 'ALL'], ['fav', '★ FAV'], ['recent', 'RECENT']].map(([v, l]) => (
+          {sidebarSortOptions().map(([v, l]) => (
             <button
               key={v}
-              className={`filter-btn${filter === v ? ' active' : ''}`}
-              onClick={() => setFilter(v)}
+              className={`filter-btn${sortMode === v ? ' active' : ''}`}
+              onClick={() => setSort(v)}
             >{l}</button>
           ))}
           <button
