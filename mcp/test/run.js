@@ -54,8 +54,14 @@ const call = async (name, args = {}) => {
 
 // ── tools are advertised ──────────────────────────────────
 const { tools } = await client.listTools();
-check('exposes 28 tools', tools.length === 28, tools.map(t => t.name));
+check('exposes 29 tools', tools.length === 29, tools.map(t => t.name));
 check('advertises message search', tools.some(t => t.name === 'inkling_search_messages'));
+
+// ── character export (E32) ────────────────────────────────
+const card = await call('inkling_export_character', { character: 'Vera' });
+check('export returns a v2 character card',
+  card.json?.spec === 'chara_card_v2' && card.json?.data?.name === 'Vera' && card.json?.data?.first_mes === 'You again.', card.json);
+check('export omits the avatar', !JSON.stringify(card.json).includes('data:image'));
 check('create requires name + first_message',
   JSON.stringify(tools.find(t => t.name === 'inkling_create_character').inputSchema.required) === '["name","first_message"]');
 

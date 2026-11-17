@@ -150,6 +150,50 @@ function App() {
   // a failure that happened during boot-time migration.
   useEffect(() => S.onStorageError(setStorageFault), []);
 
+  // F44: every modal behaves like a dialog — role/aria-modal, a focus trap while
+  // it is open, and focus restored to whatever opened it. Icon-only buttons get
+  // an accessible name from their title, including ones rendered later.
+  useEffect(() => {
+    const fixLabels = root => root?.querySelectorAll?.('[title]:not([aria-label])').forEach(el => el.setAttribute('aria-label', el.getAttribute('title')));
+    fixLabels(document);
+    const obs = new MutationObserver(muts => muts.forEach(m => m.addedNodes.forEach(n => { if (n.nodeType === 1) fixLabels(n); })));
+    obs.observe(document.body, { childList: true, subtree: true });
+    return () => obs.disconnect();
+  }, []);
+
+  useEffect(() => {
+    if (!modal) return;
+    const overlay = document.querySelector('.modal-overlay');
+    if (!overlay) return;
+    const dialog = overlay.querySelector('.modal') || overlay.firstElementChild || overlay;
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
+    if (!dialog.getAttribute('aria-label')) {
+      const title = dialog.querySelector('.modal-title')?.textContent?.trim();
+      dialog.setAttribute('aria-label', title || 'Dialog');
+    }
+    const prev = document.activeElement;
+    const focusables = () => Array.from(dialog.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'))
+      .filter(el => !el.disabled && el.offsetParent !== null);
+    if (!dialog.contains(document.activeElement)) focusables()[0]?.focus();
+    const onKey = e => {
+      if (e.key !== 'Tab') return;
+      const list = focusables();
+      if (!list.length) return;
+      const i = list.indexOf(document.activeElement);
+      if (e.shiftKey && i <= 0) { e.preventDefault(); list[list.length - 1].focus(); }
+      else if (!e.shiftKey && (i === -1 || i === list.length - 1)) { e.preventDefault(); list[0].focus(); }
+    };
+    dialog.addEventListener('keydown', onKey);
+    return () => {
+      dialog.removeEventListener('keydown', onKey);
+      try { prev?.focus?.(); } catch {}
+    };
+  }, [modal]);
+
+  // D26: drop trash older than the 30-day retention once per launch.
+  useEffect(() => { S.purgeTrash(); }, []);
+
   // Railway auto-sync: push shortly after any local data change (see
   // __notifyDataChange in hmm-utils.jsx), and pull-then-reload when another
   // device has pushed something newer. Opt-in via Settings → Sync → Railway.

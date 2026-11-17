@@ -2,7 +2,7 @@
 // Shapes mirror what the app writes (PersonasModal, FolderEditDialog,
 // LorebookModal in src/), so anything created here opens cleanly in the UI.
 
-import { resolveCharacter, genId } from './characters.js';
+import { resolveCharacter, genId, charaCardV2 } from './characters.js';
 import { assertPayloadShape } from './sync.js';
 
 const str = v => String(v ?? '');
@@ -45,6 +45,11 @@ export const EXTRA_TOOLS = [
     inputSchema: { type: 'object', properties: {
       persona: { type: 'string' }, confirm: { type: 'boolean' },
     }, required: ['persona', 'confirm'] } },
+
+  { name: 'inkling_export_character', description: 'Return one character as a chara_card_v2 JSON object, ready to import into another install.',
+    inputSchema: { type: 'object', properties: {
+      character: { type: 'string', description: 'Character id or name.' },
+    }, required: ['character'] } },
 
   // chats
   { name: 'inkling_get_chat', description: 'Read a character\'s chat messages (most recent first page by default). Use offset to page backwards.',
@@ -191,6 +196,13 @@ export async function handleExtra(name, args, { sync, ok, fail }) {
       });
       if (res.aborted) return fail(res.message);
       return ok({ deleted: { id: removed.id, name: removed.name }, revision: res.revision });
+    }
+
+    case 'inkling_export_character': {
+      const { data } = await sync.pull();
+      needBackup(data);
+      const char = resolveCharacter(data.characters || [], args.character);
+      return ok(charaCardV2(char));
     }
 
     case 'inkling_get_chat': {

@@ -47,6 +47,31 @@ export function buildCharacter(input) {
 
 // Avatars are base64 data URIs and can be hundreds of KB. Never return them
 // in a listing, and only on request for a single character.
+// E32: SillyTavern-compatible chara_card_v2, so a character can move between
+// installs without a browser round-trip.
+export function charaCardV2(char) {
+  return {
+    spec: 'chara_card_v2',
+    spec_version: '2.0',
+    data: {
+      name: char.name || '',
+      description: char.description || '',
+      personality: char.personality || '',
+      scenario: char.scenario || '',
+      first_mes: char.firstMessage || '',
+      mes_example: char.exampleDialogues || '',
+      system_prompt: char.systemPrompt || '',
+      post_history_instructions: '',
+      alternate_greetings: char.alternateGreetings || [],
+      tags: char.tags || [],
+      creator: '',
+      character_version: '',
+      creator_notes: '',
+      extensions: {},
+    },
+  };
+}
+
 export function summarize(char, data = {}) {
   return {
     id: char.id,

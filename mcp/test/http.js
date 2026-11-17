@@ -31,7 +31,7 @@ const base = `http://127.0.0.1:${httpServer.address().port}`;
 const client = new Client({ name: 'test', version: '0' }, { capabilities: {} });
 await client.connect(new StreamableHTTPClientTransport(new URL(`${base}/mcp/${SECRET}`)));
 const { tools } = await client.listTools();
-check('lists tools over HTTP', tools.length === 28, tools.length);
+check('lists tools over HTTP', tools.length === 29, tools.length);
 const st = await client.callTool({ name: 'inkling_status', arguments: {} });
 check('status works over HTTP', JSON.parse(st.content[0].text).characters === 1);
 const cr = await client.callTool({ name: 'inkling_create_character', arguments: { name: 'Remote', first_message: 'hello from phone' } });

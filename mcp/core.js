@@ -172,7 +172,7 @@ const fail = message => ({ content: [{ type: 'text', text: `Error: ${message}` }
 export const READ_ONLY = /^(1|true|yes)$/i.test(String(process.env.INKLING_MCP_READ_ONLY || ''));
 export const READ_TOOLS = new Set([
   'inkling_status', 'inkling_list_characters', 'inkling_get_character',
-  'inkling_list_personas', 'inkling_get_chat', 'inkling_search_messages',
+  'inkling_list_personas', 'inkling_get_chat', 'inkling_search_messages', 'inkling_export_character',
   'inkling_list_folders', 'inkling_list_scripts', 'inkling_get_script',
 ]);
 
