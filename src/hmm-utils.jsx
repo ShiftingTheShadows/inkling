@@ -378,6 +378,8 @@ const S = {
       showTokens: true,
       showTimestamps: true, // B17 toggle lives in Settings → Appearance
       sidebarSort: 'all', // F37: ALL | FAV | RECENT | A→Z, persisted like any other choice
+      imageHost: 'freeimage', // F41: freeimage | imgbb | custom — the destination for greeting images
+      imageHostEndpoint: '', // F41: only used by the custom host; must be a public https URL
       theme: 'terminal',
       avatarScale: 1, // 0.4 (tiny) – 2.5 (huge)
       provider: 'claude', // 'claude' | 'openrouter' | 'local' | 'custom'
@@ -468,6 +470,7 @@ const CHANGELOG = [
     version: '2026-11-17',
     date: 'Nov 17, 2026',
     items: [
+      'Changed: greeting images can upload to imgbb or a custom upload URL (self-hosted, S3/R2) instead of only freeimage.host — pick the host in Settings → Integrations. Unconfigured installs keep using freeimage.host exactly as before.',
       'Changed: web search reads JavaScript-rendered pages. A page that arrives as an empty shell is re-read through a renderer instead of coming back blank, and keyless search falls back to a second no-key provider when DuckDuckGo blocks the request, so search still works with no API key set. Page reads also verify where a hostname actually points (including each redirect) before fetching, and the remote MCP server refuses requests addressed to an unexpected host or coming from another site.',
       'New: an A→Z sort for the character sidebar, alongside ALL, ★ FAV and RECENT. The choice is saved with your settings, so it is still selected after a reload.',
       'Changed: the character sidebar no longer re-reads every chat to draw its preview lines. A one-line summary is written when a chat is saved and the list reads that, so big libraries no longer scan every message on every render; existing chats are summarized once on the next load.',
@@ -582,16 +585,47 @@ function compressImage(dataUrl, maxDim = 512, quality = 0.85) {
     img.src = dataUrl;
   });
 }
-// Uploads an image (via freeimage.host — see api/imgupload.js for why not
-// Catbox) and returns its public URL, used to auto-embed images in greetings
-// instead of a manual upload-then-paste-the-link workflow. Routed through
-// /api/imgupload rather than calling the host directly since it, like
-// Catbox, sends no CORS headers a browser fetch() could work with.
-async function uploadImage(file, apiKey) {
-  if (!apiKey?.trim()) throw new Error('Add an image host API key in Settings first');
+/* IMAGE-HOST-START */
+// F41: greeting-image uploads used to be hardwired to freeimage.host. The host
+// is now a setting; 'freeimage' stays the default so an unconfigured install
+// sends exactly the request it always did. Pure — maps settings onto the
+// multipart fields /api/imgupload reads (the server repeats these rules, so
+// the two must agree; test/imgupload.test.js pins that they do).
+const IMAGE_HOST_IDS = ['freeimage', 'imgbb', 'custom'];
+function resolveImageHost(settings) {
+  const id = String(settings?.imageHost || 'freeimage');
+  return IMAGE_HOST_IDS.includes(id) ? id : 'freeimage';
+}
+// freeimage and imgbb need a key; a custom endpoint may be open or may take
+// the key as an optional 'key' field.
+function imageHostNeedsKey(host) {
+  return host !== 'custom';
+}
+function imageUploadConfig(settings) {
+  const host = resolveImageHost(settings);
+  return {
+    host,
+    apiKey: String(settings?.imageHostApiKey || '').trim(),
+    endpoint: String(settings?.imageHostEndpoint || '').trim(),
+    needsKey: imageHostNeedsKey(host),
+  };
+}
+/* IMAGE-HOST-END */
+
+// Uploads an image to the configured host and returns its public URL, used to
+// auto-embed images in greetings instead of a manual upload-then-paste-the-link
+// workflow. Routed through /api/imgupload rather than calling the host directly
+// since the hosts, like Catbox, send no CORS headers a browser fetch() could
+// work with (see api/imgupload.js for the full history).
+async function uploadImage(file, settings) {
+  const cfg = imageUploadConfig(settings);
+  if (cfg.needsKey && !cfg.apiKey) throw new Error('Add an image host API key in Settings first');
+  if (cfg.host === 'custom' && !cfg.endpoint) throw new Error('Add the custom image host URL in Settings first');
   const fd = new FormData();
   fd.append('file', file);
-  fd.append('apiKey', apiKey.trim());
+  fd.append('host', cfg.host);
+  fd.append('apiKey', cfg.apiKey);
+  if (cfg.host === 'custom') fd.append('endpoint', cfg.endpoint);
   const res = await fetch('/api/imgupload', { method: 'POST', body: fd });
   let j = null;
   try { j = await res.json(); } catch {}
