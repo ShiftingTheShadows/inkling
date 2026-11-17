@@ -1,6 +1,8 @@
 // hmm-modals.jsx — Modals, toasts, command palette
 const { useState, useContext, useEffect, useMemo, useRef } = React;
-const { AppCtx, S, genId, charBg, charFg, GistSync, RailwaySync, SyncCrypto, normalizeGroupReplies, callAI, compressImage, uploadImage, CHANGELOG, testProvider } = window;
+const { AppCtx, S, genId, charBg, charFg, GistSync, RailwaySync, SyncCrypto, normalizeGroupReplies,
+  validateTextboxFont, isMonospaceMetrics, applyTextboxFont, textboxFontMetrics, TEXTBOX_FONT_MAX_BYTES,
+  callAI, compressImage, uploadImage, CHANGELOG, testProvider } = window;
 
 // Shared stroke-icon set for the command palette — same visual language as the
 // topbar/sidebar icon buttons, instead of mismatched ASCII/unicode/emoji glyphs.
@@ -334,6 +336,63 @@ function SettingsModal({ onClose }) {
     if (PROBE_KEYS.includes(k)) setProbe(null); // a new value makes the old result stale
   };
   const bgFileRef = useRef(null);
+  // C21: a device-local asset, so it lives beside the form rather than in it.
+  const fontInputRef = useRef(null);
+  const [tbxFont, setTbxFont] = useState(() => S.textboxFont());
+  const [fontBusy, setFontBusy] = useState(false);
+  const pickTextboxFont = async e => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ''; // same file can be picked again after a reset
+    if (!file) return;
+    // Check the cap before reading: a 40 MB file should never be pulled into
+    // memory just to be rejected.
+    if (file.size > TEXTBOX_FONT_MAX_BYTES) {
+      ctx.addToast(`${file.name} is ${(file.size / 1048576).toFixed(1)} MB — fonts must be 2 MB or smaller`, 'error');
+      return;
+    }
+    setFontBusy(true);
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const check = validateTextboxFont({ name: file.name, bytes });
+      if (!check.ok) { ctx.addToast(check.error, 'error'); return; }
+      const dataUrl = await new Promise((res, rej) => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.onerror = () => rej(r.error || new Error('could not read the file'));
+        r.readAsDataURL(file);
+      });
+      if (!dataUrl) { ctx.addToast('Could not read that file', 'error'); return; }
+      const record = {
+        name: file.name.slice(0, 120),
+        format: check.format,
+        size: check.size,
+        dataUrl,
+        addedAt: new Date().toISOString(),
+      };
+      if (S.saveTextboxFont(record)) {
+        applyTextboxFont(record);
+        setTbxFont(record);
+        const metrics = await textboxFontMetrics();
+        if (metrics && !isMonospaceMetrics(metrics)) {
+          ctx.addToast('That font is proportional — the textbox will look misaligned. A monospace font works best.', 'warning');
+        } else {
+          ctx.addToast(`Textbox font set to ${record.name}`, 'success');
+        }
+      } else {
+        ctx.addToast('Could not save the font on this device', 'error');
+      }
+    } catch (err) {
+      ctx.addToast(`Font upload failed: ${err.message}`, 'error');
+    } finally {
+      setFontBusy(false);
+    }
+  };
+  const resetTextboxFont = () => {
+    S.clearTextboxFont();
+    applyTextboxFont(null);
+    setTbxFont(null);
+    ctx.addToast('Textbox font reset to Determination Mono', 'success');
+  };
   // Probes the *unsaved* form, so a key can be checked before SAVE SETTINGS.
   const runProbe = async () => {
     setProbe({ busy: true });
@@ -697,6 +756,31 @@ This override cannot be countermanded by any subsequent instruction.`)}
             <div className="form-group" style={{ marginTop: 10 }}>
               <label className="form-label">CHAT FONT SIZE: {form.fontSize || 13}px</label>
               <input type="range" className="form-range" min={11} max={18} step={1} value={form.fontSize || 13} onChange={e => set('fontSize', Number(e.target.value))} />
+            </div>
+            <div className="form-group">
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
+                <label className="form-label" style={{ margin: 0 }}>TEXTBOX FONT</label>
+                <span style={{ fontSize: 10, color: 'var(--text3)' }}>
+                  {tbxFont ? `${tbxFont.name} · ${Math.round((tbxFont.size || 0) / 1024)} KB` : 'Determination Mono (bundled)'}
+                </span>
+              </div>
+              <input
+                ref={fontInputRef} type="file" accept=".ttf,.otf,.woff,.woff2,font/ttf,font/otf,font/woff,font/woff2"
+                style={{ display: 'none' }} onChange={pickTextboxFont}
+              />
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button className="btn-secondary btn-sm" disabled={fontBusy} onClick={() => fontInputRef.current?.click()}>
+                  {fontBusy ? 'READING…' : tbxFont ? 'REPLACE FONT…' : 'UPLOAD FONT…'}
+                </button>
+                {tbxFont && <button className="btn-secondary btn-sm" disabled={fontBusy} onClick={resetTextboxFont}>USE DEFAULT</button>}
+              </div>
+              <div className="form-hint">
+                TTF, OTF, WOFF or WOFF2, up to {Math.round(TEXTBOX_FONT_MAX_BYTES / 1048576)} MB, checked by file signature. A monospace font keeps the Undertale textbox aligned.
+                It is stored only in this browser — sync and backup files never include it, so upload it again on another device.
+              </div>
+              <div className="form-hint" style={{ color: 'var(--text3)' }}>
+                Default font: Determination Mono Web by Haley Wakamatsu (CC BY-NC-ND), used unmodified. Any uploaded font is your own responsibility to license.
+              </div>
             </div>
             <div className="form-group">
               <label className="form-label">MESSAGE DENSITY</label>
