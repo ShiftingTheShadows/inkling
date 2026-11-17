@@ -8,7 +8,7 @@ Effort tags: **S** ≈ under an hour, **M** ≈ an afternoon, **L** ≈ a day or
 
 > **Status:** D24, D27, A3, F35, D25, A4, A1, A2, A5, A6, A7, B9, B10, B11, B12,
 > A8, B13, B14, B15, B16, B17, B18, C19, C20, C21, C22, C23, D26, D28, D29, D30, E31, E32, E33, E34,
-> F38, F39 and F44 are implemented — see
+> F36, F38, F39 and F44 are implemented — see
 > [plans/2026-11-17-data-safety-three.md](superpowers/plans/2026-11-17-data-safety-three.md).
 > D29's three product decisions were answered before it was built; the chosen paths are
 > recorded in its entry, so they are not open questions.
@@ -167,7 +167,13 @@ funnels through one OpenAI-compatible branch using a single shared
 
 - **F35 — done.** Status bar shows `settings.model` even when the provider is OpenRouter/local —
   misleading. *(S)*
-- **F36.** Sidebar `CharCard` reads `S.chat(id)` for every row on every render. *(S)*
+- **F36 — done.** **Sidebar without chat reads.** A one-line chat summary (count, cleaned
+  preview, last speaker and timestamp) is written to `hmm_chat_meta` whenever a chat is saved,
+  and the character list builds its rows from that single map instead of calling `S.chat(id)`
+  per row. Opening or re-rendering the sidebar therefore costs one metadata read no matter how
+  many characters or messages exist; message bodies are read only when a chat opens. The map is
+  derived state, excluded from the sync payload, backfilled on the next boot for existing
+  chats, and dropped when a character is deleted. *(S)*
 - **F37.** Sidebar has no alphabetical sort (insertion order unless "recent"). *(S)*
 - **F38 — done.** No linter; `test/hooks-check.mjs` exists specifically to catch what
   `eslint-plugin-react-hooks` would find statically. *(S/M)*
@@ -193,9 +199,8 @@ funnels through one OpenAI-compatible branch using a single shared
 Everything marked done above is shipped; this list is only the open items, in the order they
 should be tackled.
 
-1. **F36** — stop reading every chat in the sidebar render.
-2. **F37** — alphabetical sort option in the sidebar.
-3. **F40** — better page reading and keyless search; DNS-rebinding hardening.
-4. **F41** — configurable image host.
-5. **F42** — lazy IDB loading; matters only once libraries get big.
-6. **F43** — stale "Netlify" comment in `build.mjs`.
+1. **F37** — alphabetical sort option in the sidebar.
+2. **F40** — better page reading and keyless search; DNS-rebinding hardening.
+3. **F41** — configurable image host.
+4. **F42** — lazy IDB loading; matters only once libraries get big.
+5. **F43** — stale "Netlify" comment in `build.mjs`.

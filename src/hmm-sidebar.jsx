@@ -1,6 +1,6 @@
 // hmm-sidebar.jsx — Character list sidebar
 const { useState, useContext } = React;
-const { AppCtx, S, charBg, charFg, avatarPx } = window;
+const { AppCtx, S, charBg, charFg, avatarPx, sidebarRows } = window;
 
 function CharAvatar({ char, size = 40 }) {
   const [failed, setFailed] = useState(false);
@@ -28,14 +28,11 @@ function CharAvatar({ char, size = 40 }) {
   );
 }
 
-function CharCard({ char, isActive, onSelect, onFav }) {
+// F36: `row` arrives already resolved from the one small chat-summary map, so
+// drawing the list no longer opens a chat per character.
+function CharCard({ row, isActive, onSelect, onFav }) {
   const ctx = useContext(AppCtx);
-  const msgs = S.chat(char.id);
-  const last = msgs[msgs.length - 1];
-  const rawPreview = last
-    ? (typeof last.content === 'string' ? last.content : last.content?.find?.(c => c.type === 'text')?.text || '')
-    : (char.firstMessage || char.description || '');
-  const preview = rawPreview.replace(/\*/g, '').replace(/\s+/g, ' ').trim().slice(0, 50);
+  const { char, preview } = row;
 
   return (
     <div
@@ -88,6 +85,9 @@ function Sidebar() {
   if (filter === 'fav') chars = chars.filter(c => c.favorite);
   if (filter === 'recent') chars = [...chars].sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
   if (tagFilter) chars = chars.filter(c => (c.tags || []).includes(tagFilter));
+  // One metadata read for the whole list, after filtering, so a 500-character
+  // library costs the same as a 5-character one.
+  const rows = sidebarRows(chars, S);
 
   return (
     <aside className="sidebar" style={{ width: ctx.sidebarWidth }}>
@@ -146,11 +146,11 @@ function Sidebar() {
                 </>
             }
           </div>
-        ) : chars.map(c => (
+        ) : rows.map(row => (
           <CharCard
-            key={c.id}
-            char={c}
-            isActive={ctx.currentChar?.id === c.id}
+            key={row.char.id}
+            row={row}
+            isActive={ctx.currentChar?.id === row.char.id}
             onSelect={ctx.selectChar}
             onFav={toggleFav}
           />
