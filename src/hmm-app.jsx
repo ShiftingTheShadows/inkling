@@ -305,7 +305,11 @@ function App() {
     addToast('Session restored', 'success');
   };
 
-  const modelShort = settings.model?.replace('claude-', '').replace(/-20\d{6}$/, '') || 'haiku';
+  // Show the model actually in use: settings.model is the Anthropic id and is
+  // stale/meaningless once OpenRouter or a local endpoint is selected.
+  const provider = settings.provider || 'claude';
+  const activeModel = provider === 'claude' ? settings.model : settings.localModel;
+  const modelShort = (activeModel || 'no model').replace(/^claude-/, '').replace(/-20\d{6}$/, '');
 
   const ctx = {
     chars, setChars,
@@ -399,7 +403,7 @@ function App() {
         <div className="statusbar">
           <span>{chars.length} character{chars.length !== 1 ? 's' : ''}</span>
           <span>|</span>
-          <span>{modelShort}</span>
+          <span>{provider !== 'claude' ? `${provider} · ` : ''}{modelShort}</span>
           {currentChar && (
             <>
               <span>|</span>

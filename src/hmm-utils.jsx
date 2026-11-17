@@ -92,7 +92,9 @@ function __idbDel(key) {
 const __get = (k, fb) => __mem.has(k) ? __mem.get(k) : fb;
 // Drafts are intentionally excluded, they're not part of GistSync.buildPayload(),
 // so writing them shouldn't schedule an auto-sync push (see hmm-app.jsx).
-const __notifyDataChange = k => { if (!k.startsWith('hmm_draft_') && window.__hmmOnDataChange) window.__hmmOnDataChange(); };
+// Drafts and the automatic restore point are device-local and not part of the
+// sync payload, so writing them must not schedule an auto-sync push.
+const __notifyDataChange = k => { if (!k.startsWith('hmm_draft_') && !k.startsWith('hmm_snapshot_') && window.__hmmOnDataChange) window.__hmmOnDataChange(); };
 const __set = (k, v) => { __mem.set(k, v); __idbPut(k, v); __notifyDataChange(k); };
 
 // Boot: open IDB, hydrate cache, one-time migration from localStorage
@@ -191,6 +193,21 @@ const S = {
     try { fn({ ...__storageHealth }); } catch {}
     return () => __storageErrorListeners.delete(fn);
   },
+  // One automatic restore point, overwritten by each destructive action. Not
+  // synced (buildPayload never reads it) and skipped when a second copy would
+  // eat a large share of the quota. Built here rather than in the UI so every
+  // caller gets the same payload shape as a normal backup.
+  snapshot: () => __get('hmm_snapshot_auto', null),
+  snapshotNow: label => {
+    try {
+      const payload = GistSync.buildPayload();
+      if (JSON.stringify(payload).length > 4000000) return null; // ~8MB — not worth the quota
+      const snap = { at: new Date().toISOString(), label, payload };
+      __set('hmm_snapshot_auto', snap);
+      return snap;
+    } catch (e) { console.warn('Auto snapshot failed:', e); return null; }
+  },
+  clearSnapshot: () => { __mem.delete('hmm_snapshot_auto'); __idbDel('hmm_snapshot_auto'); },
   settings: () => {
     const saved = { ...__get('hmm_settings', {}) };
     // Retired Anthropic model ids saved before the 2026-07 refresh — old ids now 404
@@ -209,8 +226,6 @@ const S = {
       theme: 'terminal',
       avatarScale: 1, // 0.4 (tiny) – 2.5 (huge)
       provider: 'claude', // 'claude' | 'openrouter' | 'local'
-      openrouterKey: '',
-      openrouterModel: 'anthropic/claude-sonnet-5',
       localEndpoint: '',
       localApiKey: '',
       localModel: 'llama3',
@@ -246,6 +261,9 @@ const CHANGELOG = [
       'New: storage warnings. If the browser refuses a save (disk full, private window, blocked site data), a banner says so and offers a backup export instead of failing silently.',
       'Changed: restoring a backup now merges by default — new characters, folders and scripts are added, newer records win, and a longer local chat is never replaced by an older one. Gist pull, Railway pull, auto-sync and file import all use it; "Replace everything" is still one click away.',
       'New: TEST CONNECTION in Settings sends a one-token request and reports exactly what is wrong — key, endpoint, model, timeout, or a missing /api proxy — instead of a broken reply in the chat.',
+      'Fixed: web search. DuckDuckGo started rejecting the app\'s non-browser request, so keyless search quietly returned nothing; it now uses a normal browser request, and a failed lookup is shown under the reply instead of only being told to the AI.',
+      'New: the status bar shows the model of the provider you actually selected, including OpenRouter and local models.',
+      'New: one automatic restore point is taken before deleting a character, clearing a chat, or replacing all data. Restore or discard it in Settings → Storage.',
     ],
   },
   {
@@ -990,9 +1008,9 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
   // their own system prompt (assists, summaries) opt in with opts.search.
   const searchOn = WebSearch.enabled(resolvedSettings) && (opts.search ?? opts.system == null);
   const searchRoleplay = opts.roleplay ?? opts.system == null;
-  const sState = { queries: [], sources: [] };
+  const sState = { queries: [], sources: [], error: null };
   const emitSearch = (active, doing = '') =>
-    opts.onSearch?.({ active, doing, queries: [...sState.queries], sources: [...sState.sources] });
+    opts.onSearch?.({ active, doing, error: sState.error, queries: [...sState.queries], sources: [...sState.sources] });
 
   // Build clean API messages — preserve images (vision), handle narrator
   const apiMsgs = messages
@@ -1605,7 +1623,6 @@ const GistSync = {
         S.saveSettings({
           ...d.settings,
           apiKey: current.apiKey,
-          openrouterKey: current.openrouterKey,
           localApiKey: current.localApiKey,
           globalPrompt: current.globalPrompt,
           tavilyKey: current.tavilyKey,

@@ -9,7 +9,12 @@
 
 export const config = { runtime: 'edge' };
 
-const UA = 'Mozilla/5.0 (compatible; InklingBot/1.0)';
+// A real browser UA: DuckDuckGo answers a bot UA with a 202 "anomaly" page,
+// which is what silently broke keyless search. Send ONLY the UA - adding
+// Accept/Accept-Language headers puts DDG back on the anomaly page, so the
+// minimal browser identity is the one that works.
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+const HTML_HEADERS = { 'User-Agent': UA };
 const clip = (s, n) => (s || '').replace(/\s+/g, ' ').trim().slice(0, n);
 const decode = s => (s || '')
   .replace(/<[^>]+>/g, '')
@@ -42,11 +47,9 @@ async function brave(key, query, max) {
 }
 
 async function ddg(query, max) {
-  const r = await fetch('https://html.duckduckgo.com/html/', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': UA },
-    body: 'q=' + encodeURIComponent(query),
-  });
+  // GET, not POST: the POST form returns DDG's anomaly page even with browser
+  // headers, while GET with the same headers returns the result list.
+  const r = await fetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`, { headers: HTML_HEADERS });
   if (!r.ok) throw new Error(`DuckDuckGo ${r.status}`);
   const html = await r.text();
   const out = [];

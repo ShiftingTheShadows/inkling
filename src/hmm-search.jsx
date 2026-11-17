@@ -71,6 +71,7 @@ const WebSearch = {
       if (name === 'read_page') {
         const url = String(args.url || '');
         const page = await this.post({ action: 'read', url }, signal);
+        state.error = null;
         this.addSource(state, { title: page.title || this.host(url), url: page.url || url });
         return `${page.title ? page.title + '\n' : ''}${page.url}\n\n${page.text}`;
       }
@@ -78,11 +79,15 @@ const WebSearch = {
       if (!query) return 'No query given.';
       state.queries.push(query);
       const { results } = await this.search(query, settings, signal);
+      state.error = null;
       if (!results.length) return `No results for "${query}". Try different keywords.`;
       results.forEach(r => this.addSource(state, r));
       return results.map((r, i) => `[${i + 1}] ${r.title}\n${r.url}\n${r.content || r.snippet || ''}`).join('\n\n');
     } catch (e) {
       if (e.name === 'AbortError') throw e;
+      // Surfaced under the reply too: returning the text only to the model left
+      // a failed search looking like a silent no-op.
+      state.error = e.message;
       return `Search error: ${e.message}. Tell the user you could not look this up and answer from what you know, flagging uncertainty.`;
     }
   },
