@@ -2,7 +2,7 @@
 // Babel standalone and compiling ~250KB of JSX in the browser on every load.
 // Dev workflow is unchanged — index.html at the repo root still uses
 // type="text/babel" and works opened directly; this script writes the
-// production version to dist/ (what Netlify publishes).
+// production version to dist/ (what Vercel serves).
 import { transformSync } from 'esbuild';
 import { mkdirSync, readFileSync, writeFileSync, cpSync } from 'fs';
 

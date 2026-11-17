@@ -1983,7 +1983,7 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
     return result;
   }
 
-  // ── Claude (Anthropic API via Netlify function) ───────────────
+  // ── Claude (Anthropic API via api/anthropic.js on Vercel) ─────
   // Real API call with model choice, temperature (where supported), max tokens,
   // and true SSE streaming. Falls through to the window.claude shim when the
   // function isn't deployed (404 / network error) or no API key is set.
