@@ -1,6 +1,7 @@
 // hmm-chat.jsx — Chat view, messages, input
 const { useState, useContext, useEffect, useRef, useCallback } = React;
 const { AppCtx, S, genId, estimateTokens, contextTokensFromMessages, modelContextLength,
+  assistReviewNext, assistReviewText, assistReviewCycle,
   nextGroupSpeaker, parseDirectorChoice, normalizeGroupReplies, formatTime, renderMarkdown, charBg, charFg, callAI, buildSystemPrompt, summarizeMessages, compressImage, downloadCharJson, downloadCharPng, avatarPx, providerProfile, shouldAutoSummarize, utilitySettings, chatToMarkdown, chatToJson, chatToHtml } = window;
 const { CharAvatar, Textbox } = window;
 
@@ -578,6 +579,7 @@ function ChatView() {
   const [showPersonaSwitcher, setShowPersonaSwitcher] = useState(false);
   const [aiAssisting, setAiAssisting] = useState(null); // 'write'|'enhance'|'continue'|'impersonate'
   const [assistPopover, setAssistPopover] = useState(null); // {mode} when open
+  const [assistReview, setAssistReview] = useState(null); // {mode,direction,length,original,variants,index}
   const [assistDir, setAssistDir] = useState('');
   const [assistLen, setAssistLen] = useState('medium');
   const personas = ctx.personas;
@@ -634,6 +636,7 @@ function ChatView() {
     setShowSearch(false);
     setSearchQ('');
     setShowVarPanel(false);
+    setAssistReview(null);
   }, [char?.id]);
 
   // Grow the composer to fit a restored draft once it actually lands in the
@@ -667,6 +670,9 @@ function ChatView() {
 
   const draftSaveTimer = useRef(null);
   const updateInput = v => {
+    // G1: a review only applies to the draft it was generated from — editing
+    // the composer meanwhile means the user moved on, so drop the offer.
+    if (assistReview && v !== assistReview.original) setAssistReview(null);
     setInputVal(v);
     if (!char) return;
     clearTimeout(draftSaveTimer.current);
@@ -774,6 +780,7 @@ function ChatView() {
     // A string override (e.g. a clicked textbox choice) is not the composer's
     // draft — clearing it here would destroy whatever the user was mid-typing.
     if (fromComposer) updateInput('');
+    if (fromComposer) setAssistReview(null);
     if (inputRef.current) inputRef.current.style.height = 'auto';
 
     if (char.isGroup) {
@@ -1216,6 +1223,7 @@ function ChatView() {
 
   const assist = async (mode, opts = {}) => {
     if (generating || aiAssisting) return;
+    const originalDraft = inputVal;
     const direction = (opts.direction || '').trim();
     const length = opts.length || 'medium';
     const lengthHint = LENGTH_HINTS[length] || LENGTH_HINTS.medium;
@@ -1290,15 +1298,33 @@ function ChatView() {
 
       if (result) {
         const clean = result.trim().replace(/^["']|["']$/g, '');
-        updateInput(clean);
-        if (inputRef.current) {
-          inputRef.current.style.height = 'auto';
-          inputRef.current.style.height = Math.min(inputRef.current.scrollHeight, 160) + 'px';
-          inputRef.current.focus();
-        }
+        // G1: never write into the composer from here — hand the draft to the
+        // review sheet so the user decides what happens to their text.
+        setAssistReview(prev => assistReviewNext(prev, {
+          mode, direction, length, original: originalDraft, text: clean, retry: !!opts.retry,
+        }));
       }
     } catch(e) { ctx.addToast(`Assist error: ${e.message}`, 'error'); }
     setAiAssisting(null);
+  };
+
+  const acceptAssist = () => {
+    if (!assistReview) return;
+    const v = assistReviewText(assistReview);
+    setAssistReview(null);
+    updateInput(v);
+    requestAnimationFrame(() => {
+      const ta = inputRef.current;
+      if (!ta) return;
+      ta.style.height = 'auto';
+      ta.style.height = Math.min(ta.scrollHeight, 320) + 'px';
+      ta.focus();
+    });
+  };
+
+  const retryAssist = () => {
+    if (!assistReview || aiAssisting || generating) return;
+    assist(assistReview.mode, { direction: assistReview.direction, length: assistReview.length, retry: true });
   };
 
   // Slash command handler
@@ -1688,6 +1714,33 @@ function ChatView() {
           ))}
         </div>
 
+        {/* G1: assist review sheet — accept, retry or keep the original draft */}
+        {assistReview && (
+          <div className="assist-review" role="region" aria-label="AI assist suggestion">
+            <div className="assist-review-head">
+              <span className="assist-review-label">
+                ✦ {assistReview.mode === 'write' ? 'WRITE FOR ME' : assistReview.mode === 'enhance' ? 'ENHANCED DRAFT' : 'IMPERSONATION'}
+              </span>
+              <span className="assist-review-count">{assistReview.index + 1}/{assistReview.variants.length}</span>
+              <button className="btn-icon" style={{ width: 20, height: 20, fontSize: 15 }} title="Previous variant"
+                disabled={assistReview.variants.length < 2}
+                onClick={() => setAssistReview(r => assistReviewCycle(r, -1))}>‹</button>
+              <button className="btn-icon" style={{ width: 20, height: 20, fontSize: 15 }} title="Next variant"
+                disabled={assistReview.variants.length < 2}
+                onClick={() => setAssistReview(r => assistReviewCycle(r, 1))}>›</button>
+              <button className="btn-icon" style={{ marginLeft: 'auto', width: 20, height: 20, fontSize: 15 }}
+                title="Close without changing your draft" onClick={() => setAssistReview(null)}>×</button>
+            </div>
+            <div className="assist-review-text">{assistReviewText(assistReview)}</div>
+            <div className="assist-review-actions">
+              <button className="btn-primary btn-sm" onClick={acceptAssist}>ACCEPT · CTRL+ENTER</button>
+              <button className="btn-secondary btn-sm" onClick={retryAssist} disabled={!!aiAssisting || generating}>
+                {aiAssisting ? '⟳ GENERATING…' : 'TRY AGAIN'}
+              </button>
+              <button className="btn-secondary btn-sm" onClick={() => setAssistReview(null)}>KEEP ORIGINAL</button>
+            </div>
+          </div>
+        )}
         <div className="input-main">
           {/* Assist buttons */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: 3, flexShrink: 0, position: 'relative' }}>
@@ -1778,6 +1831,8 @@ function ChatView() {
                 if (files.some(f => f.type && f.type.startsWith('image/'))) { e.preventDefault(); addImages(files); }
               }}
               onKeyDown={e => {
+                if (assistReview && e.ctrlKey && e.key === 'Enter') { e.preventDefault(); acceptAssist(); return; }
+                if (assistReview && e.key === 'Escape') { e.preventDefault(); setAssistReview(null); return; }
                 handleSlash(e);
                 if (settings.sendOnEnter && e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) { e.preventDefault(); sendMessage(); }
                 else if (e.ctrlKey && e.key === 'Enter') { e.preventDefault(); sendMessage(); }
