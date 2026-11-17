@@ -87,6 +87,43 @@ export function summarize(char, data = {}) {
   };
 }
 
+// E33: `fields` on inkling_get_character. A full record carries every long
+// prose field plus a sprite summary, so asking for two of them keeps the
+// caller's context small. Identity (id + name) always comes back so the answer
+// still says who it is, and an unknown name is an error listing what exists
+// rather than a silently missing key.
+const FIELD_ALIASES = {
+  first_message: 'firstMessage',
+  example_dialogues: 'exampleDialogues',
+  system_prompt: 'systemPrompt',
+  alternate_greetings: 'alternateGreetings',
+  textbox_style: 'textboxStyle',
+  blip_sound: 'blipSound',
+  blip_volume: 'blipVolume',
+  default_expression: 'defaultExpression',
+  created_at: 'createdAt',
+  updated_at: 'updatedAt',
+  folder_id: 'folderId',
+  is_group: 'isGroup',
+  group_replies: 'groupReplies',
+};
+
+export function pickCharacterFields(detail, fields) {
+  const list = Array.isArray(fields) ? fields : typeof fields === 'string' ? fields.split(',') : [];
+  const names = list.map(v => String(v).trim()).filter(Boolean);
+  if (!names.length) throw new Error('fields must be a non-empty array of character field names.');
+  const out = { id: detail.id, name: detail.name };
+  for (const raw of names) {
+    const key = FIELD_ALIASES[raw] || FIELD_ALIASES[raw.toLowerCase()] || raw;
+    if (key === 'id' || key === 'name') continue;
+    if (!(key in detail)) {
+      throw new Error(`Unknown character field "${raw}". Valid fields: ${Object.keys(detail).sort().join(', ')}`);
+    }
+    out[key] = detail[key] ?? null;
+  }
+  return out;
+}
+
 export function detail(char, { includeAvatar = false } = {}) {
   const out = { ...char };
   if (!includeAvatar) {

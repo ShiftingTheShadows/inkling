@@ -54,7 +54,7 @@ const call = async (name, args = {}) => {
 
 // ── tools are advertised ──────────────────────────────────
 const { tools } = await client.listTools();
-check('exposes 29 tools', tools.length === 29, tools.map(t => t.name));
+check('exposes 31 tools', tools.length === 31, tools.map(t => t.name));
 check('advertises message search', tools.some(t => t.name === 'inkling_search_messages'));
 
 // ── character export (E32) ────────────────────────────────
@@ -94,6 +94,19 @@ check('get never leaks expression data: URIs',
 check('get summarizes expressions as count + names',
   got.json?.expressions?.count === 2 && JSON.stringify(got.json.expressions.names.sort()) === JSON.stringify(['Grin', 'Neutral']),
   got.json?.expressions);
+
+// ── fields selection on get_character (E33) ───────────────
+const some = await call('inkling_get_character', { character: 'c1', fields: ['description', 'first_message'] });
+check('fields keeps identity plus the asked-for values',
+  some.json?.id === 'c1' && some.json?.name === 'Vera' && some.json?.description === 'A tired detective'
+  && some.json?.firstMessage === 'You again.', some.json);
+check('fields drops everything not asked for', !('personality' in some.json) && !('expressions' in some.json), Object.keys(some.json || {}));
+const someAlias = await call('inkling_get_character', { character: 'c1', fields: ['description'] });
+check('fields is much smaller than the full record', someAlias.text.length < got.text.length / 2,
+  { partial: someAlias.text.length, full: got.text.length });
+const badField = await call('inkling_get_character', { character: 'c1', fields: ['nope'] });
+check('unknown field is an error that lists valid ones',
+  badField.isError && /Unknown character field/.test(badField.text) && /description/.test(badField.text), badField.text);
 
 // ── name resolution ───────────────────────────────────────
 const exact = await call('inkling_get_character', { character: 'Vera' });
@@ -226,10 +239,42 @@ const ch = await call('inkling_get_chat', { character: 'Verity', limit: 2 });
 check('get_chat returns the latest page', ch.json?.total === 5 && ch.json.messages.map(m => m.content).join() === 'msg 3,msg 4', ch.json);
 const ch2 = await call('inkling_get_chat', { character: 'Verity', limit: 2, offset: 2 });
 check('get_chat offset pages backwards', ch2.json?.messages.map(m => m.content).join() === 'msg 1,msg 2', ch2.json);
+
+// ── message-level edit/delete (E33) ───────────────────────
+const editedIdx = await call('inkling_update_message', { character: 'Verity', message: 2, content: 'msg two (rewritten)' });
+check('updates one message by index', !editedIdx.isError, editedIdx.text);
+blob = await dump();
+check('edit rewrites only that message',
+  blob.data.chats.c2.length === 5 && blob.data.chats.c2[2].content === 'msg two (rewritten)'
+  && blob.data.chats.c2[1].content === 'msg 1' && blob.data.chats.c2[3].content === 'msg 3',
+  blob.data.chats.c2.map(m => m.content));
+check('edit marks the message edited', blob.data.chats.c2[2].edited === true);
+
+const firstId = blob.data.chats.c2[0].id;
+check('updates one message by id',
+  !(await call('inkling_update_message', { character: 'Verity', message: firstId, content: 'msg zero (by id)' })).isError);
+blob = await dump();
+check('id-addressed edit landed on the right message',
+  blob.data.chats.c2[0].content === 'msg zero (by id)' && blob.data.chats.c2[0].id === firstId);
+check('empty content refused',
+  (await call('inkling_update_message', { character: 'Verity', message: 0, content: '   ' })).isError);
+check('bad index refused',
+  (await call('inkling_update_message', { character: 'Verity', message: 99, content: 'x' })).isError);
+
+check('delete_message needs confirm',
+  (await call('inkling_delete_message', { character: 'Verity', message: 3, confirm: false })).isError);
+check('refused delete changed nothing', (await dump()).data.chats.c2.length === 5);
+const dm = await call('inkling_delete_message', { character: 'Verity', message: 3, confirm: true });
+check('deletes exactly one message', !dm.isError && dm.json?.remaining === 4, dm.text);
+blob = await dump();
+check('neighbours survive a delete',
+  blob.data.chats.c2.map(m => m.content).join('|') === 'msg zero (by id)|msg 1|msg two (rewritten)|msg 4',
+  blob.data.chats.c2.map(m => m.content));
+check('deleted message reports what went', dm.json?.deleted?.role === 'assistant' && /msg 3/.test(dm.json?.deleted?.preview || ''), dm.json?.deleted);
 check('bad role refused', (await call('inkling_add_message', { character: 'Verity', role: 'system', content: 'x' })).isError);
 check('clear_chat needs confirm', (await call('inkling_clear_chat', { character: 'Verity', confirm: false })).isError);
 const cc = await call('inkling_clear_chat', { character: 'Verity', confirm: true });
-check('clear_chat empties chat', cc.json?.messagesCleared === 5 && (await dump()).data.chats.c2.length === 0, cc.text);
+check('clear_chat empties chat', cc.json?.messagesCleared === 4 && (await dump()).data.chats.c2.length === 0, cc.text);
 
 // ── folders ───────────────────────────────────────────────
 const fo = await call('inkling_create_folder', { name: 'Allies' });
@@ -238,6 +283,17 @@ check('creates nested folders', fo.json?.created?.id && fo2.json?.created?.paren
 await call('inkling_move_character', { character: 'Verity', folder: 'Spies' });
 check('moves character into folder', (await dump()).data.characters.find(c => c.id === 'c2').folderId === fo2.json.created.id);
 check('list_folders counts characters', (await call('inkling_list_folders')).json.folders.find(f => f.name === 'Spies').characters === 1);
+
+// ── folder tree (E33) ─────────────────────────────────────
+const ft = await call('inkling_list_folders');
+const allies = ft.json?.tree?.find(f => f.name === 'Allies');
+const spies = allies?.children?.find(f => f.name === 'Spies');
+check('folder tree nests children under their parent', !!spies && spies.depth === 1, ft.json?.tree);
+check('folder tree names the characters in a folder', JSON.stringify(spies?.characters) === '["Verity"]', spies?.characters);
+check('folder tree totals the subtree', allies?.characterCount === 0 && allies?.totalCharacters === 1, allies);
+check('folder tree lists unfiled characters',
+  ['Mox', 'Late'].every(n => ft.json?.unfiled.includes(n)) && !ft.json.unfiled.includes('Verity'), ft.json?.unfiled);
+check('folder tree keeps the flat list for existing callers', ft.json?.folderCount === 2 && ft.json.folders.length === 2);
 check('delete_folder needs confirm', (await call('inkling_delete_folder', { folder: 'Spies', confirm: false })).isError);
 await call('inkling_delete_folder', { folder: 'Spies', confirm: true });
 check('deleting a folder reparents its characters', (await dump()).data.characters.find(c => c.id === 'c2').folderId === fo.json.created.id);

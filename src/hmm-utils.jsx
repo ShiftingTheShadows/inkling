@@ -339,6 +339,7 @@ const CHANGELOG = [
     version: '2026-11-17',
     date: 'Nov 17, 2026',
     items: [
+      'New: MCP can edit or delete a single chat message by id or position instead of clearing the chat, read the folder structure as a nested tree, and fetch only the character fields it needs — so long backups stop flooding the assistant\'s context.',
       'New: per-character textbox blips. Each character can override the global typing-sound setting (on, off, or follow Settings) and set its own volume, alongside the blip pitch it already had — all on the character record, so it syncs with the rest of the character.',
       'New: long textbox replies can turn their own pages (Settings → Appearance → Auto-advance textbox pages). The newest reply types, waits two seconds, then moves to the next page until the box is done; clicking or using the arrows takes over and stops it.',
       'New: end-to-end encryption for Railway sync. The backup is stored as an AES-GCM envelope keyed by a passphrase the server never sees, unlocked once per device (optionally remembered). Enabling encrypts and replaces the plaintext backup, LOCK NOW drops the key, and changing the passphrase re-encrypts and re-uploads the backup; a forgotten passphrase cannot be recovered, so download a plaintext backup first.',
