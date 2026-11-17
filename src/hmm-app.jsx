@@ -1,6 +1,6 @@
 // hmm-app.jsx — Root App
 const { useState, useEffect, useCallback } = React;
-const { AppCtx, S, genId, GistSync, RailwaySync, CHANGELOG } = window;
+const { AppCtx, S, genId, GistSync, RailwaySync, CHANGELOG, providerProfile } = window;
 const { Sidebar, WelcomeScreen, ChatView, FoldersPage, McpSetupModal, LocalModelsModal } = window;
 const { ToastStack, CommandPalette, SettingsModal, CharEditorModal, GroupEditorModal, ImportModal, HistoryModal, PersonasModal, SyncModal, LorebookModal, ChangelogModal } = window;
 
@@ -308,7 +308,7 @@ function App() {
   // Show the model actually in use: settings.model is the Anthropic id and is
   // stale/meaningless once OpenRouter or a local endpoint is selected.
   const provider = settings.provider || 'claude';
-  const activeModel = provider === 'claude' ? settings.model : settings.localModel;
+  const activeModel = providerProfile(settings).model;
   const modelShort = (activeModel || 'no model').replace(/^claude-/, '').replace(/-20\d{6}$/, '');
 
   const ctx = {

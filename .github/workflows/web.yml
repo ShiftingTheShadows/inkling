@@ -1,0 +1,18 @@
+name: Web
+on:
+  push:
+    branches: [master]
+  pull_request:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # package-lock.json is intentionally not committed, so `npm install` it is.
+      - run: npm install --no-audit --no-fund
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build

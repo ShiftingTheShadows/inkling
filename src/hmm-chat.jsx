@@ -1,6 +1,6 @@
 // hmm-chat.jsx — Chat view, messages, input
 const { useState, useContext, useEffect, useRef, useCallback } = React;
-const { AppCtx, S, genId, estimateTokens, formatTime, renderMarkdown, charBg, charFg, callAI, buildSystemPrompt, summarizeMessages, compressImage, downloadCharJson, downloadCharPng, avatarPx } = window;
+const { AppCtx, S, genId, estimateTokens, formatTime, renderMarkdown, charBg, charFg, callAI, buildSystemPrompt, summarizeMessages, compressImage, downloadCharJson, downloadCharPng, avatarPx, providerProfile } = window;
 const { CharAvatar, Textbox } = window;
 
 function UserAvatar({ persona, size = 32 }) {
@@ -52,7 +52,7 @@ function SearchSources({ search, streaming }) {
   );
 }
 
-function Message({ msg, char, settings, isStreaming, isLatest, grouped, onDelete, onCopy, onRegen, onRegenGuided, onEdit, onBranch, onPin, onChoice, onResizeTextbox }) {
+function Message({ msg, char, settings, isStreaming, isLatest, grouped, onDelete, onCopy, onRegen, onRegenGuided, onEdit, onBranch, onPin, onChoice, onResizeTextbox, onFix }) {
   const isUser = msg.role === 'user';
   const isNarrator = msg.narrator;
   const author = isNarrator ? 'NARRATOR' : (isUser ? (settings?.activePersona?.name || 'You') : char.name);
@@ -137,6 +137,14 @@ function Message({ msg, char, settings, isStreaming, isLatest, grouped, onDelete
               __html: renderMarkdown(textContent) + (isStreaming ? '<span class="cursor"></span>' : '')
             }}
           />
+        )}
+        {msg.error && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', border: '1px solid var(--danger)', background: 'color-mix(in srgb, var(--danger) 8%, transparent)', padding: '7px 10px', fontSize: 11, color: 'var(--danger)', marginBottom: 4 }}>
+            <span style={{ flex: '1 1 200px' }}>⚠ {msg.error}</span>
+            {!isUser && <button className="btn-secondary btn-sm" onClick={() => onRegen?.()}>RETRY</button>}
+            {!isUser && <button className="btn-secondary btn-sm" onClick={() => onFix?.()}>SWITCH PROVIDER</button>}
+            <button className="btn-secondary btn-sm" onClick={() => onDelete?.(msg.id)}>DISMISS</button>
+          </div>
         )}
         {msg.search && <SearchSources search={msg.search} streaming={isStreaming} />}
         <div className="msg-footer">
@@ -372,7 +380,10 @@ function WelcomeScreen({ chars, onNewChar, onImport, onSelectChar }) {
 function ChatView() {
   const ctx = useContext(AppCtx);
   const char = ctx.currentChar;
-  const settings = { ...ctx.settings, activePersona: ctx.activePersona };
+  // A chat can carry its own persona; otherwise the global one applies.
+  const chatPersonaId = S.chatPersonaId(char?.id);
+  const activePersona = (ctx.personas || []).find(p => p.id === chatPersonaId) || ctx.activePersona;
+  const settings = { ...ctx.settings, activePersona };
 
   const [messages, setMessages] = useState([]);
   const [streamingId, setStreamingId] = useState(null);
@@ -451,7 +462,10 @@ function ChatView() {
     } catch (e) {
       ctx.addToast(`Error: ${e.message}`, 'error');
       setStreamingId(null);
-      if (!intoMsgId) setMessages(prev => prev.filter(m => m.id !== streamMsgId));
+      setMessages(prev => {
+        const f = prev.map(m => m.id === streamMsgId ? { ...m, content: '', error: e.message } : m);
+        saveAndSync(f); return f;
+      });
     } finally {
       setGenerating(false);
     }
@@ -475,7 +489,7 @@ function ChatView() {
   const [assistDir, setAssistDir] = useState('');
   const [assistLen, setAssistLen] = useState('medium');
   const personas = ctx.personas;
-  const activePersona = ctx.activePersona;
+  // `activePersona` above already resolves to this chat's persona.
 
   const msgsEndRef = useRef(null);
   const inputRef = useRef(null);
@@ -710,7 +724,12 @@ function ChatView() {
     } catch (e) {
       ctx.addToast(`Error: ${e.message}`, 'error');
       setStreamingId(null);
-      setMessages(prev => prev.filter(m => m.id !== streamMsgId));
+      // Keep the bubble and put the reason in it: a toast disappears, and the
+      // retry needs something to attach to.
+      setMessages(prev => {
+        const f = prev.map(m => m.id === streamMsgId ? { ...m, content: '', error: e.message } : m);
+        saveAndSync(f); return f;
+      });
     } finally {
       setGenerating(false);
     }
@@ -765,7 +784,7 @@ function ChatView() {
 
     setGenerating(true);
     setStreamingId(last.id);
-    setMessages(prev => prev.map(m => m.id === last.id ? { ...m, content: '', search: undefined } : m));
+    setMessages(prev => prev.map(m => m.id === last.id ? { ...m, content: '', search: undefined, error: undefined } : m));
 
     try {
       await callAI(apiMsgs, char, aiSettings(), (partial, done) => {
@@ -785,7 +804,14 @@ function ChatView() {
           });
         }
       }, startAbortable(last.id));
-    } catch (e) { ctx.addToast(`Error: ${e.message}`, 'error'); setStreamingId(null); }
+    } catch (e) {
+      ctx.addToast(`Error: ${e.message}`, 'error');
+      setStreamingId(null);
+      setMessages(prev => {
+        const f = prev.map(m => m.id === last.id ? { ...m, content: last.content, error: e.message } : m);
+        saveAndSync(f); return f;
+      });
+    }
     finally { setGenerating(false); }
   };
 
@@ -825,7 +851,14 @@ function ChatView() {
           });
         }
       }, startAbortable(streamMsgId));
-    } catch (e) { ctx.addToast(`Error: ${e.message}`, 'error'); setStreamingId(null); }
+    } catch (e) {
+      ctx.addToast(`Error: ${e.message}`, 'error');
+      setStreamingId(null);
+      setMessages(prev => {
+        const f = prev.map(m => m.id === streamMsgId ? { ...m, content: '', error: e.message } : m);
+        saveAndSync(f); return f;
+      });
+    }
     finally { setGenerating(false); }
   };
 
@@ -1234,6 +1267,7 @@ function ChatView() {
               onEdit={editAndResend} onBranch={navigateBranch} onPin={togglePin}
               onChoice={sendChoice}
               onResizeTextbox={resizeTextbox}
+              onFix={() => ctx.openModal('settings')}
             />
             );
           })}
@@ -1263,7 +1297,7 @@ function ChatView() {
             <span className="token-count">~{totalTokens.toLocaleString()} tkns</span>
             {inputVal.trim() && <span style={{ color: 'var(--text3)' }}>· {inputVal.trim().split(/\s+/).length}w</span>}
             <span style={{ color: 'var(--text3)' }}>|</span>
-            <span>{settings.model?.replace('claude-','').replace(/-20\d{6}/,'')}</span>
+            <span>{providerProfile(settings).model.replace(/^claude-/, '').replace(/-20\d{6}$/, '')}</span>
             <span style={{ color: 'var(--text3)' }}>|</span>
             {/* Persona switcher */}
             <div style={{ position: 'relative' }}>
@@ -1281,7 +1315,7 @@ function ChatView() {
                   {personas.map(p => (
                     <div
                       key={p.id}
-                      onClick={() => { ctx.setActivePersonaId(p.id); setShowPersonaSwitcher(false); }}
+                      onClick={() => { if (char) S.setChatPersonaId(char.id, p.id); else ctx.setActivePersonaId(p.id); setShowPersonaSwitcher(false); }}
                       style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', cursor: 'pointer', background: p.id === ctx.activePersonaId ? 'var(--surface3)' : 'transparent', borderLeft: p.id === ctx.activePersonaId ? '2px solid var(--accent)' : '2px solid transparent' }}
                       onMouseEnter={e => e.currentTarget.style.background = 'var(--surface2)'}
                       onMouseLeave={e => e.currentTarget.style.background = p.id === ctx.activePersonaId ? 'var(--surface3)' : 'transparent'}
@@ -1291,10 +1325,20 @@ function ChatView() {
                         <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text)' }}>{p.name}</div>
                         {p.description && <div style={{ fontSize: 10, color: 'var(--text3)', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.description}</div>}
                       </div>
-                      {p.id === ctx.activePersonaId && <span style={{ marginLeft: 'auto', color: 'var(--accent)', fontSize: 10 }}>✓</span>}
+                      {p.id === (chatPersonaId || ctx.activePersonaId) && <span style={{ marginLeft: 'auto', color: 'var(--accent)', fontSize: 10 }}>✓</span>}
                     </div>
                   ))}
-                  <div style={{ borderTop: '1px solid var(--border2)', padding: '6px 10px' }}>
+                  <div style={{ display: 'flex', gap: 10, borderTop: '1px solid var(--border2)', padding: '6px 10px' }}>
+                    {chatPersonaId && (
+                      <button
+                        onClick={() => { S.setChatPersonaId(char.id, ''); setShowPersonaSwitcher(false); }}
+                        style={{ fontSize: 10, color: 'var(--text2)', fontFamily: 'var(--font)', letterSpacing: '0.06em', cursor: 'pointer' }}
+                      >USE GLOBAL</button>
+                    )}
+                    <button
+                      onClick={() => { ctx.setActivePersonaId(activePersona?.id || 'default'); setShowPersonaSwitcher(false); ctx.addToast(`Global persona is now ${activePersona?.name || 'You'}`, 'success'); }}
+                      style={{ fontSize: 10, color: 'var(--text3)', fontFamily: 'var(--font)', letterSpacing: '0.06em', cursor: 'pointer' }}
+                    >SET AS GLOBAL</button>
                     <button
                       onClick={() => { ctx.openModal('personas'); setShowPersonaSwitcher(false); }}
                       style={{ fontSize: 10, color: 'var(--accent2)', fontFamily: 'var(--font)', letterSpacing: '0.06em', cursor: 'pointer' }}
