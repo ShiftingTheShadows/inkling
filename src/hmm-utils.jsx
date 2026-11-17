@@ -184,6 +184,47 @@ function sidebarRows(chars, store) {
     };
   });
 }
+
+// F37: the sidebar's order choices, in display order. Lives here rather than
+// inline so a test can fail if A→Z disappears, and so the value read back from
+// settings is validated against exactly what the UI offers.
+function sidebarSortOptions() {
+  return [
+    ['all', 'ALL'],
+    ['fav', '★ FAV'],
+    ['recent', 'RECENT'],
+    ['alpha', 'A→Z'],
+  ];
+}
+
+// The stored choice, or ALL when nothing (or something retired) is saved.
+function sidebarSortValue(settings) {
+  const v = settings?.sidebarSort;
+  return sidebarSortOptions().some(([id]) => id === v) ? v : 'all';
+}
+
+// Persisted through settings like every other choice in the app, so a reload
+// keeps the option selected. Returns a new object; never mutates the input.
+function withSidebarSort(settings, mode) {
+  const v = sidebarSortOptions().some(([id]) => id === mode) ? mode : 'all';
+  return { ...(settings || {}), sidebarSort: v };
+}
+
+// Applied after search/filtering, so the visible order is what the label says.
+// Alphabetical compares lowercased names, so 'anna' sorts before 'Bob'; equal
+// names keep their existing order because Array#sort is stable.
+function sidebarSortCharacters(chars, mode) {
+  const list = [...(chars || [])];
+  if (mode === 'recent') return list.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+  if (mode === 'alpha') {
+    return list.sort((a, b) => {
+      const an = String(a?.name || '').toLowerCase();
+      const bn = String(b?.name || '').toLowerCase();
+      return an < bn ? -1 : an > bn ? 1 : 0;
+    });
+  }
+  return list;
+}
 /* SIDEBAR-EXPORTS-END */
 
 // Keep `hmm_chat_meta` in step with the one write path every chat goes through
@@ -336,6 +377,7 @@ const S = {
       autoScroll: true,
       showTokens: true,
       showTimestamps: true, // B17 toggle lives in Settings → Appearance
+      sidebarSort: 'all', // F37: ALL | FAV | RECENT | A→Z, persisted like any other choice
       theme: 'terminal',
       avatarScale: 1, // 0.4 (tiny) – 2.5 (huge)
       provider: 'claude', // 'claude' | 'openrouter' | 'local' | 'custom'
@@ -426,6 +468,7 @@ const CHANGELOG = [
     version: '2026-11-17',
     date: 'Nov 17, 2026',
     items: [
+      'New: an A→Z sort for the character sidebar, alongside ALL, ★ FAV and RECENT. The choice is saved with your settings, so it is still selected after a reload.',
       'Changed: the character sidebar no longer re-reads every chat to draw its preview lines. A one-line summary is written when a chat is saved and the list reads that, so big libraries no longer scan every message on every render; existing chats are summarized once on the next load.',
       'New: MCP can edit or delete a single chat message by id or position instead of clearing the chat, read the folder structure as a nested tree, and fetch only the character fields it needs — so long backups stop flooding the assistant\'s context.',
       'New: per-character textbox blips. Each character can override the global typing-sound setting (on, off, or follow Settings) and set its own volume, alongside the blip pitch it already had — all on the character record, so it syncs with the rest of the character.',
@@ -2823,6 +2866,7 @@ Object.assign(window, {
   downloadCharJson, downloadCharPng,
   parseTextbox, expressionAt, resolveExpressionKey, expressionNameFromFilename, pitchForCharacter,
   sidebarRows, chatMetaFromMessages, chatPreviewText,
+  sidebarSortOptions, sidebarSortValue, withSidebarSort, sidebarSortCharacters,
   textboxAutoAdvanceMs, shouldAutoAdvancePage,
   clampBlipVolume, blipForCharacter,
 });

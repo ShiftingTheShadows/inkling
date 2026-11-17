@@ -96,4 +96,65 @@ console.log(`  before: ${legacyReads} chat-history reads (${legacyReads * 200} m
 console.log(`  after:  ${chatMetaReads} metadata read (${Object.keys(bigMeta).length} summaries)`);
 eq('the old path is what this fix removes', legacyReads, big.length);
 
+// ── F37: the alphabetical order option ────────────────────
+const opts = M.sidebarSortOptions();
+const alpha = opts.find(([id]) => id === 'alpha');
+ok('the sidebar offers an A→Z option', !!alpha, opts);
+eq('the option is labelled A→Z', alpha?.[1], 'A→Z');
+ok('the existing options are still offered',
+  ['all', 'fav', 'recent'].every(id => opts.some(([x]) => x === id)), opts);
+
+const unsorted = [
+  { id: '1', name: 'zoe' },
+  { id: '2', name: 'Bob' },
+  { id: '3', name: 'anna' },
+  { id: '4', name: 'Bob' },
+  { id: '5', name: 'Mox' },
+];
+eq('A→Z is case-insensitive',
+  M.sidebarSortCharacters(unsorted, 'alpha').map(c => c.name),
+  ['anna', 'Bob', 'Bob', 'Mox', 'zoe']);
+eq('equal names keep their existing order',
+  M.sidebarSortCharacters(unsorted, 'alpha').map(c => c.id), ['3', '2', '4', '5', '1']);
+eq('the sort does not mutate its input', unsorted.map(c => c.id), ['1', '2', '3', '4', '5']);
+eq('ALL keeps insertion order',
+  M.sidebarSortCharacters(unsorted, 'all').map(c => c.id), ['1', '2', '3', '4', '5']);
+eq('FAV does not reorder on its own',
+  M.sidebarSortCharacters(unsorted, 'fav').map(c => c.id), ['1', '2', '3', '4', '5']);
+eq('RECENT still sorts by last update',
+  M.sidebarSortCharacters([
+    { id: 'a', updatedAt: '2026-01-01T00:00:00Z' },
+    { id: 'b', updatedAt: '2026-05-01T00:00:00Z' },
+  ], 'recent').map(c => c.id), ['b', 'a']);
+
+eq('the stored choice defaults to ALL', M.sidebarSortValue({}), 'all');
+eq('an unknown stored choice falls back to ALL', M.sidebarSortValue({ sidebarSort: 'nope' }), 'all');
+eq('a stored choice is honoured', M.sidebarSortValue({ sidebarSort: 'alpha' }), 'alpha');
+
+const before = { theme: 'terminal', sidebarSort: 'recent' };
+const after = M.withSidebarSort(before, 'alpha');
+eq('choosing A→Z updates the setting', after.sidebarSort, 'alpha');
+eq('choosing a sort keeps the other settings', after.theme, 'terminal');
+eq('the settings object is not mutated', before.sidebarSort, 'recent');
+eq('the choice survives a JSON round-trip, as a reload would',
+  M.sidebarSortValue(JSON.parse(JSON.stringify(after))), 'alpha');
+
+// The whole path a click takes: option -> saved setting -> sorted rows, with a
+// store that refuses chat reads so F36's guarantee is checked under the sort.
+const clicked = M.withSidebarSort({}, alpha[0]);
+const clickedMode = M.sidebarSortValue(clicked);
+eq('clicking the A→Z option selects A→Z', clickedMode, 'alpha');
+const sortedChars = M.sidebarSortCharacters(unsorted, clickedMode);
+eq('the rendered order is alphabetical',
+  sortedChars.map(c => c.name), ['anna', 'Bob', 'Bob', 'Mox', 'zoe']);
+let sortChatReads = 0;
+const sortGuard = {
+  chatMeta: () => ({}),
+  chat() { sortChatReads++; throw new Error('chat read during a sorted sidebar render'); },
+};
+const sortedRows = M.sidebarRows(sortedChars, sortGuard);
+eq('sorted rows keep the alphabetical order',
+  sortedRows.map(r => r.char.name), ['anna', 'Bob', 'Bob', 'Mox', 'zoe']);
+eq('the F36 metadata path still makes no chat reads under A→Z', sortChatReads, 0);
+
 done();
