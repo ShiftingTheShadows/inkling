@@ -96,6 +96,10 @@ const __get = (k, fb) => __mem.has(k) ? __mem.get(k) : fb;
 // sync payload, so writing them must not schedule an auto-sync push.
 const __notifyDataChange = k => { if (!k.startsWith('hmm_draft_') && !k.startsWith('hmm_snapshot_') && k !== 'hmm_textbox_font' && window.__hmmOnDataChange) window.__hmmOnDataChange(); };
 const __set = (k, v) => { __mem.set(k, v); __idbPut(k, v); __notifyDataChange(k); };
+// F36: chat summaries are derived state - writing one is not a data change, or
+// every message save would queue a second auto-sync push for data the payload
+// never carries.
+const __setQuiet = (k, v) => { __mem.set(k, v); __idbPut(k, v); };
 
 // Boot: open IDB, hydrate cache, one-time migration from localStorage
 window.InklingStorageReady = (async () => {
@@ -135,7 +139,85 @@ window.InklingStorageReady = (async () => {
       }
     }
   }
+  __backfillChatMeta();
 })();
+
+/* SIDEBAR-EXPORTS-START */
+// F36: the character list needs one line of preview per row, nothing more. It
+// used to read every character's whole chat history to find that line, so each
+// render re-scanned every message in the library; the summary below is written
+// once when a chat is saved and the sidebar reads that single small map
+// instead. `sidebarRows` is pure and is only allowed to call
+// `store.chatMeta()` - a test throws from `store.chat` to catch any regression.
+function chatPreviewText(raw) {
+  return String(raw ?? '').replace(/\*/g, '').replace(/\s+/g, ' ').trim().slice(0, 50);
+}
+
+function chatMetaFromMessages(msgs) {
+  const list = Array.isArray(msgs) ? msgs : [];
+  const last = list.length ? list[list.length - 1] : null;
+  const text = last
+    ? (typeof last.content === 'string'
+      ? last.content
+      : last.content?.find?.(c => c.type === 'text')?.text || '')
+    : '';
+  return {
+    count: list.length,
+    preview: chatPreviewText(text),
+    lastRole: last?.role || null,
+    lastAt: last?.timestamp || null,
+  };
+}
+
+// Rows come back in the order given - the sidebar's own search/filter/sort has
+// already run. A chat with no messages falls back to the greeting, then the
+// description, exactly as the old per-row read did.
+function sidebarRows(chars, store) {
+  const meta = (store && typeof store.chatMeta === 'function' ? store.chatMeta() : null) || {};
+  return (chars || []).map(char => {
+    const m = meta[char.id];
+    return {
+      char,
+      count: m?.count || 0,
+      lastAt: m?.lastAt || null,
+      preview: chatPreviewText(m?.preview || char.firstMessage || char.description || ''),
+    };
+  });
+}
+/* SIDEBAR-EXPORTS-END */
+
+// Keep `hmm_chat_meta` in step with the one write path every chat goes through
+// (saveChat). An empty chat has no entry, so its row falls back to the
+// greeting instead of showing a stale snippet.
+function __writeChatMeta(id, msgs) {
+  if (!id) return;
+  const map = { ...(__get('hmm_chat_meta', {}) || {}) };
+  if (Array.isArray(msgs) && msgs.length) map[id] = chatMetaFromMessages(msgs);
+  else delete map[id];
+  __setQuiet('hmm_chat_meta', map);
+}
+
+// F36: chats saved before this map existed (or by a build that predates it)
+// get their summary built on the next boot from the value boot already loaded,
+// so no extra IDB read is needed. Entries for deleted characters are dropped
+// here too - the summary map is derived state and never syncs.
+function __backfillChatMeta() {
+  const chars = __get('hmm_chars', []) || [];
+  const meta = { ...(__get('hmm_chat_meta', {}) || {}) };
+  const ids = new Set(chars.map(c => c.id));
+  let changed = false;
+  for (const id of Object.keys(meta)) if (!ids.has(id)) { delete meta[id]; changed = true; }
+  for (const c of chars) {
+    const key = `hmm_chat_${c.id}`;
+    if (!__mem.has(key)) continue;
+    const msgs = __mem.get(key);
+    const next = Array.isArray(msgs) && msgs.length ? chatMetaFromMessages(msgs) : null;
+    const prev = meta[c.id];
+    if (next && (!prev || prev.count !== next.count)) { meta[c.id] = next; changed = true; }
+    else if (!next && prev) { delete meta[c.id]; changed = true; }
+  }
+  if (changed) __setQuiet('hmm_chat_meta', meta);
+}
 
 const S = {
   chars: () => __get('hmm_chars', []),
@@ -143,7 +225,10 @@ const S = {
   folders: () => __get('hmm_folders', []),
   saveFolders: v => __set('hmm_folders', v),
   chat: id => __get(`hmm_chat_${id}`, []),
-  saveChat: (id, v) => __set(`hmm_chat_${id}`, v),
+  // F36: the sidebar reads this instead of every chat. Derived on save, so it
+  // is never stale and never part of buildPayload().
+  chatMeta: () => __get('hmm_chat_meta', {}) || {},
+  saveChat: (id, v) => { __set(`hmm_chat_${id}`, v); __writeChatMeta(id, v); },
   history: id => __get(`hmm_hist_${id}`, []),
   saveHistory: (id, v) => __set(`hmm_hist_${id}`, v),
   // AI-assist design chat, per character. Lives in IndexedDB and rides the
@@ -174,6 +259,8 @@ const S = {
   deleteCharData: id => {
     __mem.delete(`hmm_chat_${id}`); __mem.delete(`hmm_hist_${id}`); __mem.delete(`hmm_draft_${id}`); __mem.delete(`hmm_assist_${id}`);
     __idbDel(`hmm_chat_${id}`); __idbDel(`hmm_hist_${id}`); __idbDel(`hmm_draft_${id}`); __idbDel(`hmm_assist_${id}`);
+    const meta = { ...(__get('hmm_chat_meta', {}) || {}) };
+    if (id in meta) { delete meta[id]; __setQuiet('hmm_chat_meta', meta); }
   },
   clearAll: () => new Promise(res => {
     __mem.clear();
@@ -339,6 +426,7 @@ const CHANGELOG = [
     version: '2026-11-17',
     date: 'Nov 17, 2026',
     items: [
+      'Changed: the character sidebar no longer re-reads every chat to draw its preview lines. A one-line summary is written when a chat is saved and the list reads that, so big libraries no longer scan every message on every render; existing chats are summarized once on the next load.',
       'New: MCP can edit or delete a single chat message by id or position instead of clearing the chat, read the folder structure as a nested tree, and fetch only the character fields it needs — so long backups stop flooding the assistant\'s context.',
       'New: per-character textbox blips. Each character can override the global typing-sound setting (on, off, or follow Settings) and set its own volume, alongside the blip pitch it already had — all on the character record, so it syncs with the rest of the character.',
       'New: long textbox replies can turn their own pages (Settings → Appearance → Auto-advance textbox pages). The newest reply types, waits two seconds, then moves to the next page until the box is done; clicking or using the arrows takes over and stops it.',
@@ -2734,6 +2822,7 @@ Object.assign(window, {
   deriveSyncKey, syncKeyFingerprint, newSyncSalt,
   downloadCharJson, downloadCharPng,
   parseTextbox, expressionAt, resolveExpressionKey, expressionNameFromFilename, pitchForCharacter,
+  sidebarRows, chatMetaFromMessages, chatPreviewText,
   textboxAutoAdvanceMs, shouldAutoAdvancePage,
   clampBlipVolume, blipForCharacter,
 });
