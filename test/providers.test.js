@@ -2,7 +2,7 @@
 // Every fetch is injected, so nothing here touches a network or a real key.
 import { loadSlice, makeRunner } from './harness.js';
 
-const { buildProviderProbe, normalizeBaseUrl, testProvider, providerProfile, generationExtras } = loadSlice(
+const { buildProviderProbe, normalizeBaseUrl, testProvider, providerProfile, generationExtras, shouldAutoSummarize, utilitySettings } = loadSlice(
   '/* PROVIDER-EXPORTS-START */', '/* PROVIDER-EXPORTS-END */',
 );
 const { eq, ok, done } = makeRunner();
@@ -173,6 +173,41 @@ const reply = (status, payload, statusText = '') => async () => ({
   eq('blank seed is omitted', e.seed, undefined);
   eq('blank stops are omitted', e.stop, undefined);
   eq('seed 0 is a real seed', generationExtras({ seed: 0 }).seed, 0);
+}
+
+// ── auto-summarize threshold (B10) ────────────────────────────
+{
+  const base = { tokenPct: 80, messageCount: 20, generating: false, lastSummarizedCount: 0 };
+  eq('below threshold does not summarize', shouldAutoSummarize({ ...base, tokenPct: 74 }), false);
+  eq('at threshold summarizes', shouldAutoSummarize(base), true);
+  eq('while generating it waits', shouldAutoSummarize({ ...base, generating: true }), false);
+  eq('short chats are left alone', shouldAutoSummarize({ ...base, messageCount: 8 }), false);
+  eq('same history is not summarized twice', shouldAutoSummarize({ ...base, lastSummarizedCount: 20 }), false);
+}
+
+// ── utility model settings (A7) ───────────────────────────────
+{
+  const chat = { provider: 'claude', model: 'claude-opus-4-8' };
+  eq('no utility choice returns the same settings', utilitySettings(chat), chat);
+  eq('blank utility provider is a no-op', utilitySettings({ ...chat, utilityProvider: '' }).model, 'claude-opus-4-8');
+}
+
+{
+  const s = utilitySettings({ provider: 'claude', model: 'claude-opus-4-8', utilityModel: 'claude-haiku-4-5' });
+  eq('utility model overrides the chat model', s.model, 'claude-haiku-4-5');
+  eq('provider is unchanged', s.provider, 'claude');
+}
+
+{
+  const chat = {
+    provider: 'openrouter',
+    providers: { openrouter: { endpoint: 'https://openrouter.ai/api', key: 'sk-or', model: 'anthropic/claude-sonnet-5' }, local: { endpoint: 'http://box:11434', key: '', model: 'llama3' } },
+    utilityProvider: 'local',
+  };
+  const s = utilitySettings(chat);
+  eq('utility provider switches', s.provider, 'local');
+  eq('other profile is left intact', s.providers.openrouter.key, 'sk-or');
+  eq('utility provider keeps its endpoint', s.providers.local.endpoint, 'http://box:11434');
 }
 
 done();

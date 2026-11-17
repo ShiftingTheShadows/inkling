@@ -46,7 +46,7 @@ function blip(pitch) {
   } catch { /* audio is decorative, never break rendering over it */ }
 }
 
-function Textbox({ char, text, settings, streaming, isLatest = true, onChoice, onResize }) {
+function Textbox({ char, text, settings, streaming, isLatest = true, onChoice, onResize, present = false }) {
   const reduce = !!settings?.reduceMotion
     || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
   // Historical boxes (not the newest reply) render fully-revealed and never
@@ -109,6 +109,14 @@ function Textbox({ char, text, settings, streaming, isLatest = true, onChoice, o
   // the gesture, so blips can sound on the next message even though this one's
   // typing is being skipped.
   const skip = useCallback(() => { ensureAudio(); setShown(Infinity); }, []);
+
+  // C20: one click does the obvious next thing — finish the typewriter, then
+  // turn the page — instead of making the little ▼ the only way forward.
+  const advance = useCallback(() => {
+    if (!done) { skip(); return; }
+    setPage(p => Math.min(pages.length - 1, p + 1));
+  }, [done, pages.length, skip]);
+  const back = useCallback(() => setPage(p => Math.max(0, p - 1)), []);
 
   // ── Resize grip ────────────────────────────────────────────────
   // Pointer events rather than mouse+touch pairs: one code path covers mouse,
@@ -181,13 +189,40 @@ function Textbox({ char, text, settings, streaming, isLatest = true, onChoice, o
   // earlier in the thread would otherwise stay clickable and fire a new turn.
   const showChoices = isLatest && choices.length > 0 && last && done && !streaming;
 
+  // C20: 1–8 picks a live choice, the same as clicking it.
+  useEffect(() => {
+    if (!showChoices) return;
+    const onKey = e => {
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      const tag = (e.target?.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || e.target?.isContentEditable) return;
+      const n = Number(e.key);
+      if (!Number.isInteger(n) || n < 1 || n > Math.min(8, choices.length)) return;
+      e.preventDefault();
+      onChoice?.(choices[n - 1]);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showChoices, choices, onChoice]);
+
+  // C19: present mode hides the chrome, so ChatView forwards Space/click here.
+  useEffect(() => {
+    if (!present || !isLatest) return;
+    window.__hmmPresentAdvance = advance;
+    window.__hmmPresentBack = back;
+    return () => {
+      if (window.__hmmPresentAdvance === advance) delete window.__hmmPresentAdvance;
+      if (window.__hmmPresentBack === back) delete window.__hmmPresentBack;
+    };
+  }, [present, isLatest, advance, back]);
+
   return (
     <div>
       <div
         ref={boxRef}
         className={`tbx${char?.textboxStyle === 'deltarune' ? ' deltarune' : ''}${drag ? ' resizing' : ''}`}
         style={drag ? { '--tbx-cols': drag.cols, '--tbx-rows': drag.rows } : undefined}
-        onClick={skip}
+        onClick={advance}
       >
         <div className="tbx-inner">
           {portrait && <img className="tbx-portrait" src={portrait} alt={portraitKey}
@@ -226,6 +261,7 @@ function Textbox({ char, text, settings, streaming, isLatest = true, onChoice, o
         <div className="tbx-choices">
           {choices.map((c, i) => (
             <button key={i} className="tbx-choice" onClick={() => onChoice?.(c)}>
+              {i < 8 && <span className="tbx-num">{i + 1}</span>}
               <span className="tbx-heart">♥</span>{c}
             </button>
           ))}

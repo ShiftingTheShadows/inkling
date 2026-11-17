@@ -1,5 +1,5 @@
 // hmm-modals.jsx — Modals, toasts, command palette
-const { useState, useContext, useEffect, useRef } = React;
+const { useState, useContext, useEffect, useMemo, useRef } = React;
 const { AppCtx, S, genId, charBg, charFg, GistSync, RailwaySync, callAI, compressImage, uploadImage, CHANGELOG, testProvider } = window;
 
 // Shared stroke-icon set for the command palette — same visual language as the
@@ -112,7 +112,9 @@ function robustParseJSON(text) {
 // Runs callAI in structured mode (clean system prompt, JSON response_format,
 // no roleplay scaffolding) and retries with stricter instructions on parse failure.
 // `content` optionally wraps the user text (e.g. to attach a reference image).
-async function generateJSON({ system, userText, settings, validate, content }) {
+async function generateJSON({ system, userText, settings: chatSettings, validate, content }) {
+  // A7: character generation is a good candidate for the cheaper utility model.
+  const settings = (window.utilitySettings || (s => s))(chatSettings);
   let parsed = null, lastResult = '', lastErr = null;
   const genChar = { name: 'Generator', description: '', personality: '', scenario: '', firstMessage: '', exampleDialogues: '', systemPrompt: '' };
   for (let attempt = 0; attempt < 3; attempt++) {
@@ -224,7 +226,43 @@ function CommandPalette() {
   ];
 
   const q = query.toLowerCase();
-  const filtered = q ? actions.filter(a => a.label.toLowerCase().includes(q) || a.sub.toLowerCase().includes(q)) : actions;
+  // B12: full-text across every chat and every lorebook entry, not just the
+  // names in the command list. Capped so typing stays responsive.
+  const deepResults = useMemo(() => {
+    if (q.length < 2) return [];
+    const out = [];
+    for (const c of ctx.chars) {
+      const msgs = S.chat(c.id) || [];
+      for (let i = msgs.length - 1; i >= 0 && out.length < 12; i--) {
+        const m = msgs[i];
+        const text = typeof m.content === 'string' ? m.content : (m.content?.find?.(p => p.type === 'text')?.text) || '';
+        const at = text.toLowerCase().indexOf(q);
+        if (at === -1) continue;
+        out.push({
+          label: text.slice(Math.max(0, at - 30), at + q.length + 50).replace(/\s+/g, ' ').trim(),
+          sub: `${c.name} · ${m.role} · message`,
+          icon: '💬',
+          action: () => { ctx.selectChar(c.id); ctx.setJumpTo({ charId: c.id, msgId: m.id }); ctx.setCmdOpen(false); },
+        });
+      }
+    }
+    for (const s of (S.scripts() || [])) {
+      for (const e of (s.entries || [])) {
+        if (out.length >= 18) break;
+        const hay = `${e.name || ''} ${(e.keywords || []).join(' ')} ${e.content || ''}`.toLowerCase();
+        const at = hay.indexOf(q);
+        if (at === -1) continue;
+        out.push({
+          label: `${s.name}: ${e.name || (e.keywords || [])[0] || 'entry'}`,
+          sub: (e.content || '').replace(/\s+/g, ' ').slice(0, 70),
+          icon: '§',
+          action: () => { ctx.openModal('lorebook'); ctx.setCmdOpen(false); },
+        });
+      }
+    }
+    return out;
+  }, [q, ctx.chars]);
+  const filtered = q ? [...deepResults, ...actions.filter(a => a.label.toLowerCase().includes(q) || a.sub.toLowerCase().includes(q))] : actions;
 
   useEffect(() => setSel(0), [query]);
 
@@ -241,7 +279,7 @@ function CommandPalette() {
   return (
     <div className="cmd-overlay" onClick={e => e.target === e.currentTarget && ctx.setCmdOpen(false)}>
       <div className="cmd-palette">
-        <input ref={inputRef} className="cmd-input" placeholder="Search characters or commands..." value={query} onChange={e => setQuery(e.target.value)} onKeyDown={onKey} />
+        <input ref={inputRef} className="cmd-input" placeholder="Search characters, commands, messages, lorebook..." value={query} onChange={e => setQuery(e.target.value)} onKeyDown={onKey} />
         <div className="cmd-results">
           {filtered.length === 0 && <div style={{ padding: '14px 16px', fontSize: 11, color: 'var(--text3)' }}>No results</div>}
           {filtered.map((item, i) => (
@@ -366,6 +404,21 @@ function SettingsModal({ onClose }) {
                 <option value="custom">Custom OpenAI-compatible endpoint</option>
               </select>
               <div className="form-hint">Switch between the built-in Claude, OpenRouter's 200+ models, or your own local model server.</div>
+            </div>
+
+            <div className="form-group">
+              <label className="form-label">UTILITY MODEL (optional)</label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <select className="form-select" value={form.utilityProvider || ''} onChange={e => set('utilityProvider', e.target.value)}>
+                  <option value="">Same provider</option>
+                  <option value="claude">Claude</option>
+                  <option value="openrouter">OpenRouter</option>
+                  <option value="local">Local</option>
+                  <option value="custom">Custom</option>
+                </select>
+                <input className="form-input" value={form.utilityModel || ''} onChange={e => set('utilityModel', e.target.value)} placeholder="e.g. claude-haiku-4-5" />
+              </div>
+              <div className="form-hint">Used for assists, summaries and character generation. Blank = the chat model everywhere.</div>
             </div>
 
             {(form.provider === 'openrouter' || form.provider === 'custom' || form.provider === 'local') && (

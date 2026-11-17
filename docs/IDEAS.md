@@ -6,8 +6,8 @@ them without restating them.
 
 Effort tags: **S** ≈ under an hour, **M** ≈ an afternoon, **L** ≈ a day or more.
 
-> **Status:** D24, D27, A3, F35, D25, A4, A1, A2, A5, A6, B9, B11, D28, D30, E31,
-> E34, F38 and F39 are implemented — see
+> **Status:** D24, D27, A3, F35, D25, A4, A1, A2, A5, A6, A7, B9, B10, B11, B12,
+> B13, B16, C19, C20, D28, D30, E31, E34, F38 and F39 are implemented — see
 > [plans/2026-11-17-data-safety-three.md](superpowers/plans/2026-11-17-data-safety-three.md).
 
 ---
@@ -41,7 +41,7 @@ funnels through one OpenAI-compatible branch using a single shared
   (`\n{{user}}:`), presence/frequency penalty, `top_k`, seed, and **Anthropic prompt
   caching** (`cache_control` on system prompt + lorebook) — a real cost and latency win
   on long contexts. *(M)*
-- **A7.** **Per-task model override.** Assists, summarizer and character generation all
+- **A7 — done.** **Per-task model override.** Assists, summarizer and character generation all
   use the chat model; a cheap "utility model" (Haiku / a local model) saves money. *(S)*
 - **A8.** **Usage honesty.** The `~tkns` meter divides by a hardcoded 16000; parse
   `usage` from responses and use the model's real context length. *(S)*
@@ -51,22 +51,22 @@ funnels through one OpenAI-compatible branch using a single shared
 - **B9 — done.** **Per-chat persona.** Active persona is global (`src/hmm-app.jsx`); playing two
   characters means switching manually. Remember a persona per character with a "global"
   default. *(S)*
-- **B10.** **Auto-summarize at a threshold.** `summarizeContext` is manual (min 8
+- **B10 — done.** **Auto-summarize at a threshold.** `summarizeContext` is manual (min 8
   messages); trigger at ~75% of context and show a collapsible "earlier context
   summarized" marker. *(M)*
 - **B11 — done.** **Retry / error handling.** No backoff on 429/5xx, no timeout when a provider
   stalls, and errors become chat content. Keep the bubble as an error state with
   **Retry** and **Switch provider**. *(S/M)*
-- **B12.** **Message search upgrade.** Ctrl+F filters the current chat only; add match
+- **B12 — done.** **Message search upgrade.** Ctrl+F filters the current chat only; add match
   count, prev/next jump, and palette-wide full-text search across chats and lorebook
   entries. *(M)*
-- **B13.** **Swipe on user messages** too, and **edit-in-place** without resending
+- **B13 — done.** **Swipe on user messages** too, and **edit-in-place** without resending
   (currently edit resends and truncates). *(M)*
 - **B14.** **Continue without a user turn** for solo characters — group chats have
   "SPEAK ▸" per member; solo chats have no "keep going" nudge. *(S)*
 - **B15.** **Multi-member group turns** — a "director" toggle where a cheap model picks
   the next speaker, or 2–3 characters reply in sequence. *(M)*
-- **B16.** **Clipboard paste + drag-drop images** into the composer (file picker only
+- **B16 — done.** **Clipboard paste + drag-drop images** into the composer (file picker only
   today), multiple images per message, `capture` on the mobile input for camera. *(S)*
 - **B17.** **Timestamps / separators toggle.** `showTokens` exists; timestamp display is
   unconditional. *(S)*
@@ -75,10 +75,10 @@ funnels through one OpenAI-compatible branch using a single shared
 
 ## C. Textbox / Undertale mode
 
-- **C19.** **Present mode.** The component's own comment says it's built so "the later
+- **C19 — done.** **Present mode.** The component's own comment says it's built so "the later
   fullscreen present mode can reuse it unchanged"; that mode doesn't exist yet.
   Fullscreen, hidden chrome, bigger box, click/space to advance. *(M)*
-- **C20.** **Click-to-advance and number keys 1–8 for choices** — clicking the box only
+- **C20 — done.** **Click-to-advance and number keys 1–8 for choices** — clicking the box only
   skips typing; advancing pages needs the ▼ button. *(S)*
 - **C21.** **User font upload** — escape hatch for the NC-ND `determination-mono.ttf`
   licence note in `fonts/README.md`; the wrapping math only needs monospace. *(S)*
