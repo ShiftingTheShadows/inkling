@@ -8,7 +8,7 @@ Effort tags: **S** ≈ under an hour, **M** ≈ an afternoon, **L** ≈ a day or
 
 > **Status:** D24, D27, A3, F35, D25, A4, A1, A2, A5, A6, A7, B9, B10, B11, B12,
 > A8, B13, B14, B15, B16, B17, B18, C19, C20, C21, C22, C23, D26, D28, D29, D30, E31, E32, E33, E34,
-> F36, F37, F38, F39, F40, F41, F42 and F44 are implemented — see
+> F36, F37, F38, F39, F40, F41, F42, F43 and F44 are implemented — see
 > [plans/2026-11-17-data-safety-three.md](superpowers/plans/2026-11-17-data-safety-three.md).
 > D29's three product decisions were answered before it was built; the chosen paths are
 > recorded in its entry, so they are not open questions.
@@ -232,8 +232,11 @@ funnels through one OpenAI-compatible branch using a single shared
   malformed data URL is left alone rather than corrupted, and the no-IndexedDB fallback keeps
   base64 because its JSON copy would flatten a Blob. Trashed characters and the automatic snapshot
   still carry base64 (they are JSON restore points, written back through `saveChars`). *(M)*
-- **F43.** `build.mjs` comments still say "what Netlify publishes" while deploy is
-  Vercel. *(S)*
+- **F43 — done.** **Stale deploy comments.** `build.mjs` said Netlify published `dist/`
+  and the Claude call site said a Netlify function hosted the API, while the project deploys on
+  Vercel (`vercel.json` runs `npm run build` into `dist/`; `.github/workflows/web.yml`). Both
+  comments now name Vercel and the actual function path, and `test/repo.test.js` fails if the
+  Netlify claim comes back. Comments only — no runtime behavior changed. *(S)*
 - **F44 — done.** **Modal dialog semantics** — every modal is `role="dialog"` + `aria-modal`,
   labelled from its title, moves focus inside, traps Tab and restores focus on close; icon-only
   buttons take `aria-label` from their tooltip. *(M)*
@@ -245,4 +248,5 @@ funnels through one OpenAI-compatible branch using a single shared
 Everything marked done above is shipped; this list is only the open items, in the order they
 should be tackled.
 
-1. **F43** — stale "Netlify" comment in `build.mjs`.
+No open items — every idea catalogued above is implemented. New follow-ups belong in a fresh
+entry above, ranked the same way.
