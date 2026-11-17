@@ -517,5 +517,8 @@ function App() {
 
 // Wait for IndexedDB hydration before first render (fixes quota-era data loading)
 (window.InklingStorageReady || Promise.resolve()).then(() => {
+  // C21: install a saved textbox font before the first render, so the textbox
+  // measures and paints with it rather than swapping fonts a frame later.
+  window.applyTextboxFont(window.S.textboxFont());
   ReactDOM.createRoot(document.getElementById('root')).render(<App />);
 });

@@ -94,7 +94,7 @@ const __get = (k, fb) => __mem.has(k) ? __mem.get(k) : fb;
 // so writing them shouldn't schedule an auto-sync push (see hmm-app.jsx).
 // Drafts and the automatic restore point are device-local and not part of the
 // sync payload, so writing them must not schedule an auto-sync push.
-const __notifyDataChange = k => { if (!k.startsWith('hmm_draft_') && !k.startsWith('hmm_snapshot_') && window.__hmmOnDataChange) window.__hmmOnDataChange(); };
+const __notifyDataChange = k => { if (!k.startsWith('hmm_draft_') && !k.startsWith('hmm_snapshot_') && k !== 'hmm_textbox_font' && window.__hmmOnDataChange) window.__hmmOnDataChange(); };
 const __set = (k, v) => { __mem.set(k, v); __idbPut(k, v); __notifyDataChange(k); };
 
 // Boot: open IDB, hydrate cache, one-time migration from localStorage
@@ -322,6 +322,12 @@ const S = {
   },
   activePersonaId: () => localStorage.getItem('hmm_active_persona') || 'default',
   setActivePersonaId: id => { localStorage.setItem('hmm_active_persona', id); __notifyDataChange('hmm_active_persona'); },
+  // C21: the uploaded textbox font is a binary asset, device-local by design —
+  // it is not in buildPayload(), so it neither syncs nor rides the backup JSON.
+  // Re-upload on another device (or after clearing site data).
+  textboxFont: () => __get('hmm_textbox_font', null),
+  saveTextboxFont: v => { __set('hmm_textbox_font', v); return true; },
+  clearTextboxFont: () => { __mem.delete('hmm_textbox_font'); __idbDel('hmm_textbox_font'); },
   lastSeenChangelog: () => localStorage.getItem('hmm_changelog_seen') || '',
   setLastSeenChangelog: v => localStorage.setItem('hmm_changelog_seen', v),
 };
@@ -336,6 +342,7 @@ const CHANGELOG = [
       'New: end-to-end encryption for Railway sync. The backup is stored as an AES-GCM envelope keyed by a passphrase the server never sees, unlocked once per device (optionally remembered). Enabling encrypts and replaces the plaintext backup, LOCK NOW drops the key, and changing the passphrase re-encrypts and re-uploads the backup; a forgotten passphrase cannot be recovered, so download a plaintext backup first.',
       'Changed: a locked or unencrypted browser refuses to push plaintext over an encrypted backup, and MCP says it cannot read or edit ciphertext instead of writing over it.',
       'Note for self-hosted sync servers: the encrypted-backup flag on /api/sync/meta takes effect once server/ is redeployed. Until then pulls still detect and decrypt encrypted backups, but a browser without the passphrase cannot be warned before it pushes.',
+      'New: upload your own textbox font (Settings → Appearance) — TTF, OTF, WOFF or WOFF2 up to 2 MB, checked by file signature rather than extension, applied immediately and on every reload. It is stored on this device only, so sync and backup files never carry it; reset to the bundled Determination Mono any time, with its licence shown beside the control.',
       'New: group chats can hand direction to a cheap utility model — DIRECTOR picks who speaks next instead of strict rotation, with an automatic fallback to rotation when the model answers with something unusable.',
       'New: a group can produce 1–3 replies per turn, one after another, each seeing the previous reply. Set it per group in the group editor or from the chat menu.',
       'New: the context meter now uses real token counts reported by the provider (including cached Anthropic input) and the model\'s actual context window — from Settings, the live model list, or a known model family — instead of an estimate divided by a fixed 16k. Endpoints that report no usage still fall back to the estimate.',
@@ -458,6 +465,86 @@ async function uploadImage(file, apiKey) {
 }
 
 const estimateTokens = text => Math.ceil((text || '').length / 4);
+/* FONT-VALIDATE-START */
+// C21: user-supplied textbox fonts. Magic bytes decide the format, not the file
+// extension or the browser-reported MIME, so a renamed file is rejected before
+// anything large or unparseable reaches IndexedDB. Pure so test/font.test.js can
+// cover it without a DOM.
+const TEXTBOX_FONT_MAX_BYTES = 2 * 1024 * 1024;
+const TEXTBOX_FONT_FORMATS = { ttf: 'font/ttf', otf: 'font/otf', woff: 'font/woff', woff2: 'font/woff2' };
+
+// The test harness returns functions only, so the limit is reachable from the
+// pure slice without duplicating the number in the tests.
+function textboxFontMaxBytes() { return TEXTBOX_FONT_MAX_BYTES; }
+
+function detectFontFormat(bytes) {
+  const b = bytes || [];
+  const at = i => Number(b[i] ?? -1);
+  if (at(0) === 0 && at(1) === 1 && at(2) === 0 && at(3) === 0) return 'ttf';
+  if (at(0) === 0x74 && at(1) === 0x72 && at(2) === 0x75 && at(3) === 0x65) return 'ttf'; // 'true'
+  if (at(0) === 0x4F && at(1) === 0x54 && at(2) === 0x54 && at(3) === 0x4F) return 'otf'; // 'OTTO'
+  if (at(0) === 0x77 && at(1) === 0x4F && at(2) === 0x46 && at(3) === 0x46) return 'woff'; // 'wOFF'
+  if (at(0) === 0x77 && at(1) === 0x4F && at(2) === 0x46 && at(3) === 0x32) return 'woff2';
+  return null;
+}
+
+function validateTextboxFont({ name, size, bytes } = {}) {
+  const label = String(name || 'font');
+  const byteLength = Number(size) || (bytes && bytes.length) || 0;
+  if (!bytes || !byteLength) return { ok: false, error: `${label} is empty` };
+  if (byteLength > TEXTBOX_FONT_MAX_BYTES) {
+    return { ok: false, error: `${label} is ${(byteLength / 1048576).toFixed(1)} MB — fonts must be 2 MB or smaller` };
+  }
+  const format = detectFontFormat(bytes);
+  if (!format) return { ok: false, error: `${label} is not a TTF, OTF, WOFF or WOFF2 font` };
+  const ext = String(label).split('.').pop().toLowerCase();
+  if (TEXTBOX_FONT_FORMATS[ext] && ext !== format) {
+    return { ok: false, error: `${label} contains ${format.toUpperCase()} data but is named .${ext}` };
+  }
+  return { ok: true, format, mime: TEXTBOX_FONT_FORMATS[format], size: byteLength };
+}
+
+// The textbox paginates by character count, so a proportional font still
+// "works" but visibly misaligns. Measured widths of 'i' and 'W' are a cheap
+// check; it warns, never blocks, because some pixel fonts differ by a hair.
+function isMonospaceMetrics({ i, W, tolerance = 0.5 } = {}) {
+  if (!Number.isFinite(i) || !Number.isFinite(W)) return false;
+  return Math.abs(i - W) <= tolerance;
+}
+/* FONT-VALIDATE-END */
+
+// C21: install an uploaded font for the textbox. The family name is fixed, so
+// the stylesheet var can point at it, and the data URL is whatever the FileReader
+// produced from the file we already validated.
+function applyTextboxFont(font) {
+  const existing = document.getElementById('hmm-custom-font');
+  if (existing) existing.remove();
+  const root = document.documentElement;
+  if (!font || !font.dataUrl) {
+    root.style.removeProperty('--tbx-font');
+    return false;
+  }
+  const style = document.createElement('style');
+  style.id = 'hmm-custom-font';
+  style.textContent = `@font-face{font-family:'Inkling Custom Textbox';src:url('${font.dataUrl}');font-display:block;}`;
+  document.head.appendChild(style);
+  root.style.setProperty('--tbx-font', "'Inkling Custom Textbox', 'Determination Mono', 'JetBrains Mono', monospace");
+  try { document.fonts?.load?.('16px "Inkling Custom Textbox"'); } catch {}
+  return true;
+}
+
+// Widths of a narrow and a wide glyph in the installed font, for the monospace
+// warning. Null when the FontFace API is unavailable.
+async function textboxFontMetrics() {
+  try {
+    await document.fonts?.load?.('16px "Inkling Custom Textbox"');
+    const ctx = document.createElement('canvas').getContext('2d');
+    if (!ctx) return null;
+    ctx.font = '16px "Inkling Custom Textbox"';
+    return { i: ctx.measureText('i').width, W: ctx.measureText('W').width };
+  } catch { return null; }
+}
+
 /* GROUP-TURN-START */
 // B15: multi-member group turns. The director prompt and the rotation fallback
 // are pure so test/group.test.js can pin the behaviour without a model call.
@@ -2604,6 +2691,8 @@ Object.assign(window, {
   parseOpenAIUsage, parseAnthropicUsage, mergeUsage, contextTokensFromMessages,
   resolveContextLength, contextMeter, modelContextLength,
   nextGroupSpeaker, parseDirectorChoice, normalizeGroupReplies,
+  detectFontFormat, validateTextboxFont, isMonospaceMetrics, textboxFontMaxBytes,
+  applyTextboxFont, textboxFontMetrics, TEXTBOX_FONT_MAX_BYTES,
   SyncCrypto, isEncryptedSyncBlob, encryptSyncPayload, decryptSyncPayload,
   deriveSyncKey, syncKeyFingerprint, newSyncSalt,
   downloadCharJson, downloadCharPng,

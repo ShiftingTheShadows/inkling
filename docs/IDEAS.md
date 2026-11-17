@@ -7,8 +7,8 @@ them without restating them.
 Effort tags: **S** ≈ under an hour, **M** ≈ an afternoon, **L** ≈ a day or more.
 
 > **Status:** D24, D27, A3, F35, D25, A4, A1, A2, A5, A6, A7, B9, B10, B11, B12,
-> A8, B13, B14, B15, B16, B17, B18, C19, C20, D26, D28, D29, D30, E31, E32, E34, F38, F39
-> and F44 are implemented — see
+> A8, B13, B14, B15, B16, B17, B18, C19, C20, C21, D26, D28, D29, D30, E31, E32, E34, F38,
+> F39 and F44 are implemented — see
 > [plans/2026-11-17-data-safety-three.md](superpowers/plans/2026-11-17-data-safety-three.md).
 > D29's three product decisions were answered before it was built; the chosen paths are
 > recorded in its entry, so they are not open questions.
@@ -95,8 +95,14 @@ funnels through one OpenAI-compatible branch using a single shared
   Fullscreen, hidden chrome, bigger box, click/space to advance. *(M)*
 - **C20 — done.** **Click-to-advance and number keys 1–8 for choices** — clicking the box only
   skips typing; advancing pages needs the ▼ button. *(S)*
-- **C21.** **User font upload** — escape hatch for the NC-ND `determination-mono.ttf`
-  licence note in `fonts/README.md`; the wrapping math only needs monospace. *(S)*
+- **C21 — done.** **User font upload** — Settings → Appearance → Textbox Font accepts TTF, OTF,
+  WOFF or WOFF2 up to 2 MB, identified by file signature rather than extension (a renamed HTML
+  file is refused with the reason), applied immediately via an injected `@font-face` and
+  `--tbx-font`, restored before first render on reload, and resettable to the bundled
+  Determination Mono. The file is stored in IndexedDB as a device-local asset and is deliberately
+  absent from the sync payload and exported backups, so another device re-uploads its own; a
+  proportional font warns (measured `i` vs `W`) instead of blocking, because the textbox only
+  needs monospace for alignment. *(S)*
 - **C22.** **Blip volume / on-off per character** — `textboxSound` is global, `blipPitch`
   is already per character. *(S)*
 - **C23.** **Auto-advance option** (type, pause ~2s, next page) for long messages. *(S)*
@@ -175,13 +181,12 @@ funnels through one OpenAI-compatible branch using a single shared
 Everything marked done above is shipped; this list is only the open items, in the order they
 should be tackled.
 
-1. **C21** — user font upload, also resolving the NC-ND font constraint.
-2. **C22** — per-character blip volume/toggle.
-3. **C23** — auto-advance pages for long messages.
-4. **E33** — message edit/delete, folder tree, and `fields` selection for lighter MCP payloads.
-5. **F36** — stop reading every chat in the sidebar render.
-6. **F37** — alphabetical sort option in the sidebar.
-7. **F40** — better page reading and keyless search; DNS-rebinding hardening.
-8. **F41** — configurable image host.
-9. **F42** — lazy IDB loading; matters only once libraries get big.
-10. **F43** — stale "Netlify" comment in `build.mjs`.
+1. **C22** — per-character blip volume/toggle.
+2. **C23** — auto-advance pages for long messages.
+3. **E33** — message edit/delete, folder tree, and `fields` selection for lighter MCP payloads.
+4. **F36** — stop reading every chat in the sidebar render.
+5. **F37** — alphabetical sort option in the sidebar.
+6. **F40** — better page reading and keyless search; DNS-rebinding hardening.
+7. **F41** — configurable image host.
+8. **F42** — lazy IDB loading; matters only once libraries get big.
+9. **F43** — stale "Netlify" comment in `build.mjs`.

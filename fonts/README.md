@@ -17,4 +17,10 @@ pagination depends only on the font being monospace, so any monospace pixel
 font with an appropriate licence can be swapped in by changing the
 `@font-face` src and `--tbx-font` in `index.html`.
 
+Users can also install their own font at runtime (C21): Settings → Appearance →
+Textbox Font accepts TTF/OTF/WOFF/WOFF2 up to 2 MB, validated by file signature
+and stored in IndexedDB as a device-local asset. It is deliberately not part of
+the sync payload or exported backups, so another device needs its own upload.
+Resetting there returns to the bundled font below without touching this file.
+
 Attribution is surfaced in the app under Settings.
