@@ -677,6 +677,7 @@ const CHANGELOG = [
     version: '2026-11-17',
     date: 'Nov 17, 2026',
     items: [
+      'Changed: Continue in a group scene now speaks as the member who wrote the line being continued — with that member’s own character sheet and the usual name-prefixed transcript — instead of writing as the group itself.',
       'New: Enhance can rewrite only the part of your message you selected — select a sentence, run Enhance, and accepting replaces just that fragment with the rest of the draft untouched. The assist menu also gained tone presets (more descriptive, plainer, dialogue only, shorten) that stack with your own direction and carry into Try again.',
       'New: AI assist suggestions open in a review sheet instead of replacing your draft. Accept keeps the generated text, Try again stacks another version (the last three are kept and switchable), and Keep original closes the sheet with what you typed untouched — so Write for me, Enhance and Impersonate can never silently eat a message.',
       'Changed: chats load when you open a character instead of all at startup — a big library now boots with far less memory and no up-front history read. Message counts and previews in the sidebar and on the welcome screen still appear immediately. Character and persona avatars are now kept as compact image data on disk (about a quarter smaller) and converted back to the usual data URLs on load, so avatars and backups are unchanged.',
@@ -3184,6 +3185,21 @@ function assistScopeSplice(draft, scope, text) {
 }
 /* ASSIST-SCOPE-END */
 
+/* GROUP-CONTINUE-START */
+// G3: continuing a group scene has to run as the member who wrote the line
+// being continued — the group record has no personality, scenario or examples
+// of its own. This resolves that member from the message's `charId`, and
+// refuses anything that is not a member (a narrator line, someone who has since
+// left the group) instead of falling back to the group.
+function groupContinueSpeaker(members, lastMsg) {
+  if (!Array.isArray(members) || !lastMsg) return null;
+  if (lastMsg.narrator) return null;
+  const id = lastMsg.charId;
+  if (id == null || id === '') return null;
+  return members.find(m => m && m.id === id) || null;
+}
+/* GROUP-CONTINUE-END */
+
 Object.assign(window, {
   AppCtx, S, genId, estimateTokens, compressImage, uploadImage, CHANGELOG,
   formatTime, formatDate, renderMarkdown,
@@ -3191,6 +3207,7 @@ Object.assign(window, {
   summarizeMessages, GistSync, RailwaySync, testProvider, providerProfile, generationExtras,
   shouldAutoSummarize, utilitySettings, assistReviewNext, assistReviewText, assistReviewCycle,
   assistScopeFromDraft, assistScopeSplice, assistTonePresets, assistToneHint,
+  groupContinueSpeaker,
   chatToMarkdown, chatToJson, chatToHtml, chatExportRows, trashExpired,
   parseOpenAIUsage, parseAnthropicUsage, mergeUsage, contextTokensFromMessages,
   resolveContextLength, contextMeter, modelContextLength,

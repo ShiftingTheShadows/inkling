@@ -3,6 +3,7 @@ const { useState, useContext, useEffect, useRef, useCallback } = React;
 const { AppCtx, S, genId, estimateTokens, contextTokensFromMessages, modelContextLength,
   assistReviewNext, assistReviewText, assistReviewCycle,
   assistScopeFromDraft, assistScopeSplice, assistTonePresets, assistToneHint,
+  groupContinueSpeaker,
   nextGroupSpeaker, parseDirectorChoice, normalizeGroupReplies, formatTime, renderMarkdown, charBg, charFg, callAI, buildSystemPrompt, summarizeMessages, compressImage, downloadCharJson, downloadCharPng, avatarPx, providerProfile, shouldAutoSummarize, utilitySettings, chatToMarkdown, chatToJson, chatToHtml } = window;
 const { CharAvatar, Textbox } = window;
 
@@ -1279,15 +1280,33 @@ function ChatView() {
         result = await callAI(fakeMsgs, fakeChar, settingsNow, null, { system: sysMsg });
 
       } else if (mode === 'continue') {
-        const lastAsst = [...messages].reverse().find(m => m.role === 'assistant');
-        if (!lastAsst) { ctx.addToast('No assistant message to continue', 'warning'); setAiAssisting(null); return; }
+        let lastIdx = -1;
+        for (let i = messages.length - 1; i >= 0; i--) { if (messages[i].role === 'assistant') { lastIdx = i; break; } }
+        if (lastIdx === -1) { ctx.addToast('No assistant message to continue', 'warning'); setAiAssisting(null); return; }
+        const lastAsst = messages[lastIdx];
+        const before = messages.slice(0, lastIdx);
         const lastText = typeof lastAsst.content === 'string' ? lastAsst.content : lastAsst.content?.find?.(c=>c.type==='text')?.text||'';
+        // G3: a group has no voice of its own — the continuation has to run as
+        // the member who wrote the line, with the usual group transcript so the
+        // other members' lines stay attributed. A line with no member voice is
+        // refused rather than written as the group.
+        const speaker = char.isGroup ? groupContinueSpeaker(members, lastAsst) : char;
+        if (!speaker) {
+          ctx.addToast('Only a member’s message can be continued in a group', 'warning');
+          setAiAssisting(null); return;
+        }
+        const history = char.isGroup
+          ? groupApiMsgs(before)
+          : before.map(m => ({ role: m.role, content: typeof m.content==='string'?m.content:m.content?.find?.(c=>c.type==='text')?.text||'' }));
         const apiMsgs = [
-          ...messages.slice(0, messages.indexOf(lastAsst)).map(m => ({ role: m.role, content: typeof m.content==='string'?m.content:m.content?.find?.(c=>c.type==='text')?.text||'' })),
+          ...history,
           { role: 'user', content: `Continue your last message naturally from where it left off. Do NOT repeat what was already said.${dirHint} Continue from: "…${lastText.slice(-120)}"` }
         ];
-        const sysMsg = buildSystemPrompt(char, settings) + `\n\nIMPORTANT: You are continuing your previous message. Write ONLY the continuation — do not repeat anything already written. ${lengthHint}`;
-        const fakeChar = { ...char, systemPrompt: sysMsg };
+        const continuation = `IMPORTANT: You are continuing your previous message as ${speaker.name}. Write ONLY the continuation — do not repeat anything already written. ${lengthHint}`;
+        const sysMsg = char.isGroup
+          ? groupSystem(speaker, before) + `\n\n${continuation}`
+          : buildSystemPrompt(char, settings) + `\n\n${continuation}`;
+        const fakeChar = { ...speaker, systemPrompt: sysMsg };
         result = await callAI(apiMsgs, fakeChar, settingsNow);
         setMessages(prev => {
           const f = prev.map(m => {
@@ -1299,7 +1318,7 @@ function ChatView() {
           saveAndSync(f);
           return f;
         });
-        ctx.addToast('Message continued', 'success');
+        ctx.addToast(char.isGroup ? `${speaker.name} continued` : 'Message continued', 'success');
         setAiAssisting(null);
         return;
 
