@@ -7,8 +7,8 @@ them without restating them.
 Effort tags: **S** ≈ under an hour, **M** ≈ an afternoon, **L** ≈ a day or more.
 
 > **Status:** D24, D27, A3, F35, D25, A4, A1, A2, A5, A6, A7, B9, B10, B11, B12,
-> A8, B13, B14, B16, B17, B18, C19, C20, D26, D28, D29, D30, E31, E32, E34, F38, F39 and
-> F44 are implemented — see
+> A8, B13, B14, B15, B16, B17, B18, C19, C20, D26, D28, D29, D30, E31, E32, E34, F38, F39
+> and F44 are implemented — see
 > [plans/2026-11-17-data-safety-three.md](superpowers/plans/2026-11-17-data-safety-three.md).
 > D29's three product decisions were answered before it was built; the chosen paths are
 > recorded in its entry, so they are not open questions.
@@ -72,8 +72,13 @@ funnels through one OpenAI-compatible branch using a single shared
 - **B14 — done.** **Continue without a user turn** for solo characters — a CONTINUE action
   in the composer streams the next assistant beat with a "continue the scene" instruction and
   no invented user message, through the normal abort/error/retry path. *(S)*
-- **B15.** **Multi-member group turns** — a "director" toggle where a cheap model picks
-  the next speaker, or 2–3 characters reply in sequence. *(M)*
+- **B15 — done.** **Multi-member group turns** — a per-group DIRECTOR toggle hands speaker
+  choice to the cheap utility model (which sees the last ten lines and is told who just spoke);
+  an unusable answer, an unavailable model or a single-member group falls back to the normal
+  mention-then-rotation rule, so a turn can never stall. A REPLIES PER TURN setting of 1–3 makes
+  that many members answer in sequence, each seeing the replies before it. Both live on the group
+  record (so they sync) and are editable from the chat menu and the group editor; manual SPEAK
+  buttons remain single replies. *(M)*
 - **B16 — done.** **Clipboard paste + drag-drop images** into the composer (file picker only
   today), multiple images per message, `capture` on the mobile input for camera. *(S)*
 - **B17 — done.** **Timestamps / separators toggle.** A Settings → Appearance checkbox
@@ -170,14 +175,13 @@ funnels through one OpenAI-compatible branch using a single shared
 Everything marked done above is shipped; this list is only the open items, in the order they
 should be tackled.
 
-1. **B15** — director mode / multi-reply group turns.
-2. **C21** — user font upload, also resolving the NC-ND font constraint.
-3. **C22** — per-character blip volume/toggle.
-4. **C23** — auto-advance pages for long messages.
-5. **E33** — message edit/delete, folder tree, and `fields` selection for lighter MCP payloads.
-6. **F36** — stop reading every chat in the sidebar render.
-7. **F37** — alphabetical sort option in the sidebar.
-8. **F40** — better page reading and keyless search; DNS-rebinding hardening.
-9. **F41** — configurable image host.
-10. **F42** — lazy IDB loading; matters only once libraries get big.
-11. **F43** — stale "Netlify" comment in `build.mjs`.
+1. **C21** — user font upload, also resolving the NC-ND font constraint.
+2. **C22** — per-character blip volume/toggle.
+3. **C23** — auto-advance pages for long messages.
+4. **E33** — message edit/delete, folder tree, and `fields` selection for lighter MCP payloads.
+5. **F36** — stop reading every chat in the sidebar render.
+6. **F37** — alphabetical sort option in the sidebar.
+7. **F40** — better page reading and keyless search; DNS-rebinding hardening.
+8. **F41** — configurable image host.
+9. **F42** — lazy IDB loading; matters only once libraries get big.
+10. **F43** — stale "Netlify" comment in `build.mjs`.
