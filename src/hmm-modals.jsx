@@ -2662,22 +2662,34 @@ function SyncModal({ onClose }) {
     } catch (e) { setS('error', e.message); }
   };
 
-  const doRailwayPush = async () => {
+  const doRailwayPush = async (force = false) => {
     if (!railwayUrl.trim() || railwayToken.trim().length < 8) { setS('error', 'Need a service URL and an 8+ character sync token'); return; }
     setBusy(true); setStatus(null);
     try {
-      await RailwaySync.push(railwayUrl.trim(), railwayToken.trim());
+      const res = await RailwaySync.push(railwayUrl.trim(), railwayToken.trim(), force ? null : S.syncRevision());
+      if (res.revision != null) S.setSyncRevision(res.revision);
       setS('success', 'Pushed to your Railway sync server ✓');
       ctx.addToast('Synced to Railway', 'success');
-    } catch (e) { setS('error', e.message); }
-    setBusy(false);
+    } catch (e) {
+      if (e.conflict) {
+        setBusy(false);
+        const merge = window.confirm(`This backup changed on another device${e.remoteRevision != null ? ` (revision ${e.remoteRevision})` : ''}.\n\nOK = pull and merge that version first (recommended)\nCancel = overwrite it with this device's data`);
+        if (merge) { await doRailwayPull(); return; }
+        await doRailwayPush(true); // last-write-wins, deliberately
+        return;
+      }
+      setS('error', e.message);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const doRailwayPull = async () => {
     if (!railwayUrl.trim() || railwayToken.trim().length < 8) { setS('error', 'Need a service URL and an 8+ character sync token'); return; }
     setBusy(true); setStatus(null);
     try {
-      const data = await RailwaySync.pull(railwayUrl.trim(), railwayToken.trim());
+      const { data, revision } = await RailwaySync.pull(railwayUrl.trim(), railwayToken.trim());
+      if (revision != null) S.setSyncRevision(revision);
       askRestore(data, 'Railway');
     } catch (e) { setS('error', e.message); }
     setBusy(false);

@@ -54,7 +54,8 @@ const call = async (name, args = {}) => {
 
 // ── tools are advertised ──────────────────────────────────
 const { tools } = await client.listTools();
-check('exposes 27 tools', tools.length === 27, tools.map(t => t.name));
+check('exposes 28 tools', tools.length === 28, tools.map(t => t.name));
+check('advertises message search', tools.some(t => t.name === 'inkling_search_messages'));
 check('create requires name + first_message',
   JSON.stringify(tools.find(t => t.name === 'inkling_create_character').inputSchema.required) === '["name","first_message"]');
 

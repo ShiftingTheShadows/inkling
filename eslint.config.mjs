@@ -28,7 +28,7 @@ export default [
     rules: { ...basics, 'react-hooks/rules-of-hooks': 'error' },
   },
   {
-    files: ['api/**/*.js', 'test/**/*.js', 'scripts/**/*.mjs', 'build.mjs', 'eslint.config.mjs'],
+    files: ['api/**/*.js', 'mcp/**/*.js', 'test/**/*.js', 'scripts/**/*.mjs', 'build.mjs', 'eslint.config.mjs'],
     languageOptions: { ecmaVersion: 'latest', sourceType: 'module' },
     rules: basics,
   },

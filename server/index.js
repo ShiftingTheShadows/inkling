@@ -48,8 +48,50 @@ async function ensureSchema() {
 }
 
 const app = express();
-app.use(cors());
+
+// CORS: no-origin callers (curl, the MCP server) always pass, as do the Vercel
+// deployments and local development. Anything else must be listed in
+// ALLOWED_ORIGINS, so a random page cannot read someone's backup with a
+// guessed token.
+const ALLOWED_ORIGINS = String(process.env.ALLOWED_ORIGINS || '')
+  .split(',').map(s => s.trim()).filter(Boolean);
+const originAllowed = origin => {
+  if (!origin) return true;
+  if (ALLOWED_ORIGINS.includes(origin)) return true;
+  try {
+    const u = new URL(origin);
+    if (u.hostname === 'localhost' || u.hostname === '127.0.0.1') return true;
+    if (u.protocol === 'https:' && u.hostname.endsWith('.vercel.app')) return true;
+  } catch { /* malformed Origin */ }
+  return false;
+};
+app.use(cors({ origin: (origin, cb) => cb(null, originAllowed(origin)) }));
 app.use(express.json({ limit: '50mb' })); // avatars/backgrounds are embedded as base64
+
+// Token guessing is otherwise unthrottled. A fixed-window counter per IP is
+// enough for a single-instance service and needs no dependency; the sweep
+// keeps the map from growing with every address that ever connected.
+const RATE = { windowMs: 60000, max: 60 };
+const hits = new Map();
+const rateLimit = (req, res, next) => {
+  const now = Date.now();
+  const key = req.ip || 'unknown';
+  const entry = hits.get(key);
+  if (!entry || now - entry.start > RATE.windowMs) {
+    hits.set(key, { start: now, count: 1 });
+    return next();
+  }
+  if (++entry.count > RATE.max) {
+    res.set('Retry-After', String(Math.ceil((entry.start + RATE.windowMs - now) / 1000)));
+    return res.status(429).json({ error: 'too many requests, slow down' });
+  }
+  next();
+};
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of hits) if (now - v.start > RATE.windowMs) hits.delete(k);
+}, RATE.windowMs).unref();
+app.use('/api/sync', rateLimit);
 
 app.get('/', (req, res) => res.send('Inkling sync server is running.'));
 
@@ -132,6 +174,19 @@ app.post('/api/sync', async (req, res) => {
     res.json({ ok: true, updatedAt: rows[0].updated_at, revision: Number(rows[0].revision) });
   } catch (e) {
     console.error('POST /api/sync failed:', e);
+    res.status(500).json({ error: 'internal error' });
+  }
+});
+
+// Purge path: forget the backup for a token without needing database access.
+app.delete('/api/sync', async (req, res) => {
+  const token = String((req.body && req.body.token) || req.query.token || '');
+  if (token.length < MIN_TOKEN_LEN) return res.status(400).json({ error: `token must be at least ${MIN_TOKEN_LEN} characters` });
+  try {
+    const { rowCount } = await pool.query('DELETE FROM backups WHERE token_hash = $1', [hashToken(token)]);
+    res.json({ ok: true, deleted: rowCount > 0 });
+  } catch (e) {
+    console.error('DELETE /api/sync failed:', e);
     res.status(500).json({ error: 'internal error' });
   }
 });

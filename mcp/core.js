@@ -167,8 +167,20 @@ const toFields = args => {
 const ok = payload => ({ content: [{ type: 'text', text: JSON.stringify(payload, null, 2) }] });
 const fail = message => ({ content: [{ type: 'text', text: `Error: ${message}` }], isError: true });
 
+// E34: INKLING_MCP_READ_ONLY=1 exposes only the tools that cannot write, so an
+// assistant can consult a library it must not alter.
+export const READ_ONLY = /^(1|true|yes)$/i.test(String(process.env.INKLING_MCP_READ_ONLY || ''));
+export const READ_TOOLS = new Set([
+  'inkling_status', 'inkling_list_characters', 'inkling_get_character',
+  'inkling_list_personas', 'inkling_get_chat', 'inkling_search_messages',
+  'inkling_list_folders', 'inkling_list_scripts', 'inkling_get_script',
+]);
+
 async function handle(name, args) {
   if (configError) return fail(configError);
+  if (READ_ONLY && !READ_TOOLS.has(name)) {
+    return fail('This Inkling MCP server is read-only (INKLING_MCP_READ_ONLY). Mutating tools are disabled.');
+  }
   switch (name) {
     case 'inkling_status': {
       const { data, revision, updatedAt } = await sync.pull();
@@ -268,7 +280,9 @@ async function handle(name, args) {
 // request gets its own. Handlers share the module-level sync client.
 export function createServer() {
   const server = new Server({ name: 'inkling', version: '0.1.0' }, { capabilities: { tools: {} } });
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [...TOOLS, ...EXTRA_TOOLS] }));
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
+    tools: [...TOOLS, ...EXTRA_TOOLS].filter(t => !READ_ONLY || READ_TOOLS.has(t.name)),
+  }));
   server.setRequestHandler(CallToolRequestSchema, async req => {
     try {
       return await handle(req.params.name, req.params.arguments || {});
