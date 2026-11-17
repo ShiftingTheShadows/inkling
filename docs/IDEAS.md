@@ -7,8 +7,8 @@ them without restating them.
 Effort tags: **S** ≈ under an hour, **M** ≈ an afternoon, **L** ≈ a day or more.
 
 > **Status:** D24, D27, A3, F35, D25, A4, A1, A2, A5, A6, A7, B9, B10, B11, B12,
-> B13, B14, B16, B17, B18, C19, C20, D26, D28, D29, D30, E31, E32, E34, F38, F39 and F44
-> are implemented — see
+> A8, B13, B14, B16, B17, B18, C19, C20, D26, D28, D29, D30, E31, E32, E34, F38, F39 and
+> F44 are implemented — see
 > [plans/2026-11-17-data-safety-three.md](superpowers/plans/2026-11-17-data-safety-three.md).
 > D29's three product decisions were answered before it was built; the chosen paths are
 > recorded in its entry, so they are not open questions.
@@ -46,8 +46,12 @@ funnels through one OpenAI-compatible branch using a single shared
   on long contexts. *(M)*
 - **A7 — done.** **Per-task model override.** Assists, summarizer and character generation all
   use the chat model; a cheap "utility model" (Haiku / a local model) saves money. *(S)*
-- **A8.** **Usage honesty.** The `~tkns` meter divides by a hardcoded 16000; parse
-  `usage` from responses and use the model's real context length. *(S)*
+- **A8 — done.** **Usage honesty.** The `~tkns` meter reads the provider-reported input+output
+  of the latest reply (Anthropic's cache-read/creation tokens included) and shows no `~` when
+  the number is exact; endpoints that report nothing still fall back to a 4-chars-per-token
+  estimate. The denominator is the model's real window — Settings → Context window, then the
+  cached live OpenRouter catalogue, then known model families, then 16k — so the meter and
+  auto-summarize fire at the same real percentage. *(S)*
 
 ## B. Chat & composer QOL
 
@@ -166,16 +170,14 @@ funnels through one OpenAI-compatible branch using a single shared
 Everything marked done above is shipped; this list is only the open items, in the order they
 should be tackled.
 
-1. **A8** — real token usage from provider responses instead of `length / 4` against a fixed
-   16k context.
-2. **B15** — director mode / multi-reply group turns.
-3. **C21** — user font upload, also resolving the NC-ND font constraint.
-4. **C22** — per-character blip volume/toggle.
-5. **C23** — auto-advance pages for long messages.
-6. **E33** — message edit/delete, folder tree, and `fields` selection for lighter MCP payloads.
-7. **F36** — stop reading every chat in the sidebar render.
-8. **F37** — alphabetical sort option in the sidebar.
-9. **F40** — better page reading and keyless search; DNS-rebinding hardening.
-10. **F41** — configurable image host.
-11. **F42** — lazy IDB loading; matters only once libraries get big.
-12. **F43** — stale "Netlify" comment in `build.mjs`.
+1. **B15** — director mode / multi-reply group turns.
+2. **C21** — user font upload, also resolving the NC-ND font constraint.
+3. **C22** — per-character blip volume/toggle.
+4. **C23** — auto-advance pages for long messages.
+5. **E33** — message edit/delete, folder tree, and `fields` selection for lighter MCP payloads.
+6. **F36** — stop reading every chat in the sidebar render.
+7. **F37** — alphabetical sort option in the sidebar.
+8. **F40** — better page reading and keyless search; DNS-rebinding hardening.
+9. **F41** — configurable image host.
+10. **F42** — lazy IDB loading; matters only once libraries get big.
+11. **F43** — stale "Netlify" comment in `build.mjs`.

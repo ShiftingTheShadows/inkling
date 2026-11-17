@@ -336,6 +336,8 @@ const CHANGELOG = [
       'New: end-to-end encryption for Railway sync. The backup is stored as an AES-GCM envelope keyed by a passphrase the server never sees, unlocked once per device (optionally remembered). Enabling encrypts and replaces the plaintext backup, LOCK NOW drops the key, and changing the passphrase re-encrypts and re-uploads the backup; a forgotten passphrase cannot be recovered, so download a plaintext backup first.',
       'Changed: a locked or unencrypted browser refuses to push plaintext over an encrypted backup, and MCP says it cannot read or edit ciphertext instead of writing over it.',
       'Note for self-hosted sync servers: the encrypted-backup flag on /api/sync/meta takes effect once server/ is redeployed. Until then pulls still detect and decrypt encrypted backups, but a browser without the passphrase cannot be warned before it pushes.',
+      'New: the context meter now uses real token counts reported by the provider (including cached Anthropic input) and the model\'s actual context window — from Settings, the live model list, or a known model family — instead of an estimate divided by a fixed 16k. Endpoints that report no usage still fall back to the estimate.',
+      'New: a CONTEXT WINDOW field in Settings for local and custom models, so auto-summarize fires at the right point instead of at 75% of 16k.',
       'New: storage warnings. If the browser refuses a save (disk full, private window, blocked site data), a banner says so and offers a backup export instead of failing silently.',
       'Changed: restoring a backup now merges by default — new characters, folders and scripts are added, newer records win, and a longer local chat is never replaced by an older one. Gist pull, Railway pull, auto-sync and file import all use it; "Replace everything" is still one click away.',
       'New: TEST CONNECTION in Settings sends a one-token request and reports exactly what is wrong — key, endpoint, model, timeout, or a missing /api proxy — instead of a broken reply in the chat.',
@@ -454,6 +456,111 @@ async function uploadImage(file, apiKey) {
 }
 
 const estimateTokens = text => Math.ceil((text || '').length / 4);
+/* USAGE-START */
+// A8: honest token accounting. Providers report what they actually charged;
+// prefer that over counting characters, and divide by the model's real context
+// window instead of a fixed 16k. Kept DOM-free so test/usage.test.js can run it.
+const DEFAULT_CONTEXT_LENGTH = 16000;
+
+// Conservative fallbacks for families whose window is stable and well known.
+// Anything else (local models especially) uses the Settings override or the
+// 16k default rather than a guess.
+const KNOWN_CONTEXT_LENGTHS = [
+  [/^claude/i, 200000],
+  [/^gpt-4\.1/i, 1047576],
+  [/^gpt-4o/i, 128000],
+  [/^gpt-4-turbo/i, 128000],
+  [/^gpt-3\.5/i, 16385],
+  [/^o[134](-|$)/i, 200000],
+  [/^gemini/i, 1048576],
+  [/^mistral-large/i, 128000],
+  [/^llama-?3/i, 131072],
+];
+
+// OpenAI-compatible endpoints: prompt_tokens/completion_tokens, some gateways
+// use input_tokens/output_tokens. Either way, total = input + output.
+function parseOpenAIUsage(usage) {
+  if (!usage || typeof usage !== 'object') return null;
+  const input = Number(usage.prompt_tokens ?? usage.input_tokens ?? 0);
+  const output = Number(usage.completion_tokens ?? usage.output_tokens ?? 0);
+  if (!input && !output) return null;
+  return { input, output, total: input + output };
+}
+
+// Anthropic splits cached input out of input_tokens, so the real context is the
+// sum of all three. message_start carries input, message_delta carries the
+// final output count; both arrive in a stream.
+function parseAnthropicUsage(usage) {
+  if (!usage || typeof usage !== 'object') return null;
+  const input = Number(usage.input_tokens || 0)
+    + Number(usage.cache_creation_input_tokens || 0)
+    + Number(usage.cache_read_input_tokens || 0);
+  const output = Number(usage.output_tokens || 0);
+  if (!input && !output) return null;
+  return { input, output, total: input + output };
+}
+
+// Combine two partial reports (start + delta, or a retry). Input only grows, so
+// the largest seen value is the request size; output is cumulative too.
+function mergeUsage(a, b) {
+  if (!a) return b || null;
+  if (!b) return a;
+  const input = Math.max(a.input || 0, b.input || 0);
+  const output = Math.max(a.output || 0, b.output || 0);
+  return { input, output, total: input + output };
+}
+
+function estimateContextTokens(messages) {
+  return (messages || []).reduce((sum, m) => {
+    const text = typeof m?.content === 'string'
+      ? m.content
+      : (m?.content?.find?.(c => c.type === 'text')?.text || '');
+    return sum + Math.ceil((text || '').length / 4);
+  }, 0);
+}
+
+// The latest reply's reported input+output is the actual context the model just
+// saw. Older exact counts are stale (messages were added, summarized or edited
+// since), so never sum them; fall back to the character estimate only when no
+// turn has reported usage yet.
+function contextTokensFromMessages(messages) {
+  const list = messages || [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const u = list[i] && list[i].usage;
+    const total = u ? Number(u.input || 0) + Number(u.output || 0) : 0;
+    if (total > 0) return { tokens: total, exact: true };
+  }
+  return { tokens: estimateContextTokens(list), exact: false };
+}
+
+// Window resolution order: explicit Settings value, the live catalogue cached
+// by LOAD LIVE MODEL LIST, a known model family, then the historical default.
+function resolveContextLength({ override, model, catalog, fallback = DEFAULT_CONTEXT_LENGTH } = {}) {
+  const n = Number(override);
+  if (Number.isFinite(n) && n > 0) return Math.round(n);
+  const key = String(model || '');
+  const fromCatalog = catalog && key ? Number(catalog[key]) : 0;
+  if (Number.isFinite(fromCatalog) && fromCatalog > 0) return Math.round(fromCatalog);
+  for (const [re, len] of KNOWN_CONTEXT_LENGTHS) if (re.test(key)) return len;
+  return fallback;
+}
+
+function contextMeter(messages, contextLength) {
+  const info = contextTokensFromMessages(messages);
+  const window = Number(contextLength) > 0 ? Number(contextLength) : DEFAULT_CONTEXT_LENGTH;
+  return { tokens: info.tokens, exact: info.exact, pct: Math.min(100, (info.tokens / window) * 100) };
+}
+/* USAGE-END */
+
+// A8: the window for the active provider/model, from Settings or the cached
+// OpenRouter catalogue (written by LOAD LIVE MODEL LIST in Settings).
+function modelContextLength(settings) {
+  const s = settings || S.settings();
+  const prof = providerProfile(s);
+  let catalog = {};
+  try { catalog = JSON.parse(localStorage.getItem('hmm_model_contexts') || '{}') || {}; } catch { catalog = {}; }
+  return resolveContextLength({ override: prof.contextLength, model: prof.model, catalog });
+}
 const formatTime = ts => ts ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
 const formatDate = ts => {
   if (!ts) return '';
@@ -1137,6 +1244,10 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
 
   let result = '';
   let shown = ''; // visible text accumulated across tool rounds (kept on abort)
+  // A8: last real usage report seen in this call. A tool loop overwrites it per
+  // round, so the meter reflects the final request rather than the sum of
+  // intermediate lookups.
+  let usage = null;
 
   // Transient failures are common (429 rate limits, 502/503 cold starts) and a
   // failed turn used to mean retyping the prompt. Retry twice with a short
@@ -1189,6 +1300,9 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
         stream: !!onChunk,
         ...generationExtras(resolvedSettings),
       };
+      // Ask OpenAI-compatible servers to end the stream with real token counts.
+      // Endpoints that reject the field are retried without it below.
+      if (onChunk) body.stream_options = { include_usage: true };
       if (structured) body.response_format = { type: 'json_object' };
       const headers = { 'Content-Type': 'application/json' };
       if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
@@ -1213,6 +1327,11 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
         // Some models/endpoints reject response_format — retry once without it
         if (!resp.ok && body.response_format && resp.status >= 400 && resp.status < 500) {
           delete body.response_format;
+          resp = await fetchRetry(url, { method: 'POST', headers, body: JSON.stringify(body), signal: opts.signal });
+        }
+        // Same for stream_options: not every OpenAI-compatible server knows it.
+        if (!resp.ok && body.stream_options && resp.status >= 400 && resp.status < 500) {
+          delete body.stream_options;
           resp = await fetchRetry(url, { method: 'POST', headers, body: JSON.stringify(body), signal: opts.signal });
         }
         // Endpoint/model doesn't do tool calls — search once up front instead
@@ -1254,8 +1373,12 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
                 const trimmed = line.replace(/^data: ?/, '').trim();
                 if (!trimmed || trimmed === '[DONE]') continue;
                 try {
-                  const delta = JSON.parse(trimmed).choices?.[0]?.delta;
-                  if (delta?.content) { text += delta.content; shown = prefix + text; onChunk(shown, false); }
+                  const chunk = JSON.parse(trimmed);
+                  // Final frame (include_usage) has no choices, only usage.
+                  const u = parseOpenAIUsage(chunk.usage);
+                  if (u) usage = u;
+                  const delta = chunk.choices?.[0]?.delta;
+                  if (delta?.content) { text += delta.content; shown = prefix + text; onChunk(shown, false, usage); }
                   takeAnnotations(delta?.annotations);
                   for (const tc of delta?.tool_calls || []) {
                     const c = calls[tc.index ?? 0] || (calls[tc.index ?? 0] = { id: '', name: '', raw: '' });
@@ -1272,6 +1395,7 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
           }
         } else {
           const j = await resp.json();
+          usage = parseOpenAIUsage(j.usage) || usage;
           const msg = j.choices?.[0]?.message;
           text = msg?.content || '';
           takeAnnotations(msg?.annotations);
@@ -1298,15 +1422,15 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
       }
 
       if (searchOn) emitSearch(false);
-      if (onChunk) { onChunk(shown, true); return shown; }
+      if (onChunk) { onChunk(shown, true, usage); return shown; }
       result = shown;
     } catch(e) {
-      if (e.name === 'AbortError') { if (searchOn) emitSearch(false); if (onChunk) onChunk(shown, true); return shown; }
+      if (e.name === 'AbortError') { if (searchOn) emitSearch(false); if (onChunk) onChunk(shown, true, usage); return shown; }
       if (searchOn) emitSearch(false);
       const providerName = resolvedSettings.provider === 'openrouter' ? 'OpenRouter' : resolvedSettings.provider === 'local' ? 'Local model' : 'Custom endpoint';
       result = `*${providerName} error: ${e.message}*\n\nCheck your endpoint URL, API key, and model ID in Settings.`;
     }
-    if (onChunk && result) onChunk(result, true);
+    if (onChunk && result) onChunk(result, true, usage);
     return result;
   }
 
@@ -1372,6 +1496,8 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
                 if (!line.startsWith('data:')) continue;
                 try {
                   const j = JSON.parse(line.slice(5).trim());
+                  if (j.type === 'message_start') usage = mergeUsage(usage, parseAnthropicUsage(j.message?.usage));
+                  else if (j.type === 'message_delta') usage = mergeUsage(usage, parseAnthropicUsage(j.usage));
                   if (j.type === 'content_block_start') {
                     const cb = j.content_block || {};
                     if (cb.type === 'text' && partial) partial += '\n\n'; // text resuming after a search
@@ -1387,7 +1513,7 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
                     delete toolJson[j.index];
                   } else if (j.type === 'content_block_delta' && j.delta?.type === 'text_delta') {
                     partial += j.delta.text;
-                    onChunk(partial, false);
+                    onChunk(partial, false, usage);
                   }
                 } catch {}
               }
@@ -1397,7 +1523,7 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
             if (err.name !== 'AbortError') throw err;
           }
           if (searchOn) emitSearch(false);
-          onChunk(partial, true);
+          onChunk(partial, true, usage);
           return partial;
         }
         const j = await resp.json();
@@ -1406,6 +1532,7 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
           if (b.type === 'web_search_tool_result' && Array.isArray(b.content)) b.content.forEach(r => WebSearch.addSource(sState, r));
         });
         if (searchOn) emitSearch(false);
+        usage = parseAnthropicUsage(j.usage) || usage;
         result = (j.content || []).filter(b => b.type === 'text').map(b => b.text).join('\n\n');
         if (j.stop_reason === 'refusal' && !result) {
           result = '*The model declined this request (safety refusal). Try rephrasing, or switch provider in Settings.*';
@@ -1416,7 +1543,7 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
       }
       // 404 → functions not deployed here; fall through to the shim below
     } catch (e) {
-      if (e.name === 'AbortError') { if (searchOn) emitSearch(false); if (onChunk) onChunk('', true); return ''; }
+      if (e.name === 'AbortError') { if (searchOn) emitSearch(false); if (onChunk) onChunk('', true, usage); return ''; }
       console.error('Anthropic API error:', e);
     }
   }
@@ -1583,7 +1710,9 @@ function providerProfile(settings) {
   const endpoint = normalizeBaseUrl(prof.endpoint || s.localEndpoint || (provider === 'openrouter' ? 'https://openrouter.ai/api' : provider === 'local' ? 'http://localhost:11434' : ''));
   const key = prof.key !== undefined ? prof.key : (s.localApiKey || '');
   const model = prof.model || s.localModel || (provider === 'openrouter' ? 'anthropic/claude-sonnet-5' : provider === 'local' ? 'llama3' : '');
-  return { provider, endpoint, key, model };
+  // A8: the context meter needs the window the user typed for this provider's
+  // model; dropping it here is why the override had no effect.
+  return { provider, endpoint, key, model, contextLength: prof.contextLength };
 }
 
 function buildProviderProbe(settings) {
@@ -2421,6 +2550,8 @@ Object.assign(window, {
   summarizeMessages, GistSync, RailwaySync, testProvider, providerProfile, generationExtras,
   shouldAutoSummarize, utilitySettings,
   chatToMarkdown, chatToJson, chatToHtml, chatExportRows, trashExpired,
+  parseOpenAIUsage, parseAnthropicUsage, mergeUsage, contextTokensFromMessages,
+  resolveContextLength, contextMeter, modelContextLength,
   SyncCrypto, isEncryptedSyncBlob, encryptSyncPayload, decryptSyncPayload,
   deriveSyncKey, syncKeyFingerprint, newSyncSalt,
   downloadCharJson, downloadCharPng,

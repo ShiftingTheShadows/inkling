@@ -1,6 +1,6 @@
 // hmm-chat.jsx — Chat view, messages, input
 const { useState, useContext, useEffect, useRef, useCallback } = React;
-const { AppCtx, S, genId, estimateTokens, formatTime, renderMarkdown, charBg, charFg, callAI, buildSystemPrompt, summarizeMessages, compressImage, downloadCharJson, downloadCharPng, avatarPx, providerProfile, shouldAutoSummarize, utilitySettings, chatToMarkdown, chatToJson, chatToHtml } = window;
+const { AppCtx, S, genId, estimateTokens, contextTokensFromMessages, modelContextLength, formatTime, renderMarkdown, charBg, charFg, callAI, buildSystemPrompt, summarizeMessages, compressImage, downloadCharJson, downloadCharPng, avatarPx, providerProfile, shouldAutoSummarize, utilitySettings, chatToMarkdown, chatToJson, chatToHtml } = window;
 const { CharAvatar, Textbox } = window;
 
 function UserAvatar({ persona, size = 32 }) {
@@ -473,8 +473,8 @@ function ChatView() {
     setStreamingId(streamMsgId);
     setGenerating(true);
     try {
-      await callAI(groupApiMsgs(baseMsgs), speaker, aiSettings(), (partial, done) => {
-        setMessages(prev => prev.map(m => m.id === streamMsgId ? { ...m, content: partial, charId: speaker.id } : m));
+      await callAI(groupApiMsgs(baseMsgs), speaker, aiSettings(), (partial, done, usage) => {
+        setMessages(prev => prev.map(m => m.id === streamMsgId ? { ...m, content: partial, charId: speaker.id, usage: usage || m.usage } : m));
         if (done) {
           setStreamingId(null);
           setMessages(prev => {
@@ -701,11 +701,12 @@ function ChatView() {
     applyToInput(out, bodyAt, bodyAt + body.length);
   };
 
-  const totalTokens = messages.reduce((s, m) => {
-    const t = typeof m.content === 'string' ? m.content : m.content?.find?.(c => c.type === 'text')?.text || '';
-    return s + estimateTokens(t);
-  }, 0);
-  const tokenPct = Math.min(100, (totalTokens / 16000) * 100);
+  // A8: the latest reply's provider-reported usage is the real context size;
+  // only fall back to the character estimate when nothing has reported yet.
+  const usageInfo = contextTokensFromMessages(messages);
+  const totalTokens = usageInfo.tokens;
+  const contextLength = modelContextLength(settings);
+  const tokenPct = Math.min(100, (totalTokens / contextLength) * 100);
 
   const saveAndSync = (msgs) => {
     S.saveChat(char.id, msgs);
@@ -752,8 +753,8 @@ function ChatView() {
     setGenerating(true);
 
     try {
-      await callAI(withUser, char, aiSettings(), (partial, done) => {
-        setMessages(prev => prev.map(m => m.id === streamMsgId ? { ...m, content: partial } : m));
+      await callAI(withUser, char, aiSettings(), (partial, done, usage) => {
+        setMessages(prev => prev.map(m => m.id === streamMsgId ? { ...m, content: partial, usage: usage || m.usage } : m));
         if (done) {
           setStreamingId(null);
           // Stopped before any text arrived → drop the empty bubble
@@ -831,8 +832,8 @@ function ChatView() {
     setMessages(prev => prev.map(m => m.id === last.id ? { ...m, content: '', search: undefined, error: undefined } : m));
 
     try {
-      await callAI(apiMsgs, char, aiSettings(), (partial, done) => {
-        setMessages(prev => prev.map(m => m.id === last.id ? { ...m, content: partial } : m));
+      await callAI(apiMsgs, char, aiSettings(), (partial, done, usage) => {
+        setMessages(prev => prev.map(m => m.id === last.id ? { ...m, content: partial, usage: usage || m.usage } : m));
         if (done) {
           setStreamingId(null);
           setMessages(prev => {
@@ -883,8 +884,8 @@ function ChatView() {
     }));
 
     try {
-      await callAI(apiMsgs, char, aiSettings(), (partial, done) => {
-        setMessages(prev => prev.map(m => m.id === streamMsgId ? { ...m, content: partial } : m));
+      await callAI(apiMsgs, char, aiSettings(), (partial, done, usage) => {
+        setMessages(prev => prev.map(m => m.id === streamMsgId ? { ...m, content: partial, usage: usage || m.usage } : m));
         if (done) {
           setStreamingId(null);
           setMessages(prev => {
@@ -943,8 +944,8 @@ function ChatView() {
     setGenerating(true);
 
     try {
-      await callAI(withNarr, char, aiSettings(), (partial, done) => {
-        setMessages(prev => prev.map(m => m.id === streamMsgId ? { ...m, content: partial } : m));
+      await callAI(withNarr, char, aiSettings(), (partial, done, usage) => {
+        setMessages(prev => prev.map(m => m.id === streamMsgId ? { ...m, content: partial, usage: usage || m.usage } : m));
         if (done) {
           setStreamingId(null);
           setMessages(prev => {
@@ -1072,8 +1073,8 @@ function ChatView() {
     const sys = buildSystemPrompt(char, settingsNow, messages)
       + '\n\nIMPORTANT: Continue the scene from exactly where the last message stopped. Write only the continuation, do not repeat anything already written, and never speak or act for the user.';
     try {
-      await callAI(messages, { ...char, systemPrompt: sys }, settingsNow, (partial, done) => {
-        setMessages(prev => prev.map(m => m.id === streamMsgId ? { ...m, content: partial } : m));
+      await callAI(messages, { ...char, systemPrompt: sys }, settingsNow, (partial, done, usage) => {
+        setMessages(prev => prev.map(m => m.id === streamMsgId ? { ...m, content: partial, usage: usage || m.usage } : m));
         if (done) {
           setStreamingId(null);
           setMessages(prev => {
@@ -1455,7 +1456,12 @@ function ChatView() {
         )}
         <div className="input-statusbar">
           <div className="input-meta">
-            <span className="token-count">~{totalTokens.toLocaleString()} tkns</span>
+            <span
+              className="token-count"
+              title={`${usageInfo.exact ? 'Reported by the provider for the latest reply' : 'Estimated at 4 characters per token'} · context window ${contextLength.toLocaleString()}`}
+            >
+              {usageInfo.exact ? '' : '~'}{totalTokens.toLocaleString()} tkns
+            </span>
             {inputVal.trim() && <span style={{ color: 'var(--text3)' }}>· {inputVal.trim().split(/\s+/).length}w</span>}
             <span style={{ color: 'var(--text3)' }}>|</span>
             <span>{providerProfile(settings).model.replace(/^claude-/, '').replace(/-20\d{6}$/, '')}</span>
