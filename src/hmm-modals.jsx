@@ -1,6 +1,6 @@
 // hmm-modals.jsx — Modals, toasts, command palette
 const { useState, useContext, useEffect, useMemo, useRef } = React;
-const { AppCtx, S, genId, charBg, charFg, GistSync, RailwaySync, callAI, compressImage, uploadImage, CHANGELOG, testProvider } = window;
+const { AppCtx, S, genId, charBg, charFg, GistSync, RailwaySync, SyncCrypto, callAI, compressImage, uploadImage, CHANGELOG, testProvider } = window;
 
 // Shared stroke-icon set for the command palette — same visual language as the
 // topbar/sidebar icon buttons, instead of mismatched ASCII/unicode/emoji glyphs.
@@ -2692,6 +2692,24 @@ function SyncModal({ onClose }) {
 
   const setS = (type, msg) => setStatus({ type, msg });
 
+  // D29: encryption lives with the Railway provider (the gist is a different
+  // host with a different credential). meta is the public half — salt,
+  // iterations, fingerprint — never the passphrase.
+  const [cryptoMeta, setCryptoMeta] = useState(() => SyncCrypto.meta());
+  const [cryptoUnlocked, setCryptoUnlocked] = useState(() => SyncCrypto.unlocked());
+  const [cryptoPass, setCryptoPass] = useState('');
+  const [cryptoPass2, setCryptoPass2] = useState('');
+  const [cryptoOld, setCryptoOld] = useState('');
+  const [cryptoRemember, setCryptoRemember] = useState(true);
+  const refreshCrypto = () => { setCryptoMeta(SyncCrypto.meta()); setCryptoUnlocked(SyncCrypto.unlocked()); };
+  const clearCryptoFields = () => { setCryptoPass(''); setCryptoPass2(''); setCryptoOld(''); };
+
+  useEffect(() => {
+    // The remembered key loads asynchronously at boot; re-check when the modal
+    // opens so it doesn't show LOCKED for a session that is already unlocked.
+    SyncCrypto.loadRemembered().then(refreshCrypto);
+  }, []);
+
   const saveToken = (t) => { setToken(t); localStorage.setItem('hmm_gh_token', t); };
   const saveGist  = (g) => { setGistId(g); localStorage.setItem('hmm_gh_gist', g); };
 
@@ -2771,6 +2789,93 @@ function SyncModal({ onClose }) {
     setBusy(false);
   };
 
+  // Enabling encrypts locally first, then replaces the plaintext backup with
+  // an encrypted one in the same action. A failed upload leaves encryption on
+  // for this device but says plainly that the server copy is still plaintext.
+  const doEnableCrypto = async () => {
+    if (cryptoPass.trim().length < 8) { setS('error', 'Use a passphrase of at least 8 characters'); return; }
+    if (cryptoPass !== cryptoPass2) { setS('error', 'The two passphrases do not match'); return; }
+    if (railwayToken.trim() && cryptoPass.trim() === railwayToken.trim()) {
+      setS('error', 'Use a passphrase different from the sync token — the server already knows that value');
+      return;
+    }
+    setBusy(true); setStatus(null);
+    try {
+      await SyncCrypto.enable(cryptoPass, { remember: cryptoRemember });
+      clearCryptoFields(); refreshCrypto();
+      if (railwayUrl.trim() && railwayToken.trim()) {
+        const replace = window.confirm(
+          'Replace the backup on the sync server with this device\'s encrypted copy?\n\n' +
+          'The plaintext copy is removed. Anything another device pushed since this one last synced will be overwritten.\n\n' +
+          'There is no recovery if you forget the passphrase.'
+        );
+        if (!replace) {
+          setS('info', 'Encryption is on for this device. Nothing was uploaded — use PUSH in SYNC ACTIONS to replace the plaintext backup.');
+          return;
+        }
+        const res = await RailwaySync.push(railwayUrl.trim(), railwayToken.trim(), null);
+        if (res.revision != null) S.setSyncRevision(res.revision);
+        if (res.updatedAt) localStorage.setItem('hmm_railway_last_sync', res.updatedAt);
+        setS('success', 'Encryption on — the plaintext backup was replaced with an encrypted one. A device without the passphrase is now refused.');
+        ctx.addToast('Backup encrypted', 'success');
+      } else {
+        setS('info', 'Encryption is on for this device. Add the service URL and token, then push to replace any plaintext backup.');
+      }
+    } catch (e) {
+      setS('error', 'Encryption is on for this device, but the encrypted upload failed: ' + e.message + '. The stored backup is still plaintext until a push succeeds.');
+    } finally { setBusy(false); }
+  };
+
+  const doUnlockCrypto = async () => {
+    setBusy(true); setStatus(null);
+    try {
+      await SyncCrypto.unlock(cryptoPass);
+      clearCryptoFields(); refreshCrypto();
+      // Anything edited while locked is still only local; let auto-sync push it
+      // now that a key is available (the handler exists only when sync is on).
+      if (window.__hmmOnDataChange) window.__hmmOnDataChange();
+      setS('success', 'Sync unlocked for this session');
+    } catch (e) { setS('error', e.message); }
+    finally { setBusy(false); }
+  };
+
+  const doLockCrypto = () => {
+    SyncCrypto.lock();
+    clearCryptoFields(); refreshCrypto();
+    setS('info', 'Locked. Auto-sync pauses until you unlock again — the key is gone from this browser.');
+  };
+
+  const doChangeCryptoPass = async () => {
+    if (!railwayUrl.trim() || !railwayToken.trim()) {
+      setS('error', 'Add the service URL and sync token first — changing the passphrase re-uploads the backup.');
+      return;
+    }
+    if (cryptoPass.trim().length < 8) { setS('error', 'Use a new passphrase of at least 8 characters'); return; }
+    if (cryptoPass !== cryptoPass2) { setS('error', 'The two new passphrases do not match'); return; }
+    setBusy(true); setStatus(null);
+    try {
+      // Uploads the re-keyed blob first, then commits the new key locally, so
+      // a failed upload cannot strand this device with a key the server's copy
+      // isn't encrypted with.
+      const res = await SyncCrypto.changePassphrase(cryptoOld, cryptoPass, {
+        remember: cryptoRemember,
+        push: envelope => RailwaySync.send(railwayUrl.trim(), railwayToken.trim(), envelope, S.syncRevision()),
+      });
+      if (res && res.revision != null) S.setSyncRevision(res.revision);
+      if (res && res.updatedAt) localStorage.setItem('hmm_railway_last_sync', res.updatedAt);
+      clearCryptoFields(); refreshCrypto();
+      setS('success', 'Passphrase changed — the backup was re-encrypted and re-uploaded.');
+      ctx.addToast('Passphrase changed', 'success');
+    } catch (e) {
+      setS('error', 'Passphrase change failed: ' + e.message + '. Your existing passphrase still works.');
+    } finally { setBusy(false); }
+  };
+
+  const downloadPlaintextBackup = () => {
+    // The escape hatch the "no recovery" warning promises.
+    ctx.exportAll();
+  };
+
   const doPush = async () => {
     if (!token.trim()) { setS('error', 'Paste your GitHub token first'); return; }
     setBusy(true); setStatus(null);
@@ -2827,6 +2932,9 @@ function SyncModal({ onClose }) {
             Characters, conversations, personas, lorebook &amp; preferences get saved to a <strong>private GitHub Gist</strong> on your account.
             Load it back on any device by entering the same token + gist ID.<br/>
             <span style={{ color: 'var(--accent2)' }}>API keys &amp; your jailbreak prompt are NEVER synced — they stay only on this device.</span>
+            <div style={{ marginTop: 6, color: 'var(--warning)' }}>
+              Gist backups are stored on GitHub as a private gist and are not covered by end-to-end encryption; only the Railway provider has it.
+            </div>
             <div style={{ marginTop: 8 }}>
               <button className="btn-secondary btn-sm" onClick={() => ctx.openModal('mcp-setup')}>CONNECT CLAUDE (MCP) →</button>
               <span style={{ marginLeft: 8, fontSize: 10, color: 'var(--text3)' }}>let Claude Code / Desktop create &amp; edit characters</span>
@@ -2947,6 +3055,94 @@ function SyncModal({ onClose }) {
             </div>
           </div>
           </>
+          )}
+
+          {provider === 'railway' && (
+            <div style={{ marginTop: 20, border: '1px solid var(--border2)', background: 'var(--surface2)', padding: '14px 16px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.14em', color: 'var(--text3)' }}>END-TO-END ENCRYPTION</div>
+                <span style={{
+                  fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', padding: '2px 7px', border: '1px solid var(--border2)',
+                  color: !cryptoMeta ? 'var(--text3)' : cryptoUnlocked ? 'var(--accent)' : 'var(--warning)',
+                }}>
+                  {!cryptoMeta ? 'OFF' : cryptoUnlocked ? 'ON · UNLOCKED' : 'ON · LOCKED'}
+                </span>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text2)', lineHeight: 1.8, marginBottom: 12 }}>
+                Encrypts the backup with AES-GCM before it leaves this device. The server only ever stores ciphertext and never receives the passphrase.
+                {cryptoMeta && cryptoUnlocked && (
+                  <span style={{ display: 'block', fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
+                    Key fingerprint {cryptoMeta.fingerprint} · {cryptoMeta.remember ? 'remembered on this device' : 'this session only'}
+                  </span>
+                )}
+                <span style={{ display: 'block', color: 'var(--warning)', marginTop: 6 }}>
+                  There is no recovery: if the passphrase is lost, the server copy cannot be read. Download a plaintext backup first if you are unsure.
+                </span>
+              </div>
+
+              {!cryptoMeta && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">PASSPHRASE (8+ CHARS)</label>
+                    <input type="password" className="form-input" value={cryptoPass} onChange={e => setCryptoPass(e.target.value)} placeholder="Long, and different from the token" />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">CONFIRM PASSPHRASE</label>
+                    <input type="password" className="form-input" value={cryptoPass2} onChange={e => setCryptoPass2(e.target.value)} />
+                  </div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', gridColumn: '1 / -1' }}>
+                    <input type="checkbox" checked={cryptoRemember} onChange={e => setCryptoRemember(e.target.checked)} style={{ width: 14, height: 14, accentColor: 'var(--accent)', flexShrink: 0 }} />
+                    Remember on this device (otherwise you unlock after each launch)
+                  </label>
+                  <div style={{ display: 'flex', gap: 8, gridColumn: '1 / -1', flexWrap: 'wrap' }}>
+                    <button className="btn-primary" onClick={doEnableCrypto} disabled={busy}>ENABLE ENCRYPTION</button>
+                    <button className="btn-secondary" onClick={downloadPlaintextBackup} disabled={busy}>DOWNLOAD PLAINTEXT BACKUP</button>
+                  </div>
+                </div>
+              )}
+
+              {cryptoMeta && !cryptoUnlocked && (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                  <div className="form-group" style={{ flex: 1, minWidth: 220, marginBottom: 0 }}>
+                    <label className="form-label">PASSPHRASE</label>
+                    <input
+                      type="password" className="form-input" value={cryptoPass}
+                      onChange={e => setCryptoPass(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter' && cryptoPass) doUnlockCrypto(); }}
+                      placeholder="Unlock this device"
+                    />
+                  </div>
+                  <button className="btn-primary" onClick={doUnlockCrypto} disabled={busy || !cryptoPass}>UNLOCK</button>
+                  <button className="btn-secondary" onClick={downloadPlaintextBackup} disabled={busy}>DOWNLOAD PLAINTEXT BACKUP</button>
+                </div>
+              )}
+
+              {cryptoMeta && cryptoUnlocked && (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">CURRENT PASSPHRASE</label>
+                    <input type="password" className="form-input" value={cryptoOld} onChange={e => setCryptoOld(e.target.value)} />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">NEW PASSPHRASE</label>
+                    <input type="password" className="form-input" value={cryptoPass} onChange={e => setCryptoPass(e.target.value)} />
+                  </div>
+                  <div className="form-group" style={{ marginBottom: 0 }}>
+                    <label className="form-label">CONFIRM NEW PASSPHRASE</label>
+                    <input type="password" className="form-input" value={cryptoPass2} onChange={e => setCryptoPass2(e.target.value)} />
+                  </div>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, cursor: 'pointer', alignSelf: 'end', paddingBottom: 6 }}>
+                    <input type="checkbox" checked={cryptoRemember} onChange={e => setCryptoRemember(e.target.checked)} style={{ width: 14, height: 14, accentColor: 'var(--accent)', flexShrink: 0 }} />
+                    Remember on this device
+                  </label>
+                  <div style={{ display: 'flex', gap: 8, gridColumn: '1 / -1', flexWrap: 'wrap' }}>
+                    <button className="btn-primary" onClick={doChangeCryptoPass} disabled={busy}>CHANGE PASSPHRASE</button>
+                    <button className="btn-secondary" onClick={doLockCrypto} disabled={busy}>LOCK NOW</button>
+                    <button className="btn-secondary" onClick={downloadPlaintextBackup} disabled={busy}>DOWNLOAD PLAINTEXT BACKUP</button>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
           {/* Status */}

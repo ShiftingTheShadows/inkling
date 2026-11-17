@@ -302,6 +302,24 @@ const empty = await client2.callTool({ name: 'inkling_list_characters', argument
 check('empty backup gives a clear message', /No backup found/.test(empty.content[0].text));
 await client2.close();
 
+// ── encrypted backup (D29) is refused, not misread ────────
+await seed({
+  type: 'inkling-encrypted-backup', v: 1,
+  kdf: { name: 'PBKDF2-SHA256', iterations: 250000, salt: 'AAAAAAAAAAAAAAAAAAAAAA==' },
+  cipher: 'AES-GCM-256', iv: 'BBBBBBBBBBBBBBBB', data: 'CCCC', encryptedAt: '2026-11-17T00:00:00Z',
+});
+const client3 = new Client({ name: 'test3', version: '0' }, { capabilities: {} });
+await client3.connect(new StdioClientTransport({
+  command: process.execPath,
+  args: [path.join(HERE, '..', 'index.js')],
+  env: { ...process.env, INKLING_SYNC_URL: sync.url, INKLING_SYNC_TOKEN: TOKEN },
+}));
+const enc = await client3.callTool({ name: 'inkling_list_characters', arguments: {} });
+check('encrypted backup gives a clear refusal',
+  /end-to-end encrypted/.test(enc.content[0].text) && /cannot read or edit/.test(enc.content[0].text), enc.content[0].text);
+check('encrypted refusal is an error, not an empty list', enc.isError === true || !/characters/.test(enc.content[0].text), enc.content[0].text);
+await client3.close();
+
 sync.close();
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

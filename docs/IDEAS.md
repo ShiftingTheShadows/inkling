@@ -101,8 +101,13 @@ funnels through one OpenAI-compatible branch using a single shared
   (built for MCP) but the browser omits it and keeps last-write-wins, and a pull triggers
   a full `location.reload()`. Send the revision and prompt "remote changed — keep mine /
   take theirs". *(M)*
-- **D29.** **End-to-end encrypt the sync blob** — WebCrypto AES-GCM keyed off the sync
-  token; the backup host stays a dumb blob store. *(M/L)*
+- **D29 — done.** **End-to-end encrypt the sync blob** — the Railway backup is stored as
+  an AES-GCM envelope keyed by a passphrase (PBKDF2-SHA256, per-blob salt + IV) the server
+  never sees. It unlocks once per device, can be remembered, and is re-keyed by uploading
+  the re-encrypted blob before the new key is committed. A device without the passphrase
+  refuses to push over an encrypted backup, the browser never uploads plaintext to one, and
+  MCP reports that it cannot read ciphertext instead of writing over it. Gist sync is
+  unchanged and says so in the UI. *(M/L)*
 - **D30 — done.** **Server hardening** — rate-limit `/api/sync` and `/api/sync/meta` (token
   guessing is unthrottled, minimum length 8), tighten CORS, add a purge path. *(S)*
 

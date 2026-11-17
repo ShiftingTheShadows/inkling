@@ -33,6 +33,16 @@ export class SyncClient {
     const res = await this.fetch(`${this.url}/api/sync?token=${encodeURIComponent(this.token)}`);
     const body = await this.#json(res);
     if (!res.ok) throw new Error(`sync server ${res.status}: ${body.error || body._raw || res.statusText}`);
+    // D29: an end-to-end encrypted blob is opaque here. Refuse it explicitly
+    // rather than handing ciphertext to tools that expect characters arrays.
+    // Every mutating tool goes through mutate() → pull(), so this also stops a
+    // stale MCP write from replacing an encrypted backup with plaintext.
+    if (body.data && typeof body.data === 'object' && body.data.type === 'inkling-encrypted-backup') {
+      throw new Error(
+        'This Inkling backup is end-to-end encrypted. The MCP bridge cannot read or edit it — ' +
+        'open Inkling → Settings → Sync to decrypt it, or point MCP at a separate plaintext backup.'
+      );
+    }
     return { data: body.data, revision: body.revision ?? null, updatedAt: body.updatedAt ?? null };
   }
 
