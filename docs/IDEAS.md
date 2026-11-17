@@ -6,8 +6,8 @@ them without restating them.
 
 Effort tags: **S** ≈ under an hour, **M** ≈ an afternoon, **L** ≈ a day or more.
 
-> **Status:** D24, D27, A3, F35, D25, A4, A1, A2, A5, A6, B9, B11, F38 and F39 are
-> implemented — see
+> **Status:** D24, D27, A3, F35, D25, A4, A1, A2, A5, A6, B9, B11, D28, D30, E31,
+> E34, F38 and F39 are implemented — see
 > [plans/2026-11-17-data-safety-three.md](superpowers/plans/2026-11-17-data-safety-three.md).
 
 ---
@@ -96,24 +96,24 @@ funnels through one OpenAI-compatible branch using a single shared
 - **D27 — done.** **Merge, don't replace.** `restorePayload` overwrites the characters array
   wholesale, so pulling or importing a backup discards local-only characters. Offer
   merge-by-id (replace / keep both / skip). *(M)*
-- **D28.** **Revision CAS on the browser path.** The server supports `expectedRevision`
+- **D28 — done.** **Revision CAS on the browser path.** The server supports `expectedRevision`
   (built for MCP) but the browser omits it and keeps last-write-wins, and a pull triggers
   a full `location.reload()`. Send the revision and prompt "remote changed — keep mine /
   take theirs". *(M)*
 - **D29.** **End-to-end encrypt the sync blob** — WebCrypto AES-GCM keyed off the sync
   token; the backup host stays a dumb blob store. *(M/L)*
-- **D30.** **Server hardening** — rate-limit `/api/sync` and `/api/sync/meta` (token
+- **D30 — done.** **Server hardening** — rate-limit `/api/sync` and `/api/sync/meta` (token
   guessing is unthrottled, minimum length 8), tighten CORS, add a purge path. *(S)*
 
 ## E. MCP
 
-- **E31.** **`inkling_search_messages`** — full-text across every chat; the most obviously
+- **E31 — done.** **`inkling_search_messages`** — full-text across every chat; the most obviously
   missing tool for "what did we say about X".
 - **E32.** **`inkling_export_character`** — return a `chara_card_v2` JSON blob so a
   character can move between installs without a browser round-trip.
 - **E33.** **Message-level edit/delete, folder tree, `fields` selection on
   `get_character`** — keeps big payloads out of context.
-- **E34.** **Read-only mode** — an env flag exposing only read tools.
+- **E34 — done.** **Read-only mode** — an env flag exposing only read tools.
 
 ## F. Smaller fixes noticed while reading
 

@@ -167,10 +167,19 @@ function App() {
     const doPush = async (url, token) => {
       pushInFlight = true;
       try {
-        const updatedAt = await RailwaySync.push(url, token);
-        localStorage.setItem('hmm_railway_last_sync', updatedAt);
+        const res = await RailwaySync.push(url, token, S.syncRevision());
+        localStorage.setItem('hmm_railway_last_sync', res.updatedAt);
+        S.setSyncRevision(res.revision);
       } catch (e) {
-        console.warn('Auto-sync push failed:', e);
+        // Another device wrote since this one last read: never overwrite it
+        // unattended — pull and merge instead, which is what poll() already
+        // does (and it only reloads when something actually changed).
+        if (e.conflict) {
+          pushInFlight = false;
+          await poll(url, token);
+        } else {
+          console.warn('Auto-sync push failed:', e);
+        }
       } finally {
         pushInFlight = false;
       }
@@ -182,7 +191,8 @@ function App() {
         const remoteUpdatedAt = await RailwaySync.meta(url, token);
         const lastSync = localStorage.getItem('hmm_railway_last_sync');
         if (remoteUpdatedAt && (!lastSync || new Date(remoteUpdatedAt) > new Date(lastSync))) {
-          const data = await RailwaySync.pull(url, token);
+          const { data, revision } = await RailwaySync.pull(url, token);
+          if (revision != null) S.setSyncRevision(revision);
           // Merge, never replace: an unattended poll must not discard what was
           // typed here since the last push. Only reload when something landed.
           const stats = GistSync.restorePayload(data, { mode: 'merge' });

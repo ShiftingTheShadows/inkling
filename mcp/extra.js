@@ -53,6 +53,11 @@ export const EXTRA_TOOLS = [
       limit: { type: 'number', description: 'Messages to return (default 20, max 100).' },
       offset: { type: 'number', description: 'Skip this many messages from the end (default 0).' },
     }, required: ['character'] } },
+  { name: 'inkling_search_messages', description: 'Full-text search across every chat. Returns matching messages with character, role, timestamp and a snippet, newest first.',
+    inputSchema: { type: 'object', properties: {
+      query: { type: 'string', description: 'Text to find (case-insensitive).' },
+      limit: { type: 'number', description: 'Matches to return (default 20, max 100).' },
+    }, required: ['query'] } },
   { name: 'inkling_add_message', description: 'Append a message to a character\'s chat, e.g. to seed a scene or leave a note. Role is "user" or "assistant".',
     inputSchema: { type: 'object', properties: {
       character: { type: 'string' }, role: { type: 'string', enum: ['user', 'assistant'] }, content: { type: 'string' },
@@ -201,6 +206,32 @@ export async function handleExtra(name, args, { sync, ok, fail }) {
         content: typeof m.content === 'string' ? m.content : (m.content?.find?.(c => c.type === 'text')?.text ?? '[non-text content]'),
       }));
       return ok({ character: char.name, total: msgs.length, returned: page.length, offset, messages: page });
+    }
+
+    case 'inkling_search_messages': {
+      const q = lc(args.query);
+      if (!q) return fail('query is required');
+      const limit = Math.min(Math.max(Number(args.limit) || 20, 1), 100);
+      const { data } = await sync.pull();
+      needBackup(data);
+      const chats = data.chats || {};
+      const hits = [];
+      for (const c of data.characters || []) {
+        (chats[c.id] || []).forEach((m, i) => {
+          const text = typeof m.content === 'string'
+            ? m.content
+            : (Array.isArray(m.content) ? m.content.find(p => p.type === 'text')?.text : '') || '';
+          const at = lc(text).indexOf(q);
+          if (at === -1) return;
+          hits.push({
+            character: c.name, characterId: c.id, index: i, role: m.role,
+            timestamp: m.timestamp || null,
+            snippet: text.slice(Math.max(0, at - 60), at + q.length + 60).replace(/\s+/g, ' ').trim(),
+          });
+        });
+      }
+      hits.sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0));
+      return ok({ query: args.query, total: hits.length, returned: Math.min(hits.length, limit), messages: hits.slice(0, limit) });
     }
 
     case 'inkling_add_message': {

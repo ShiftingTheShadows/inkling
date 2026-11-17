@@ -268,6 +268,13 @@ const S = {
   saveSettings: v => __set('hmm_settings', v),
   personas: () => __get('hmm_personas', null) || [{ id: 'default', name: 'You', description: '', avatar: '' }],
   savePersonas: v => __set('hmm_personas', v),
+  // Revision of the sync backup this device last read or wrote. null means
+  // "never seen one", which opts the push out of optimistic concurrency.
+  syncRevision: () => {
+    const v = localStorage.getItem('hmm_sync_revision');
+    return v == null ? null : Number(v);
+  },
+  setSyncRevision: rev => { if (Number.isInteger(rev) && rev >= 0) localStorage.setItem('hmm_sync_revision', String(rev)); },
   // Per-chat persona override, keyed by character id. Device-local on purpose:
   // which face you present in a story is a here-and-now choice, not something
   // to sync around.
@@ -303,6 +310,9 @@ const CHANGELOG = [
       'New: a failed reply stays in the chat with the reason and RETRY / SWITCH PROVIDER. Transient 429/5xx errors retry twice, and a stalled provider times out after 90 seconds instead of hanging.',
       'New: stop sequences, presence/frequency penalty, top-k and seed in Settings, plus prompt caching on Claude calls.',
       'New: LOAD LIVE MODEL LIST in Settings pulls OpenRouter\'s current catalogue with context size and input price.',
+      'Changed: Railway sync uses the server\'s revision, so two devices pushing at once no longer overwrite each other silently. A conflict offers merge-theirs (recommended) or overwrite-mine, and unattended auto-sync always merges.',
+      'Changed: the sync server throttles requests per IP, answers CORS only for the app and local development, and has a purge path (DELETE /api/sync).',
+      'New: MCP tools inkling_search_messages (full-text across every chat) and INKLING_MCP_READ_ONLY=1, which exposes read-only tools only.',
     ],
   },
   {
@@ -1838,26 +1848,39 @@ const GistSync = {
 // Same payload shape (GistSync.buildPayload/restorePayload), just pushed to
 // your own Postgres-backed endpoint instead of a GitHub gist.
 const RailwaySync = {
-  async push(baseUrl, token) {
+  async push(baseUrl, token, expectedRevision = null) {
     const payload = GistSync.buildPayload();
     const content = JSON.stringify(payload);
     try { JSON.parse(content); } catch (e) { throw new Error('Local data is corrupted, cannot push: ' + e.message); }
+    const body = { token, data: payload };
+    // Optimistic concurrency (the server supports it): a push built on a
+    // revision this device has seen is rejected if another device wrote in
+    // between, instead of silently overwriting its chats.
+    if (expectedRevision != null) body.expectedRevision = expectedRevision;
     const r = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/sync`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token, data: payload }),
+      body: JSON.stringify(body),
     });
+    if (r.status === 409) {
+      const j = await r.json().catch(() => ({}));
+      const err = new Error('The backup changed on another device');
+      err.conflict = true;
+      err.remoteRevision = j.revision;
+      throw err;
+    }
     if (!r.ok) throw new Error(`Sync server ${r.status}: ${(await r.text().catch(() => '')) || r.statusText}`);
     // The server's own updated_at, not payload.exportedAt: auto-sync compares
     // this against GET /api/sync/meta's updatedAt, which is server-clocked too.
-    return (await r.json()).updatedAt;
+    const j = await r.json();
+    return { updatedAt: j.updatedAt, revision: j.revision };
   },
   async pull(baseUrl, token) {
     const r = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/sync?token=${encodeURIComponent(token)}`);
     if (!r.ok) throw new Error(`Sync server ${r.status}: ${(await r.text().catch(() => '')) || r.statusText}`);
     const j = await r.json();
     if (!j.data) throw new Error('No backup found for this token yet, push from another device first.');
-    return j.data;
+    return { data: j.data, revision: j.revision };
   },
   // Lightweight poll for auto-sync, just the remote's last-updated timestamp
   async meta(baseUrl, token) {
