@@ -1,6 +1,6 @@
 // hmm-modals.jsx — Modals, toasts, command palette
 const { useState, useContext, useEffect, useRef } = React;
-const { AppCtx, S, genId, charBg, charFg, GistSync, RailwaySync, callAI, compressImage, uploadImage, CHANGELOG } = window;
+const { AppCtx, S, genId, charBg, charFg, GistSync, RailwaySync, callAI, compressImage, uploadImage, CHANGELOG, testProvider } = window;
 
 // Shared stroke-icon set for the command palette — same visual language as the
 // topbar/sidebar icon buttons, instead of mismatched ASCII/unicode/emoji glyphs.
@@ -252,10 +252,13 @@ function StorageMeter() {
   }, []);
   const fmt = b => b > 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.round(b / 1024) + ' KB';
   const pct = est?.quota ? Math.min(100, (est.usage / est.quota) * 100) : 0;
+  const fault = S.storageHealth();
   return (
-    <div style={{ background: 'var(--surface2)', border: '1px solid var(--border2)', padding: '10px 14px' }}>
+    <div style={{ background: 'var(--surface2)', border: `1px solid ${fault.ok ? 'var(--border2)' : 'var(--danger)'}`, padding: '10px 14px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--text2)', marginBottom: 6 }}>
-        <span>Data lives in IndexedDB — no more quota errors</span>
+        <span style={{ color: fault.ok ? undefined : 'var(--danger)' }}>
+          {fault.ok ? 'Data lives in IndexedDB — no more quota errors' : 'Last write failed — changes may not persist'}
+        </span>
         <span style={{ color: 'var(--accent2)' }}>{est ? `${fmt(est.usage)} of ${fmt(est.quota)}` : '…'}</span>
       </div>
       <div style={{ height: 3, background: 'var(--border)' }}>
@@ -268,8 +271,18 @@ function StorageMeter() {
 function SettingsModal({ onClose }) {
   const ctx = useContext(AppCtx);
   const [form, setForm] = useState({ ...ctx.settings });
-  const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
+  const [probe, setProbe] = useState(null); // { busy } | result of testProvider
+  const PROBE_KEYS = ['provider', 'localEndpoint', 'localApiKey', 'localModel', 'apiKey', 'model'];
+  const set = (k, v) => {
+    setForm(f => ({ ...f, [k]: v }));
+    if (PROBE_KEYS.includes(k)) setProbe(null); // a new value makes the old result stale
+  };
   const bgFileRef = useRef(null);
+  // Probes the *unsaved* form, so a key can be checked before SAVE SETTINGS.
+  const runProbe = async () => {
+    setProbe({ busy: true });
+    setProbe(await testProvider(form));
+  };
 
   const save = () => { ctx.saveSettings(form); onClose(); ctx.addToast('Settings saved', 'success'); };
 
@@ -363,6 +376,26 @@ function SettingsModal({ onClose }) {
                 </div>
               </>
             )}
+            <div className="form-group">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <button
+                  className="btn-secondary"
+                  onClick={runProbe}
+                  disabled={!!probe?.busy}
+                  title="Sends a one-token request to check the key, endpoint and model"
+                >
+                  {probe?.busy ? 'TESTING…' : 'TEST CONNECTION'}
+                </button>
+                {probe && !probe.busy && (
+                  <span style={{ fontSize: 11, lineHeight: 1.5, color: probe.ok ? 'var(--accent2)' : 'var(--danger)' }}>
+                    {probe.ok
+                      ? `✓ ${probe.model || 'connected'} responded in ${probe.ms} ms`
+                      : `✗ ${probe.detail}${probe.hint ? ` — ${probe.hint}` : ''}`}
+                  </span>
+                )}
+              </div>
+              <div className="form-hint">Uses the values above, even before you save. Costs one token.</div>
+            </div>
             <div className="form-group">
               <label className="form-label">MAX TOKENS: {form.maxTokens}</label>
               <input type="range" className="form-range" min={256} max={16384} step={256} value={form.maxTokens} onChange={e => set('maxTokens', Number(e.target.value))} />
@@ -2010,41 +2043,19 @@ function ImportModal({ onClose }) {
       // everything by id rather than overwrite, so importing an old backup can't
       // clobber an in-progress conversation or the current persona/settings.
       if (Array.isArray(raw.characters)) {
-        let added = 0, chatsRestored = 0;
-        const merged = [...charsRef.current];
-        raw.characters.forEach(c => {
-          if (!merged.find(x => x.id === c.id)) {
-            merged.push(c);
-            added++;
-            if (raw.chats?.[c.id]?.length && !S.chat(c.id).length) {
-              S.saveChat(c.id, raw.chats[c.id]);
-              if (raw.histories?.[c.id]) S.saveHistory(c.id, raw.histories[c.id]);
-              chatsRestored++;
-            }
-          }
-        });
-        charsRef.current = merged;
-        commitChars();
-
-        let loreAdded = 0;
-        if (Array.isArray(raw.lorebook) && raw.lorebook.length) {
-          const lore = S.lorebook();
-          raw.lorebook.forEach(e => { if (!lore.find(x => x.id === e.id)) { lore.push(e); loreAdded++; } });
-          S.saveLorebook(lore);
-        }
-        let scriptsAdded = 0;
-        if (Array.isArray(raw.scripts) && raw.scripts.length) {
-          const scripts = S.scripts();
-          raw.scripts.forEach(sc => { if (!scripts.find(x => x.id === sc.id)) { scripts.push(sc); scriptsAdded++; } });
-          S.saveScripts(scripts);
-        }
-        let personasAdded = 0;
-        if (Array.isArray(raw.personas) && raw.personas.length) {
-          const personas = S.personas();
-          raw.personas.forEach(p => { if (!personas.find(x => x.id === p.id)) { personas.push(p); personasAdded++; } });
-          S.savePersonas(personas);
-        }
-        return { backup: added, chatsRestored, loreAdded, scriptsAdded, personasAdded };
+        // Same merge rules as sync, but add-only: an old file must not replace
+        // a live character or an in-progress conversation.
+        const stats = GistSync.restorePayload(raw, { mode: 'merge', policy: 'import' }) || {};
+        charsRef.current = S.chars();
+        ctx.setChars(charsRef.current);
+        if (Array.isArray(raw.personas)) ctx.setPersonas(S.personas());
+        return {
+          backup: stats.characters?.added || 0,
+          chatsRestored: stats.chats?.added || 0,
+          loreAdded: stats.lorebook?.added || 0,
+          scriptsAdded: stats.scripts?.added || 0,
+          personasAdded: stats.personas?.added || 0,
+        };
       }
       const d = raw.data || raw;
       const r = await importCharData(d, null);
@@ -2507,6 +2518,47 @@ function SyncModal({ onClose }) {
   const saveToken = (t) => { setToken(t); localStorage.setItem('hmm_gh_token', t); };
   const saveGist  = (g) => { setGistId(g); localStorage.setItem('hmm_gh_gist', g); };
 
+  // Restores ask merge-or-replace instead of a confirm() that only offered
+  // overwrite. previewRestore is read-only, so cancelling changes nothing.
+  const [restorePrompt, setRestorePrompt] = useState(null); // { data, source, stats }
+  const [restoreMode, setRestoreMode] = useState('merge');
+  const askRestore = (data, source) => {
+    setRestoreMode('merge');
+    setRestorePrompt({ data, source, stats: GistSync.previewRestore(data) });
+  };
+  const restoreCounts = st => {
+    if (!st) return 'No local data to compare.';
+    const c = st.characters || {}, ch = st.chats || {}, f = st.folders || {}, s = st.scripts || {}, p = st.personas || {};
+    return [
+      `${c.added} new character${c.added === 1 ? '' : 's'}`,
+      `${c.updated} updated`,
+      `${ch.added} chat${ch.added === 1 ? '' : 's'} restored`,
+      `${ch.kept} kept`,
+      f.added ? `${f.added} new folder${f.added === 1 ? '' : 's'}` : null,
+      s.added ? `${s.added} new script${s.added === 1 ? '' : 's'}` : null,
+      p.added ? `${p.added} new persona${p.added === 1 ? '' : 's'}` : null,
+    ].filter(Boolean).join(' · ');
+  };
+  const applyRestore = () => {
+    if (!restorePrompt) return;
+    const { data, source } = restorePrompt;
+    try {
+      const stats = GistSync.restorePayload(data, { mode: restoreMode });
+      setRestorePrompt(null);
+      if (restoreMode === 'replace') {
+        setS('success', `Replaced local data with the ${source} backup — reloading…`);
+        ctx.addToast('Data replaced — reloading...', 'success');
+        setTimeout(() => window.location.reload(), 1400);
+      } else if (stats && stats.changed > 0) {
+        setS('success', `Merged ${stats.changed} change${stats.changed === 1 ? '' : 's'} from the ${source} backup — reloading…`);
+        ctx.addToast('Backup merged — reloading...', 'success');
+        setTimeout(() => window.location.reload(), 1400);
+      } else {
+        setS('info', 'Already up to date — nothing to merge.');
+      }
+    } catch (e) { setS('error', e.message); }
+  };
+
   const doRailwayPush = async () => {
     if (!railwayUrl.trim() || railwayToken.trim().length < 8) { setS('error', 'Need a service URL and an 8+ character sync token'); return; }
     setBusy(true); setStatus(null);
@@ -2520,14 +2572,10 @@ function SyncModal({ onClose }) {
 
   const doRailwayPull = async () => {
     if (!railwayUrl.trim() || railwayToken.trim().length < 8) { setS('error', 'Need a service URL and an 8+ character sync token'); return; }
-    if (!window.confirm('This will OVERWRITE all local data with the Railway backup. Continue?')) return;
     setBusy(true); setStatus(null);
     try {
       const data = await RailwaySync.pull(railwayUrl.trim(), railwayToken.trim());
-      GistSync.restorePayload(data);
-      setS('success', `Restored from ${new Date(data.exportedAt).toLocaleString()} — reload to apply`);
-      ctx.addToast('Data restored — reloading...', 'success');
-      setTimeout(() => window.location.reload(), 1400);
+      askRestore(data, 'Railway');
     } catch (e) { setS('error', e.message); }
     setBusy(false);
   };
@@ -2546,14 +2594,10 @@ function SyncModal({ onClose }) {
 
   const doPull = async () => {
     if (!token.trim() || !gistId.trim()) { setS('error', 'Need both token and gist ID'); return; }
-    if (!window.confirm('This will OVERWRITE all local data with the gist contents. Continue?')) return;
     setBusy(true); setStatus(null);
     try {
       const data = await GistSync.pull(token.trim(), gistId.trim());
-      GistSync.restorePayload(data);
-      setS('success', `Restored from ${new Date(data.exportedAt).toLocaleString()} — reload to apply`);
-      ctx.addToast('Data restored — reloading...', 'success');
-      setTimeout(() => window.location.reload(), 1400);
+      askRestore(data, 'gist');
     } catch(e) { setS('error', e.message); }
     setBusy(false);
   };
@@ -2705,7 +2749,7 @@ function SyncModal({ onClose }) {
                     {busy ? '⟳ WORKING...' : '↓  PULL — RESTORE FROM RAILWAY'}
                   </button>
                   <div style={{ fontSize: 10, color: 'var(--text3)', textAlign: 'center', lineHeight: 1.5 }}>
-                    Overwrites local data with the Railway backup.
+                    Merges with local data by default — you choose merge or replace after pulling.
                   </div>
                 </div>
               </div>
@@ -2743,6 +2787,36 @@ function SyncModal({ onClose }) {
             </div>
           )}
         </div>
+        {restorePrompt && (
+          <div className="modal-overlay" onClick={e => e.target === e.currentTarget && setRestorePrompt(null)} style={{ zIndex: 60 }}>
+            <div className="fld-dialog" onClick={e => e.stopPropagation()} style={{ minWidth: 340, maxWidth: 460 }}>
+              <div className="fld-dialog-title">Restore {restorePrompt.source} backup</div>
+              <div style={{ fontSize: 11, color: 'var(--text2)', lineHeight: 1.7 }}>
+                {restoreCounts(restorePrompt.stats)}
+              </div>
+              {[
+                ['merge', 'Merge (recommended)', "Adds what's missing and keeps newer local chats."],
+                ['replace', 'Replace everything', 'Makes this device an exact copy of the backup.'],
+              ].map(([v, label, hint]) => (
+                <label key={v} style={{ display: 'flex', gap: 8, alignItems: 'flex-start', cursor: 'pointer', fontSize: 12, color: 'var(--text)' }}>
+                  <input
+                    type="radio" name="restore-mode" checked={restoreMode === v}
+                    onChange={() => setRestoreMode(v)}
+                    style={{ marginTop: 3, accentColor: 'var(--accent)' }}
+                  />
+                  <span>
+                    {label}
+                    <span style={{ display: 'block', fontSize: 10, color: 'var(--text3)' }}>{hint}</span>
+                  </span>
+                </label>
+              ))}
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button className="btn-secondary" onClick={() => setRestorePrompt(null)}>CANCEL</button>
+                <button className="btn-primary" onClick={applyRestore}>{restoreMode === 'replace' ? 'REPLACE' : 'MERGE'}</button>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="modal-footer">
           <button className="btn-secondary" onClick={onClose}>CLOSE</button>
           <button className="btn-primary" onClick={provider === 'gist' ? doPush : doRailwayPush} disabled={busy}>
