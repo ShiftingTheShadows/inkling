@@ -19,21 +19,75 @@ function __idbOpen() {
     req.onerror = () => rej(req.error);
   });
 }
+// ── Storage failure reporting ────────────────────────────────────
+// A refused write (disk full, private window, lost backing store) used to be a
+// console.warn while the in-memory cache kept returning the "saved" value —
+// silent data loss. Writes now report failures so the UI can warn and offer a
+// backup export.
+/* STORAGE-EXPORTS-START */
+// Classify a write error so the banner can say something actionable.
+function storageErrorKind(err) {
+  if (!err) return 'unknown';
+  const name = typeof err === 'string' ? '' : (err.name || '');
+  const msg = typeof err === 'string' ? err : String(err.message || '');
+  if (name === 'QuotaExceededError' || name === 'NS_ERROR_DOM_QUOTA_REACHED' ||
+      (typeof err === 'object' && err.code === 22) || /quota|disk is full|no space/i.test(msg)) return 'quota';
+  if (name === 'SecurityError' || /denied|not allowed|blocked/i.test(msg)) return 'blocked';
+  if (name === 'InvalidStateError' || /backing store|not open|connection is closing/i.test(msg)) return 'unavailable';
+  return 'unknown';
+}
+/* STORAGE-EXPORTS-END */
+
+const __storageErrorListeners = new Set();
+let __storageHealth = { ok: true, count: 0, kind: null, last: null };
+let __lastStorageFault = null; // { sig, at } — one failing tx can fire request + abort
+
+function __reportStorageError(key, err) {
+  const kind = storageErrorKind(err);
+  const name = (err && err.name) || '';
+  const message = String((err && err.message) || err || '').slice(0, 200);
+  const now = Date.now();
+  const sig = `${key}|${kind}|${name}|${message}`;
+  if (__lastStorageFault && __lastStorageFault.sig === sig && now - __lastStorageFault.at < 1000) {
+    __lastStorageFault.at = now;
+    __storageHealth = { ...__storageHealth, count: __storageHealth.count + 1 };
+    return;
+  }
+  __lastStorageFault = { sig, at: now };
+  __storageHealth = {
+    ok: false,
+    count: __storageHealth.count + 1,
+    kind,
+    last: { key, kind, name, message, at: new Date().toISOString() },
+  };
+  for (const fn of [...__storageErrorListeners]) {
+    try { fn({ ...__storageHealth }); } catch (e) { console.warn('Storage error listener failed:', e); }
+  }
+}
+
 function __idbPut(key, val) {
   if (!__db) {
     // Fallback: best-effort localStorage (may hit quota, but don't crash)
-    try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { console.warn('Storage write failed:', key, e); }
+    try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) { console.warn('Storage write failed:', key, e); __reportStorageError(key, e); }
     return;
   }
   try {
     const tx = __db.transaction('kv', 'readwrite');
-    tx.objectStore('kv').put(val, key);
-    tx.onerror = () => console.warn('IDB write failed:', key, tx.error);
-  } catch (e) { console.warn('IDB write failed:', key, e); }
+    const req = tx.objectStore('kv').put(val, key);
+    req.onerror = () => __reportStorageError(key, req.error);
+    // A request error also aborts the transaction; the reporter dedupes that
+    // within a second so one failure isn't announced twice.
+    tx.onabort = () => __reportStorageError(key, tx.error);
+  } catch (e) { console.warn('IDB write failed:', key, e); __reportStorageError(key, e); }
 }
 function __idbDel(key) {
-  if (!__db) { try { localStorage.removeItem(key); } catch {} return; }
-  try { __db.transaction('kv', 'readwrite').objectStore('kv').delete(key); } catch {}
+  if (!__db) { try { localStorage.removeItem(key); } catch (e) { __reportStorageError(key, e); } return; }
+  try {
+    const tx = __db.transaction('kv', 'readwrite');
+    const req = tx.objectStore('kv').delete(key);
+    req.onerror = () => __reportStorageError(key, req.error);
+    tx.onabort = () => __reportStorageError(key, tx.error);
+  } catch (e) { __reportStorageError(key, e); }
 }
 const __get = (k, fb) => __mem.has(k) ? __mem.get(k) : fb;
 // Drafts are intentionally excluded, they're not part of GistSync.buildPayload(),
@@ -125,9 +179,18 @@ const S = {
     try {
       const tx = __db.transaction('kv', 'readwrite');
       tx.objectStore('kv').clear();
-      tx.oncomplete = tx.onerror = () => res();
-    } catch { res(); }
+      tx.onerror = () => __reportStorageError('hmm_*', tx.error);
+      tx.oncomplete = tx.onabort = () => res();
+    } catch (e) { __reportStorageError('hmm_*', e); res(); }
   }),
+  // Storage diagnostics. onStorageError fires immediately with the current
+  // state so a component that mounts after a boot-time failure still sees it.
+  storageHealth: () => ({ ...__storageHealth }),
+  onStorageError: fn => {
+    __storageErrorListeners.add(fn);
+    try { fn({ ...__storageHealth }); } catch {}
+    return () => __storageErrorListeners.delete(fn);
+  },
   settings: () => {
     const saved = { ...__get('hmm_settings', {}) };
     // Retired Anthropic model ids saved before the 2026-07 refresh — old ids now 404
@@ -176,6 +239,15 @@ const S = {
 // Changelog: newest entry first. Bump the top `version` (a date works
 // fine) whenever entries are added so returning users get an auto-popup.
 const CHANGELOG = [
+  {
+    version: '2026-11-17',
+    date: 'Nov 17, 2026',
+    items: [
+      'New: storage warnings. If the browser refuses a save (disk full, private window, blocked site data), a banner says so and offers a backup export instead of failing silently.',
+      'Changed: restoring a backup now merges by default — new characters, folders and scripts are added, newer records win, and a longer local chat is never replaced by an older one. Gist pull, Railway pull, auto-sync and file import all use it; "Replace everything" is still one click away.',
+      'New: TEST CONNECTION in Settings sends a one-token request and reports exactly what is wrong — key, endpoint, model, timeout, or a missing /api proxy — instead of a broken reply in the chat.',
+    ],
+  },
   {
     version: '2026-10-17',
     date: 'Oct 17, 2026',
@@ -1236,6 +1308,136 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
   return result;
 }
 
+// ── Provider probe (Settings → Test connection) ──────────────────
+// Deliberately separate from callAI: callAI turns failures into italic chat
+// text and can fall back to the window.claude shim, which would make a bad key
+// look like a working one. This sends its own one-token request and reports
+// the status verbatim.
+/* PROVIDER-EXPORTS-START */
+const PROBE_PING = 'ping';
+
+function normalizeBaseUrl(endpoint) {
+  return String(endpoint || '').trim().replace(/\/+$/, '').replace(/\/v1$/, '');
+}
+
+function buildProviderProbe(settings) {
+  const s = settings || {};
+  const provider = s.provider || 'claude';
+  if (provider === 'claude') {
+    if (!s.apiKey) throw new Error('Add your Anthropic API key first');
+    return {
+      url: '/api/anthropic',
+      init: {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          apiKey: s.apiKey,
+          model: s.model || 'claude-haiku-4-5',
+          messages: [{ role: 'user', content: PROBE_PING }],
+          maxTokens: 1,
+          stream: false,
+        }),
+      },
+    };
+  }
+  const endpoint = s.localEndpoint || (provider === 'openrouter' ? 'https://openrouter.ai/api' : provider === 'local' ? 'http://localhost:11434' : '');
+  const base = normalizeBaseUrl(endpoint);
+  if (!base) throw new Error('Set the endpoint URL first');
+  const model = s.localModel || (provider === 'openrouter' ? 'anthropic/claude-sonnet-5' : '');
+  if (!model) throw new Error('Pick or type a model id first');
+  const headers = { 'Content-Type': 'application/json' };
+  if (s.localApiKey) headers.Authorization = `Bearer ${s.localApiKey}`;
+  return {
+    url: `${base}/v1/chat/completions`,
+    init: {
+      method: 'POST',
+      headers,
+      // One token, no tools/plugins/response_format: the cheapest request that
+      // still proves the key, endpoint and model id are all good.
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: PROBE_PING }],
+        max_tokens: 1,
+        temperature: 0,
+        stream: false,
+      }),
+    },
+  };
+}
+
+function probeHint(status, provider) {
+  if (status === 401 || status === 403) return provider === 'claude' ? 'Check the Anthropic API key' : 'Check the API key for this provider';
+  if (status === 404) return provider === 'claude'
+    ? 'The /api/anthropic proxy is not available at this origin (static host or file://)'
+    : 'Check the endpoint URL and the model id';
+  if (status === 400) return 'Usually a wrong model id, or a parameter this provider rejects';
+  if (status === 429) return 'Rate limited or out of credit';
+  if (status >= 500) return 'The provider is having trouble - try again shortly';
+  return null;
+}
+
+// Best effort, Ollama only: report a missing model before the completion probe
+// turns it into a bare 404. LM Studio and other servers have no /api/version,
+// so a null here just means "not Ollama - let the request decide".
+async function ollamaModelNote(settings, fetchImpl) {
+  const base = normalizeBaseUrl(settings && settings.localEndpoint) || 'http://localhost:11434';
+  const get = async (path, ms) => {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), ms);
+    try {
+      const r = await fetchImpl(`${base}${path}`, { signal: ctl.signal });
+      return r.ok ? await r.json() : null;
+    } catch { return null; } finally { clearTimeout(timer); }
+  };
+  if (!(await get('/api/version', 2000))) return null;
+  const tags = await get('/api/tags', 3000);
+  const wanted = String((settings && settings.localModel) || '').trim();
+  if (!tags || !wanted) return null;
+  const baseName = wanted.replace(/:latest$/, '');
+  const found = (tags.models || []).some(m => {
+    const n = String(m.name || '');
+    return n === wanted || n.replace(/:latest$/, '') === baseName;
+  });
+  return found ? null : `Ollama is running, but "${wanted}" is not pulled yet`;
+}
+
+async function testProvider(settings, { fetchImpl = fetch, timeoutMs = 15000 } = {}) {
+  const provider = (settings && settings.provider) || 'claude';
+  let probe;
+  try {
+    probe = buildProviderProbe(settings);
+  } catch (e) {
+    return { ok: false, provider, detail: e.message, hint: null };
+  }
+
+  if (provider === 'local') {
+    const note = await ollamaModelNote(settings, fetchImpl);
+    if (note) return { ok: false, provider, detail: note, hint: 'Open Local Models and pull it' };
+  }
+
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  const started = Date.now();
+  try {
+    const resp = await fetchImpl(probe.url, { ...probe.init, signal: ctl.signal });
+    const text = await resp.text().catch(() => '');
+    let body = null;
+    try { body = text ? JSON.parse(text) : null; } catch {}
+    if (resp.ok) {
+      return {
+        ok: true, provider, ms: Date.now() - started,
+        model: (provider === 'claude' ? settings.model : settings.localModel) || '',
+      };
+    }
+    const detail = (body && (body.error?.message || (typeof body.error === 'string' ? body.error : '') || body.message)) || text.slice(0, 200) || resp.statusText || `HTTP ${resp.status}`;
+    return { ok: false, provider, status: resp.status, detail: String(detail).slice(0, 240), hint: probeHint(resp.status, provider) };
+  } catch (e) {
+    if (e.name === 'AbortError') return { ok: false, provider, detail: `timed out after ${Math.round(timeoutMs / 1000)}s`, hint: 'Is the endpoint running and reachable from this browser?' };
+    return { ok: false, provider, detail: `could not reach ${probe.url}`, hint: String(e.message || e).slice(0, 200) };
+  } finally { clearTimeout(timer); }
+}
+/* PROVIDER-EXPORTS-END */
+
 // ── Context summarizer ────────────────────────────────────────────
 async function summarizeMessages(messages, char, settings) {
   if (messages.length < 6) return null;
@@ -1254,6 +1456,113 @@ async function summarizeMessages(messages, char, settings) {
   return result.trim();
 }
 
+// ── Backup merge ─────────────────────────────────────────────────
+// Restores used to overwrite every collection with the backup's copy, so an
+// old gist or an auto-sync poll could discard characters and chats typed on
+// this device. Both policies keep local data unless the backup is genuinely
+// newer; imports are stricter (add-only) so an old file can never replace a
+// live conversation.
+/* MERGE-EXPORTS-START */
+const MERGE_POLICIES = {
+  sync:   { records: 'newer', chats: 'prefer-longer', settings: 'remote-if-empty' },
+  import: { records: 'keep-local', chats: 'keep-local', settings: 'local' },
+};
+
+function mergeRecordList(localList, remoteList, stats, policy) {
+  const out = Array.isArray(localList) ? localList.slice() : [];
+  const byId = new Map(out.filter(x => x && x.id).map(x => [x.id, x]));
+  (Array.isArray(remoteList) ? remoteList : []).forEach(r => {
+    if (!r || !r.id) return;
+    const mine = byId.get(r.id);
+    if (!mine) { out.push(r); byId.set(r.id, r); stats.added++; return; }
+    if (policy === 'newer' && String(r.updatedAt || '') > String(mine.updatedAt || '')) {
+      out[out.indexOf(mine)] = r;
+      byId.set(r.id, r);
+      stats.updated++;
+    } else stats.kept++;
+  });
+  return out;
+}
+
+function chatStamp(msgs) {
+  const last = Array.isArray(msgs) && msgs.length ? msgs[msgs.length - 1] : null;
+  return String((last && last.timestamp) || '');
+}
+
+function mergeChatMap(localMap, remoteMap, stats, policy) {
+  const out = { ...(localMap || {}) };
+  Object.entries(remoteMap || {}).forEach(([id, msgs]) => {
+    if (!Array.isArray(msgs) || !msgs.length) return;
+    const mine = out[id];
+    if (!Array.isArray(mine) || !mine.length) { out[id] = msgs; stats.added++; return; }
+    const remoteWins = policy === 'prefer-longer' &&
+      (msgs.length > mine.length || (msgs.length === mine.length && chatStamp(msgs) > chatStamp(mine)));
+    if (remoteWins) { out[id] = msgs; stats.updated++; } else stats.kept++;
+  });
+  return out;
+}
+
+// Pure: no storage, no DOM, no mutation of either payload. `localHasSettings`
+// is passed by the caller (the raw hmm_settings row exists or not), because a
+// built payload always carries default settings and can't tell.
+function mergePayloads(local, remote, opts = {}) {
+  const policy = { ...MERGE_POLICIES.sync, ...(opts || {}) };
+  const a = local || {};
+  const b = remote || {};
+  const stats = { changed: 0, nameConflicts: 0 };
+  const box = key => (stats[key] = stats[key] || { added: 0, updated: 0, kept: 0 });
+
+  const characters = mergeRecordList(a.characters, b.characters, box('characters'), policy.records);
+  const folders    = mergeRecordList(a.folders, b.folders, box('folders'), policy.records);
+  const scripts    = mergeRecordList(a.scripts, b.scripts, box('scripts'), policy.records);
+  const lorebook   = mergeRecordList(a.lorebook, b.lorebook, box('lorebook'), policy.records);
+  const personas   = mergeRecordList(a.personas, b.personas, box('personas'), policy.records);
+  const chats      = mergeChatMap(a.chats, b.chats, box('chats'), policy.chats);
+  const histories  = mergeChatMap(a.histories, b.histories, box('histories'), policy.chats);
+  const assistChats = mergeChatMap(a.assistChats, b.assistChats, box('assistChats'), policy.chats);
+
+  // Two scripts with the same name but different ids are both kept (nothing is
+  // lost); they are counted so the UI can mention it.
+  const seenNames = new Map();
+  scripts.forEach(sc => {
+    const key = String(sc.name || '').trim().toLowerCase();
+    if (!key) return;
+    if (seenNames.has(key) && seenNames.get(key) !== sc.id) stats.nameConflicts++;
+    else seenNames.set(key, sc.id);
+  });
+
+  let activePersonaId = a.activePersonaId;
+  if (!personas.some(p => p && p.id === activePersonaId)) activePersonaId = b.activePersonaId;
+  if (!personas.some(p => p && p.id === activePersonaId)) activePersonaId = (personas[0] && personas[0].id) || 'default';
+
+  const takeRemoteSettings = policy.settings === 'remote-if-empty' && !policy.localHasSettings && b.settings;
+  const settings = takeRemoteSettings ? b.settings : a.settings;
+
+  for (const key of Object.keys(stats)) {
+    const c = stats[key];
+    if (c && typeof c === 'object') stats.changed += c.added + c.updated;
+  }
+
+  return {
+    merged: {
+      version: Math.max(Number(a.version) || 0, Number(b.version) || 0),
+      exportedAt: opts.now || new Date().toISOString(),
+      settings,
+      personas,
+      activePersonaId,
+      characters,
+      chats,
+      histories,
+      lorebook,
+      scripts,
+      assistChats,
+      folders,
+    },
+    stats,
+  };
+}
+/* MERGE-EXPORTS-END */
+
 // ── GitHub Gist Sync ─────────────────────────────────────────────
 const GistSync = {
   FILENAME: 'hmm-data.json',
@@ -1270,7 +1579,7 @@ const GistSync = {
       if (ac.length) assistChats[c.id] = ac; // only carry non-empty ones
     });
     // Strip all secrets — never sync API keys to a gist (they get auto-disabled if detected)
-    const { apiKey, openrouterKey, localApiKey, globalPrompt, tavilyKey, braveKey, ...safeSettings } = S.settings();
+    const { apiKey, openrouterKey, localApiKey, globalPrompt, tavilyKey, braveKey, imageHostApiKey, ...safeSettings } = S.settings();
     return {
       version: 2,
       exportedAt: new Date().toISOString(),
@@ -1286,33 +1595,52 @@ const GistSync = {
       folders: S.folders(),
     };
   },
-  restorePayload(data) {
-    if (data.settings) {
-      // Preserve local secrets — restore everything else from gist
-      const current = S.settings();
-      S.saveSettings({
-        ...data.settings,
-        apiKey: current.apiKey,
-        openrouterKey: current.openrouterKey,
-        localApiKey: current.localApiKey,
-        globalPrompt: current.globalPrompt,
-        tavilyKey: current.tavilyKey,
-        braveKey: current.braveKey,
-      });
+  // Write half of a restore, shared by merge and replace. `preserveSecrets`
+  // keeps this device's keys even when the backup carries settings.
+  writePayload(data, { preserveSecrets = true } = {}) {
+    const d = data || {};
+    if (d.settings) {
+      if (preserveSecrets) {
+        const current = S.settings();
+        S.saveSettings({
+          ...d.settings,
+          apiKey: current.apiKey,
+          openrouterKey: current.openrouterKey,
+          localApiKey: current.localApiKey,
+          globalPrompt: current.globalPrompt,
+          tavilyKey: current.tavilyKey,
+          braveKey: current.braveKey,
+          imageHostApiKey: current.imageHostApiKey,
+        });
+      } else {
+        S.saveSettings(d.settings);
+      }
     }
-    if (data.personas)        S.savePersonas(data.personas);
-    if (data.activePersonaId) S.setActivePersonaId(data.activePersonaId);
-    if (data.lorebook)        S.saveLorebook(data.lorebook);
-    if (data.scripts)         S.saveScripts(data.scripts);
-    if (Array.isArray(data.folders)) S.saveFolders(data.folders);
-    if (Array.isArray(data.characters)) {
-      S.saveChars(data.characters);
-      data.characters.forEach(c => {
-        if (data.chats?.[c.id])        S.saveChat(c.id, data.chats[c.id]);
-        if (data.histories?.[c.id])    S.saveHistory(c.id, data.histories[c.id]);
-        if (data.assistChats?.[c.id])  S.saveAssistChat(c.id, data.assistChats[c.id]);
-      });
-    }
+    if (d.personas) S.savePersonas(d.personas);
+    if (d.activePersonaId) S.setActivePersonaId(d.activePersonaId);
+    if (d.lorebook) S.saveLorebook(d.lorebook);
+    if (d.scripts) S.saveScripts(d.scripts);
+    if (Array.isArray(d.folders)) S.saveFolders(d.folders);
+    if (Array.isArray(d.characters)) S.saveChars(d.characters);
+    // Chats are keyed by character id and a merge can keep a local chat whose
+    // character the remote payload never listed, so write every key present.
+    Object.entries(d.chats || {}).forEach(([id, msgs]) => { if (Array.isArray(msgs)) S.saveChat(id, msgs); });
+    Object.entries(d.histories || {}).forEach(([id, hist]) => { if (Array.isArray(hist)) S.saveHistory(id, hist); });
+    Object.entries(d.assistChats || {}).forEach(([id, msgs]) => { if (Array.isArray(msgs) && msgs.length) S.saveAssistChat(id, msgs); });
+  },
+  // Preview the merge without writing anything, for the restore dialog.
+  previewRestore(data, { policy = 'sync' } = {}) {
+    const preset = policy === 'import' ? MERGE_POLICIES.import : MERGE_POLICIES.sync;
+    return mergePayloads(this.buildPayload(), data, { ...preset, localHasSettings: __get('hmm_settings', null) != null }).stats;
+  },
+  // mode 'merge' (default) keeps local data and folds the backup in; 'replace'
+  // makes this device an exact copy (settings included, secrets excepted).
+  restorePayload(data, { mode = 'merge', policy = 'sync' } = {}) {
+    if (mode === 'replace') { this.writePayload(data); return null; }
+    const preset = policy === 'import' ? MERGE_POLICIES.import : MERGE_POLICIES.sync;
+    const { merged, stats } = mergePayloads(this.buildPayload(), data, { ...preset, localHasSettings: __get('hmm_settings', null) != null });
+    this.writePayload(merged);
+    return stats;
   },
   async push(token, gistId) {
     const payload = this.buildPayload();
@@ -1558,7 +1886,7 @@ Object.assign(window, {
   AppCtx, S, genId, estimateTokens, compressImage, uploadImage, CHANGELOG,
   formatTime, formatDate, renderMarkdown,
   charBg, charFg, buildSystemPrompt, substituteMacros, callAI, avatarPx,
-  summarizeMessages, GistSync, RailwaySync,
+  summarizeMessages, GistSync, RailwaySync, testProvider,
   downloadCharJson, downloadCharPng,
   parseTextbox, expressionAt, resolveExpressionKey, expressionNameFromFilename, pitchForCharacter,
 });

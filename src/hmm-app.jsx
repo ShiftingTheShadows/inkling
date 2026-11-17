@@ -4,6 +4,39 @@ const { AppCtx, S, genId, GistSync, RailwaySync, CHANGELOG } = window;
 const { Sidebar, WelcomeScreen, ChatView, FoldersPage, McpSetupModal, LocalModelsModal } = window;
 const { ToastStack, CommandPalette, SettingsModal, CharEditorModal, GroupEditorModal, ImportModal, HistoryModal, PersonasModal, SyncModal, LorebookModal, ChangelogModal } = window;
 
+// Persistent warning when a storage write fails. A toast would vanish before
+// the user acts on it, and the whole point is that data may not be saved.
+function StorageAlert({ fault, onExport }) {
+  const [dismissed, setDismissed] = useState(-1);
+  const [usage, setUsage] = useState(null);
+  const failing = !!fault && !fault.ok;
+
+  useEffect(() => {
+    if (!failing) return;
+    navigator.storage?.estimate?.().then(setUsage).catch(() => {});
+  }, [failing, fault?.count]);
+
+  if (!failing || dismissed === fault.count) return null;
+
+  const msg = fault.kind === 'quota'
+    ? 'Storage is full — recent changes were NOT saved. Export a backup, then delete some chats or images.'
+    : fault.kind === 'blocked'
+    ? 'The browser is blocking site storage (private window or blocked site data). Changes will not persist.'
+    : fault.kind === 'unavailable'
+    ? 'IndexedDB is unavailable — data is in memory only and will be lost when this tab closes.'
+    : 'Some saves are failing. Export a backup to be safe.';
+  const size = usage?.quota ? `${(usage.usage / 1048576).toFixed(1)} / ${(usage.quota / 1048576).toFixed(0)} MB` : null;
+
+  return (
+    <div className="storage-alert" role="alert">
+      <span aria-hidden="true" style={{ color: 'var(--danger)', fontWeight: 700 }}>!</span>
+      <span className="storage-alert-text">{msg}{size ? ` (${size})` : ''}</span>
+      <button className="btn-secondary btn-sm" onClick={onExport}>EXPORT BACKUP</button>
+      <button className="btn-secondary btn-sm" onClick={() => setDismissed(fault.count)}>DISMISS</button>
+    </div>
+  );
+}
+
 function App() {
   const [chars, setChars]               = useState(() => S.chars());
   const [currentChar, setCurrentChar]   = useState(null);
@@ -17,6 +50,7 @@ function App() {
   const [collapsed, setCollapsed]       = useState(() => window.matchMedia('(max-width: 720px)').matches);
   const [personas, setPersonas]         = useState(() => S.personas());
   const [activePersonaId, setActivePersonaIdState] = useState(() => S.activePersonaId());
+  const [storageFault, setStorageFault] = useState(() => S.storageHealth());
 
   const setActivePersonaId = useCallback(id => {
     S.setActivePersonaId(id);
@@ -108,6 +142,11 @@ function App() {
     setTimeout(() => setToasts(prev => prev.filter(t => t.id !== id)), 3000);
   }, []);
 
+  // Storage failures are reported from outside React (utils), so subscribe
+  // rather than polling. onStorageError fires once immediately, which catches
+  // a failure that happened during boot-time migration.
+  useEffect(() => S.onStorageError(setStorageFault), []);
+
   // Railway auto-sync: push shortly after any local data change (see
   // __notifyDataChange in hmm-utils.jsx), and pull-then-reload when another
   // device has pushed something newer. Opt-in via Settings → Sync → Railway.
@@ -144,13 +183,17 @@ function App() {
         const lastSync = localStorage.getItem('hmm_railway_last_sync');
         if (remoteUpdatedAt && (!lastSync || new Date(remoteUpdatedAt) > new Date(lastSync))) {
           const data = await RailwaySync.pull(url, token);
-          GistSync.restorePayload(data);
+          // Merge, never replace: an unattended poll must not discard what was
+          // typed here since the last push. Only reload when something landed.
+          const stats = GistSync.restorePayload(data, { mode: 'merge' });
           // Store the server's updated_at (from the meta check above), not
           // data.exportedAt: that's the *other* device's client clock, which
           // would make this device think its own pull is instantly stale again.
           localStorage.setItem('hmm_railway_last_sync', remoteUpdatedAt);
-          addToast('Synced newer data from another device, reloading...', 'success');
-          setTimeout(() => window.location.reload(), 1400);
+          if (stats && stats.changed > 0) {
+            addToast(`Synced ${stats.changed} change${stats.changed === 1 ? '' : 's'} from another device, reloading...`, 'success');
+            setTimeout(() => window.location.reload(), 1400);
+          }
         }
       } catch (e) {
         console.warn('Auto-sync poll failed:', e);
@@ -349,6 +392,8 @@ function App() {
             }
           </main>
         </div>
+
+        <StorageAlert fault={storageFault} onExport={exportAll} />
 
         {/* ── Status bar ── */}
         <div className="statusbar">

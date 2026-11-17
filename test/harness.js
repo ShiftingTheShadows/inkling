@@ -2,17 +2,24 @@ import fs from 'node:fs';
 
 const SRC = new URL('../src/hmm-utils.jsx', import.meta.url);
 
-export function loadTextboxModule() {
+// Slice a marked region out of hmm-utils.jsx and evaluate it under Node. Each
+// region must stay free of React and DOM access. Returns every function it
+// declares (async included).
+export function loadSlice(startMarker, endMarker) {
   const src = fs.readFileSync(SRC, 'utf8');
-  const start = src.indexOf('/* TEXTBOX-EXPORTS-START */');
-  const end = src.indexOf('/* TEXTBOX-EXPORTS-END */');
-  if (start < 0 || end < 0) throw new Error('TEXTBOX-EXPORTS markers not found in hmm-utils.jsx');
-  const body = src.slice(start, end);
+  const start = src.indexOf(startMarker);
+  const end = src.indexOf(endMarker);
+  if (start < 0 || end < 0) throw new Error(`markers not found in hmm-utils.jsx: ${startMarker} / ${endMarker}`);
+  const body = src.slice(start + startMarker.length, end);
 
-  const names = [...body.matchAll(/^function\s+([A-Za-z_$][\w$]*)/gm)].map(m => m[1]);
-  if (!names.length) throw new Error('no functions found between TEXTBOX-EXPORTS markers');
+  const names = [...body.matchAll(/^(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/gm)].map(m => m[1]);
+  if (!names.length) throw new Error(`no functions found between ${startMarker} and ${endMarker}`);
 
   return new Function(`${body}\nreturn { ${names.join(', ')} };`)();
+}
+
+export function loadTextboxModule() {
+  return loadSlice('/* TEXTBOX-EXPORTS-START */', '/* TEXTBOX-EXPORTS-END */');
 }
 
 export function makeRunner() {
