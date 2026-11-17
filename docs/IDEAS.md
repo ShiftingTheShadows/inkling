@@ -7,7 +7,8 @@ them without restating them.
 Effort tags: **S** ≈ under an hour, **M** ≈ an afternoon, **L** ≈ a day or more.
 
 > **Status:** D24, D27, A3, F35, D25, A4, A1, A2, A5, A6, A7, B9, B10, B11, B12,
-> B13, B16, C19, C20, D28, D30, E31, E34, F38 and F39 are implemented — see
+> B13, B14, B16, B17, B18, C19, C20, D26, D28, D30, E31, E32, E34, F38, F39 and F44 are
+> implemented — see
 > [plans/2026-11-17-data-safety-three.md](superpowers/plans/2026-11-17-data-safety-three.md).
 
 ---
@@ -62,15 +63,15 @@ funnels through one OpenAI-compatible branch using a single shared
   entries. *(M)*
 - **B13 — done.** **Swipe on user messages** too, and **edit-in-place** without resending
   (currently edit resends and truncates). *(M)*
-- **B14.** **Continue without a user turn** for solo characters — group chats have
+- **B14 — done.** **Continue without a user turn** for solo characters — group chats have
   "SPEAK ▸" per member; solo chats have no "keep going" nudge. *(S)*
 - **B15.** **Multi-member group turns** — a "director" toggle where a cheap model picks
   the next speaker, or 2–3 characters reply in sequence. *(M)*
 - **B16 — done.** **Clipboard paste + drag-drop images** into the composer (file picker only
   today), multiple images per message, `capture` on the mobile input for camera. *(S)*
-- **B17.** **Timestamps / separators toggle.** `showTokens` exists; timestamp display is
+- **B17 — done.** **Timestamps / separators toggle.** `showTokens` exists; timestamp display is
   unconditional. *(S)*
-- **B18.** **Chat export** — per-chat Markdown/JSON/HTML. Full backup and character cards
+- **B18 — done.** **Chat export** — per-chat Markdown/JSON/HTML. Full backup and character cards
   exist, but not "give me this one log". *(S)*
 
 ## C. Textbox / Undertale mode
@@ -92,7 +93,7 @@ funnels through one OpenAI-compatible branch using a single shared
   quota error silently loses data. Toast plus a "storage full, export now" banner. *(S)*
 - **D25 — done.** **Headless auto-backup** — automatic local snapshot before destructive ops
   (delete character, clear chat, import backup), plus a rolling restore point. *(M)*
-- **D26.** **Trash bin** — soft-delete characters/chats for N days. *(M)*
+- **D26 — done.** **Trash bin** — soft-delete characters/chats for N days. *(M)*
 - **D27 — done.** **Merge, don't replace.** `restorePayload` overwrites the characters array
   wholesale, so pulling or importing a backup discards local-only characters. Offer
   merge-by-id (replace / keep both / skip). *(M)*
@@ -109,7 +110,7 @@ funnels through one OpenAI-compatible branch using a single shared
 
 - **E31 — done.** **`inkling_search_messages`** — full-text across every chat; the most obviously
   missing tool for "what did we say about X".
-- **E32.** **`inkling_export_character`** — return a `chara_card_v2` JSON blob so a
+- **E32 — done.** **`inkling_export_character`** — return a `chara_card_v2` JSON blob so a
   character can move between installs without a browser round-trip.
 - **E33.** **Message-level edit/delete, folder tree, `fields` selection on
   `get_character`** — keeps big payloads out of context.
@@ -134,7 +135,7 @@ funnels through one OpenAI-compatible branch using a single shared
   avatars). Lazy-load chats per character; store avatars as Blobs once libraries grow. *(M)*
 - **F43.** `build.mjs` comments still say "what Netlify publishes" while deploy is
   Vercel. *(S)*
-- **F44.** Modals are `div`s with no `role="dialog"`, focus trap or focus restore; icon
+- **F44 — done.** Modals are `div`s with no `role="dialog"`, focus trap or focus restore; icon
   buttons rely on `title` for accessible names. *(M)*
 
 ---

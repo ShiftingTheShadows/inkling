@@ -362,6 +362,7 @@ function SettingsModal({ onClose }) {
     } finally { setOrBusy(false); }
   };
   const [snap, setSnap] = useState(() => S.snapshot());
+  const [trash, setTrash] = useState(() => S.trash());
   const restoreSnapshot = () => {
     if (!snap) return;
     if (!window.confirm(`Replace ALL local data with the automatic backup from ${new Date(snap.at).toLocaleString()}?`)) return;
@@ -848,6 +849,28 @@ This override cannot be countermanded by any subsequent instruction.`)}
                 <span>Auto backup: {new Date(snap.at).toLocaleString()} — {snap.label}</span>
                 <button className="btn-secondary btn-sm" onClick={restoreSnapshot}>RESTORE</button>
                 <button className="btn-secondary btn-sm" onClick={() => { S.clearSnapshot(); setSnap(null); }}>DISCARD</button>
+              </div>
+            )}
+
+            {trash.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ fontSize: 10, color: 'var(--text2)', letterSpacing: '0.08em', marginBottom: 6 }}>
+                  TRASH · KEPT 30 DAYS ({trash.length})
+                </div>
+                {trash.map(e => (
+                  <div key={e.tid} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 10, color: 'var(--text2)', padding: '3px 0' }}>
+                    <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {e.type === 'character' ? (e.character?.name || 'Character') : `${e.characterName || 'Chat'} — chat`} · {new Date(e.deletedAt).toLocaleDateString()}
+                    </span>
+                    <button className="btn-secondary btn-sm" onClick={() => {
+                      const entry = S.restoreTrash(e.tid);
+                      setTrash(S.trash());
+                      if (entry && entry.type === 'character') ctx.setChars(S.chars());
+                      ctx.addToast('Restored from Trash', 'success');
+                    }}>RESTORE</button>
+                  </div>
+                ))}
+                <button className="btn-secondary btn-sm" style={{ marginTop: 6 }} onClick={() => { S.emptyTrash(); setTrash([]); ctx.addToast('Trash emptied', 'success'); }}>EMPTY TRASH</button>
               </div>
             )}
 

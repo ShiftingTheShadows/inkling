@@ -248,6 +248,7 @@ const S = {
       utilityProvider: '',
       autoScroll: true,
       showTokens: true,
+      showTimestamps: true, // B17 toggle lives in Settings → Appearance
       theme: 'terminal',
       avatarScale: 1, // 0.4 (tiny) – 2.5 (huge)
       provider: 'claude', // 'claude' | 'openrouter' | 'local' | 'custom'
@@ -272,6 +273,36 @@ const S = {
   saveSettings: v => __set('hmm_settings', v),
   personas: () => __get('hmm_personas', null) || [{ id: 'default', name: 'You', description: '', avatar: '' }],
   savePersonas: v => __set('hmm_personas', v),
+  // D26: soft deletes. A deleted character (with its chat and history) or a
+  // cleared chat sits here for 30 days and can be restored from Settings.
+  trash: () => __get('hmm_trash', []) || [],
+  addTrash: entry => {
+    const list = __get('hmm_trash', []) || [];
+    const next = [{ ...entry, tid: genId(), deletedAt: new Date().toISOString() }, ...list].slice(0, 50);
+    __set('hmm_trash', next);
+    return next;
+  },
+  purgeTrash: () => {
+    const list = (__get('hmm_trash', []) || []).filter(e => !trashExpired(e));
+    __set('hmm_trash', list);
+    return list;
+  },
+  restoreTrash: tid => {
+    const list = __get('hmm_trash', []) || [];
+    const entry = list.find(e => e.tid === tid);
+    if (!entry) return null;
+    if (entry.type === 'character' && entry.character) {
+      const chars = S.chars();
+      if (!chars.some(c => c.id === entry.character.id)) S.saveChars([...chars, entry.character]);
+      if (Array.isArray(entry.chat)) S.saveChat(entry.character.id, entry.chat);
+      if (Array.isArray(entry.history)) S.saveHistory(entry.character.id, entry.history);
+    } else if (entry.type === 'chat' && entry.charId) {
+      S.saveChat(entry.charId, entry.chat || []);
+    }
+    __set('hmm_trash', list.filter(e => e.tid !== tid));
+    return entry;
+  },
+  emptyTrash: () => __set('hmm_trash', []),
   // Revision of the sync backup this device last read or wrote. null means
   // "never seen one", which opts the push out of optimistic concurrency.
   syncRevision: () => {
@@ -323,6 +354,11 @@ const CHANGELOG = [
       'New: paste or drag images straight into the composer (up to four per message), plus a camera button on mobile.',
       'New: undo-friendly message editing — SAVE changes a message in place, SAVE & RESEND keeps the old behaviour, and swiping your own message opens the editor.',
       'New: an optional utility model for assists, summaries and character generation, so the expensive chat model is not spent on housekeeping.',
+      'New: per-chat export as Markdown, JSON or HTML from the chat menu — the HTML is a self-contained readable page.',
+      'New: a CONTINUE button in solo chats moves the scene on without inventing a message from you.',
+      'New: deleted characters and cleared chats go to Trash for 30 days and can be restored from Settings → Storage.',
+      'Changed: modals are real dialogs — screen readers announce them, Tab stays inside, focus returns where it was, and icon buttons take their accessible name from their tooltip.',
+      'Changed: the timestamp toggle is on by default and remembered, so message times can be hidden from Settings → Appearance.',
     ],
   },
   {
@@ -1422,6 +1458,61 @@ async function callAI(messages, char, settings, onChunk, opts = {}) {
 // text and can fall back to the window.claude shim, which would make a bad key
 // look like a working one. This sends its own one-token request and reports
 // the status verbatim.
+/* MISC-EXPORTS-START */
+const __esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+// B18: one normalised view of a chat that the three export formats share.
+function chatExportRows(messages, char, settings) {
+  return (messages || []).map(m => {
+    const parts = Array.isArray(m.content) ? m.content : [];
+    const text = typeof m.content === 'string'
+      ? m.content
+      : parts.filter(p => p.type === 'text').map(p => p.text || '').join('\n');
+    const author = m.narrator ? 'Narrator'
+      : m.role === 'user' ? (settings?.activePersona?.name || 'You')
+      : (m.charName || char?.name || 'Character');
+    return {
+      author, role: m.role, narrator: !!m.narrator,
+      at: m.timestamp || null, text,
+      images: parts.filter(p => p.type === 'image').length,
+      pinned: !!m.pinned, edited: !!m.edited,
+    };
+  });
+}
+
+function chatToMarkdown(messages, char, settings, exportedAt = new Date().toISOString()) {
+  const rows = chatExportRows(messages, char, settings);
+  const body = rows.map(r => {
+    const when = r.at ? ` · ${new Date(r.at).toLocaleString()}` : '';
+    const img = r.images ? `\n\n_(${r.images} image${r.images === 1 ? '' : 's'} attached)_` : '';
+    return `---\n\n**${r.author}**${when}\n\n${r.text}${img}`;
+  }).join('\n\n');
+  return `# ${char?.name || 'Chat'}\n\n_Exported ${new Date(exportedAt).toLocaleString()} · ${rows.length} message${rows.length === 1 ? '' : 's'}_\n\n${body}\n`;
+}
+
+function chatToJson(messages, char, settings, exportedAt = new Date().toISOString()) {
+  return JSON.stringify({
+    spec: 'inkling-chat-v1',
+    exportedAt,
+    character: { id: char?.id || '', name: char?.name || '' },
+    messages: chatExportRows(messages, char, settings),
+  }, null, 2);
+}
+
+function chatToHtml(messages, char, settings, exportedAt = new Date().toISOString()) {
+  const rows = chatExportRows(messages, char, settings);
+  const articles = rows.map(r => `  <article class="${r.role}">\n    <h2>${__esc(r.author)}<span>${r.at ? __esc(new Date(r.at).toLocaleString()) : ''}</span></h2>\n    <p>${__esc(r.text).replace(/\n/g, '<br>')}</p>${r.images ? `\n    <p class="img">(${r.images} image${r.images === 1 ? '' : 's'} attached)</p>` : ''}\n  </article>`).join('\n');
+  return `<!doctype html>\n<html lang="en"><head><meta charset="utf-8">\n<title>${__esc(char?.name || 'Chat')}</title>\n<style>body{background:#111;color:#ddd;font:15px/1.6 system-ui,sans-serif;max-width:760px;margin:40px auto;padding:0 18px}h1{font-size:22px}article{border-top:1px solid #333;padding:14px 0}h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#8a8a8a;margin:0 0 6px}h2 span{float:right;font-weight:400;text-transform:none;letter-spacing:0}article.user h2{color:#e0a030}p{margin:0}.img{color:#777;font-style:italic}</style>\n</head><body>\n<h1>${__esc(char?.name || 'Chat')}</h1>\n<p>${rows.length} message${rows.length === 1 ? '' : 's'} · exported ${__esc(new Date(exportedAt).toLocaleString())}</p>\n${articles}\n</body></html>\n`;
+}
+
+// D26: entries past the retention window are purged on boot.
+function trashExpired(entry, now = Date.now(), days = 30) {
+  const at = Date.parse(entry?.deletedAt || '');
+  if (!Number.isFinite(at)) return true;
+  return now - at > days * 86400000;
+}
+/* MISC-EXPORTS-END */
+
 /* PROVIDER-EXPORTS-START */
 const PROBE_PING = 'ping';
 
@@ -2078,6 +2169,7 @@ Object.assign(window, {
   charBg, charFg, buildSystemPrompt, substituteMacros, callAI, avatarPx,
   summarizeMessages, GistSync, RailwaySync, testProvider, providerProfile, generationExtras,
   shouldAutoSummarize, utilitySettings,
+  chatToMarkdown, chatToJson, chatToHtml, chatExportRows, trashExpired,
   downloadCharJson, downloadCharPng,
   parseTextbox, expressionAt, resolveExpressionKey, expressionNameFromFilename, pitchForCharacter,
 });

@@ -1,6 +1,6 @@
 // hmm-chat.jsx — Chat view, messages, input
 const { useState, useContext, useEffect, useRef, useCallback } = React;
-const { AppCtx, S, genId, estimateTokens, formatTime, renderMarkdown, charBg, charFg, callAI, buildSystemPrompt, summarizeMessages, compressImage, downloadCharJson, downloadCharPng, avatarPx, providerProfile, shouldAutoSummarize, utilitySettings } = window;
+const { AppCtx, S, genId, estimateTokens, formatTime, renderMarkdown, charBg, charFg, callAI, buildSystemPrompt, summarizeMessages, compressImage, downloadCharJson, downloadCharPng, avatarPx, providerProfile, shouldAutoSummarize, utilitySettings, chatToMarkdown, chatToJson, chatToHtml } = window;
 const { CharAvatar, Textbox } = window;
 
 function UserAvatar({ persona, size = 32 }) {
@@ -1046,16 +1046,54 @@ function ChatView() {
     ctx.addToast('New chat started — previous session saved to history', 'info');
   };
 
-  const exportChat = () => {
-    const text = messages.map(m => {
-      const a = m.role === 'user' ? (settings.userPersona || 'You') : (m.charId ? memberName(m.charId) : char.name);
-      const c = typeof m.content === 'string' ? m.content : m.content?.find?.(x => x.type === 'text')?.text || '';
-      return `[${new Date(m.timestamp).toLocaleString()}] ${a}:\n${c}`;
-    }).join('\n\n---\n\n');
-    const url = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
-    Object.assign(document.createElement('a'), { href: url, download: `${char.name}_chat.txt` }).click();
+  // B18: per-chat export in three formats, all fed by one row model.
+  const exportChat = (format = 'md') => {
+    const text = format === 'json' ? chatToJson(messages, char, settings)
+      : format === 'html' ? chatToHtml(messages, char, settings)
+      : chatToMarkdown(messages, char, settings);
+    const mime = format === 'json' ? 'application/json' : format === 'html' ? 'text/html' : 'text/markdown';
+    const stamp = new Date().toISOString().slice(0, 10);
+    const base = (char.name || 'chat').replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '_') || 'chat';
+    const url = URL.createObjectURL(new Blob([text], { type: mime }));
+    Object.assign(document.createElement('a'), { href: url, download: `${base}_chat_${stamp}.${format}` }).click();
     URL.revokeObjectURL(url);
-    ctx.addToast('Chat exported', 'success');
+    ctx.addToast(`Chat exported as ${format.toUpperCase()}`, 'success');
+  };
+
+  // B14: solo chats get a "keep going" that needs no invented user turn.
+  const continueStory = async () => {
+    if (generating || char.isGroup) return;
+    if (!messages.length) { ctx.addToast('Send a message to begin', 'warning'); return; }
+    const streamMsgId = genId();
+    setMessages([...messages, { id: streamMsgId, role: 'assistant', content: '', timestamp: new Date().toISOString() }]);
+    setStreamingId(streamMsgId);
+    setGenerating(true);
+    const settingsNow = aiSettings();
+    const sys = buildSystemPrompt(char, settingsNow, messages)
+      + '\n\nIMPORTANT: Continue the scene from exactly where the last message stopped. Write only the continuation, do not repeat anything already written, and never speak or act for the user.';
+    try {
+      await callAI(messages, { ...char, systemPrompt: sys }, settingsNow, (partial, done) => {
+        setMessages(prev => prev.map(m => m.id === streamMsgId ? { ...m, content: partial } : m));
+        if (done) {
+          setStreamingId(null);
+          setMessages(prev => {
+            const f = partial
+              ? prev.map(m => m.id === streamMsgId ? { ...m, content: partial } : m)
+              : prev.filter(m => m.id !== streamMsgId);
+            saveAndSync(f); return f;
+          });
+        }
+      }, startAbortable(streamMsgId));
+    } catch (e) {
+      ctx.addToast(`Error: ${e.message}`, 'error');
+      setStreamingId(null);
+      setMessages(prev => {
+        const f = prev.map(m => m.id === streamMsgId ? { ...m, content: '', error: e.message } : m);
+        saveAndSync(f); return f;
+      });
+    } finally {
+      setGenerating(false);
+    }
   };
 
   const toggleFav = () => {
@@ -1284,9 +1322,15 @@ function ChatView() {
                   {headerMenuItem('Variations Panel',
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="2" y="3" width="20" height="18" stroke="currentColor" strokeWidth="2"/><path d="M8 3V21M16 3V21" stroke="currentColor" strokeWidth="2"/></svg>,
                     () => setShowVarPanel(v => !v))}
-                  {headerMenuItem('Export Chat',
+                  {headerMenuItem('Export Chat · Markdown',
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M21 15V19C21 20.1 20.1 21 19 21H5C3.9 21 3 20.1 3 19V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M7 10L12 15L17 10M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>,
-                    exportChat)}
+                    () => exportChat('md'))}
+                  {headerMenuItem('Export Chat · JSON',
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M21 15V19C21 20.1 20.1 21 19 21H5C3.9 21 3 20.1 3 19V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M7 10L12 15L17 10M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+                    () => exportChat('json'))}
+                  {headerMenuItem('Export Chat · HTML',
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M21 15V19C21 20.1 20.1 21 19 21H5C3.9 21 3 20.1 3 19V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M7 10L12 15L17 10M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+                    () => exportChat('html'))}
                   {!char.isGroup && headerMenuItem('Duplicate Character',
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="9" y="9" width="12" height="12" stroke="currentColor" strokeWidth="2"/><path d="M5 15H4C2.9 15 2 14.1 2 13V4C2 2.9 2.9 2 4 2H13C14.1 2 15 2.9 15 4V5" stroke="currentColor" strokeWidth="2"/></svg>,
                     () => {
@@ -1306,8 +1350,9 @@ function ChatView() {
                   {headerMenuItem('Delete Character',
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M3 6H21M8 6V4C8 2.9 8.9 2 10 2H14C15.1 2 16 2.9 16 4V6M19 6V20C19 21.1 18.1 22 17 22H7C5.9 22 5 21.1 5 20V6H19Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>,
                     () => {
-                      if (!window.confirm(`Delete "${char.name}"? Cannot be undone.`)) return;
+                      if (!window.confirm(`Delete "${char.name}"? It goes to Trash for 30 days.`)) return;
                       S.snapshotNow(`before deleting ${char.name}`);
+                      S.addTrash({ type: 'character', charId: char.id, character: char, chat: S.chat(char.id), history: S.history(char.id) });
                       ctx.setChars(prev => { const n = prev.filter(c => c.id !== char.id); S.saveChars(n); return n; });
                       S.deleteCharData(char.id);
                       ctx.setCurrentChar(null);
@@ -1481,6 +1526,11 @@ function ChatView() {
             <button className="btn-icon" style={{ width: 26, height: 26 }} title="Send as Narrator — scene-setting in third person" onClick={sendAsNarrator} disabled={!inputVal.trim() || generating}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M3 12L9 6V10H21V14H9V18L3 12Z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" transform="rotate(180 12 12)"/></svg>
             </button>
+            {!char.isGroup && messages.some(m => m.role === 'assistant') && (
+              <button className="btn-icon" style={{ width: 26, height: 26 }} title="Continue the scene without sending a message" onClick={continueStory} disabled={generating}>
+                <span style={{ fontSize: 10 }}>▶</span>
+              </button>
+            )}
             <button className="btn-icon" style={{ width: 26, height: 26 }} title="Summarize old messages to save context" onClick={summarizeContext} disabled={messages.length < 8 || generating}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M3 6H21M3 12H15M3 18H21" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
             </button>
@@ -1496,7 +1546,7 @@ function ChatView() {
             <button className="btn-icon" style={{ width: 26, height: 26 }} title="Take a photo" onClick={() => cameraRef.current?.click()}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M4 8H7L9 5H15L17 8H20V19H4V8Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/><circle cx="12" cy="13" r="3.5" stroke="currentColor" strokeWidth="2"/></svg>
             </button>
-            <button className="btn-icon" style={{ width: 26, height: 26 }} title="Clear chat" onClick={() => { if (window.confirm('Clear all messages?')) { S.snapshotNow(`before clearing ${char.name}'s chat`); setMessages([]); S.saveChat(char.id, []); } }}>
+            <button className="btn-icon" style={{ width: 26, height: 26 }} title="Clear chat" onClick={() => { if (window.confirm('Clear all messages? The chat is kept in Trash for 30 days.')) { S.snapshotNow(`before clearing ${char.name}'s chat`); S.addTrash({ type: 'chat', charId: char.id, characterName: char.name, chat: S.chat(char.id) }); setMessages([]); S.saveChat(char.id, []); } }}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none"><path d="M3 6H21M8 6V4C8 2.9 8.9 2 10 2H14C15.1 2 16 2.9 16 4V6M19 6V20C19 21.1 18.1 22 17 22H7C5.9 22 5 21.1 5 20V6H19Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>
             </button>
           </div>
