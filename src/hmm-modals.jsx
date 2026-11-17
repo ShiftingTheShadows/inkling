@@ -355,6 +355,13 @@ function SettingsModal({ onClose }) {
         return [m.id, [m.name || m.id, ctxLen, price].filter(Boolean).join(' · ')];
       }).filter(([id]) => id).sort((a, b) => a[1].localeCompare(b[1]));
       if (!list.length) throw new Error('empty list');
+      // A8: remember each model's real context window for the context meter and
+      // auto-summarize. Merged, so older entries survive a partial catalogue.
+      try {
+        const known = JSON.parse(localStorage.getItem('hmm_model_contexts') || '{}') || {};
+        (j.data || []).forEach(m => { if (m.id && m.context_length) known[m.id] = m.context_length; });
+        localStorage.setItem('hmm_model_contexts', JSON.stringify(known));
+      } catch {}
       setOrModels(list);
       ctx.addToast(`${list.length} live models loaded`, 'success');
     } catch (e) {
@@ -481,6 +488,18 @@ function SettingsModal({ onClose }) {
                     />
                   </div>
                 )}
+                <div className="form-group">
+                  <label className="form-label">CONTEXT WINDOW (TOKENS)</label>
+                  <input
+                    type="number" className="form-input" min="1000" step="1000"
+                    value={prof.contextLength || ''}
+                    onChange={e => setProf({ contextLength: e.target.value ? Number(e.target.value) : undefined })}
+                    placeholder="Auto — live model list, known family, else 16,000"
+                  />
+                  <div className="form-hint">
+                    Drives the ~tkns meter and auto-summarize. LOAD LIVE MODEL LIST fills it from the provider's real window; set it manually for local models.
+                  </div>
+                </div>
               </>
             )}
 
