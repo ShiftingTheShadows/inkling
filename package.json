@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
-    "test": "node test/hooks-check.mjs && node test/textbox.test.js && node test/storage.test.js && node test/merge.test.js && node test/providers.test.js && node test/misc.test.js",
+    "test": "node test/hooks-check.mjs && node test/textbox.test.js && node test/storage.test.js && node test/merge.test.js && node test/providers.test.js && node test/misc.test.js && node test/crypto.test.js",
     "test:browser": "node test/browser.mjs",
     "lint": "eslint ."
   },

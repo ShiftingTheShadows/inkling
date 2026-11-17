@@ -333,6 +333,8 @@ const CHANGELOG = [
     version: '2026-11-17',
     date: 'Nov 17, 2026',
     items: [
+      'New: end-to-end encryption for Railway sync. The backup is stored as an AES-GCM blob keyed by a passphrase the server never sees — unlocked once per device and optionally remembered. A device without the passphrase refuses to push over it, the browser never uploads plaintext to an encrypted backup, and MCP reports it cannot read one.',
+      'Changed: the sync server reports whether a backup is encrypted, so a browser that has not been set up with the passphrase can tell before it overwrites anything.',
       'New: storage warnings. If the browser refuses a save (disk full, private window, blocked site data), a banner says so and offers a backup export instead of failing silently.',
       'Changed: restoring a backup now merges by default — new characters, folders and scripts are added, newer records win, and a longer local chat is never replaced by an older one. Gist pull, Railway pull, auto-sync and file import all use it; "Replace everything" is still one click away.',
       'New: TEST CONNECTION in Settings sends a one-token request and reports exactly what is wrong — key, endpoint, model, timeout, or a missing /api proxy — instead of a broken reply in the chat.',
@@ -1974,18 +1976,113 @@ const GistSync = {
   },
 };
 
+/* SYNC-CRYPTO-START */
+// D29: end-to-end encryption for the sync blob. The server only ever stores
+// this envelope: a key derived with PBKDF2-SHA256 from a passphrase the host
+// never sees, and AES-GCM with a fresh 96-bit IV on every push. GCM also
+// authenticates the blob, so a truncated or edited backup fails to open rather
+// than decrypting into garbage. Kept free of React and DOM so test/crypto.test.js
+// can run the exact shipping code under Node.
+const SYNC_CRYPTO_TYPE = 'inkling-encrypted-backup';
+const SYNC_CRYPTO_VERSION = 1;
+// ~0.2 s on a laptop, a few seconds on an old phone: enough to make guessing
+// at a stolen blob expensive, cheap enough to do once per device.
+const SYNC_CRYPTO_ITERATIONS = 250000;
+const SYNC_CRYPTO_SALT_BYTES = 16;
+
+function syncB64Encode(bytes) {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(bin);
+}
+
+function syncB64Decode(text) {
+  const bin = atob(text);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function newSyncSalt() {
+  return syncB64Encode(globalThis.crypto.getRandomValues(new Uint8Array(SYNC_CRYPTO_SALT_BYTES)));
+}
+
+function isEncryptedSyncBlob(data) {
+  return !!data && typeof data === 'object'
+    && data.type === SYNC_CRYPTO_TYPE
+    && data.v === SYNC_CRYPTO_VERSION
+    && typeof data.iv === 'string'
+    && typeof data.data === 'string'
+    && !!data.kdf && typeof data.kdf.salt === 'string';
+}
+
+async function deriveSyncKey(passphrase, saltB64, iterations = SYNC_CRYPTO_ITERATIONS) {
+  if (typeof passphrase !== 'string' || passphrase.length < 8) {
+    throw new Error('Passphrase must be at least 8 characters');
+  }
+  const subtle = globalThis.crypto.subtle;
+  const base = await subtle.importKey('raw', new TextEncoder().encode(passphrase), 'PBKDF2', false, ['deriveKey']);
+  return subtle.deriveKey(
+    { name: 'PBKDF2', salt: syncB64Decode(saltB64), iterations, hash: 'SHA-256' },
+    base, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt'],
+  );
+}
+
+// Short public check value stored beside the salt: lets a device say "wrong
+// passphrase" instead of "corrupt backup", and lets a remembered key be
+// validated without keeping the passphrase itself.
+async function syncKeyFingerprint(key) {
+  const raw = await globalThis.crypto.subtle.exportKey('raw', key);
+  const digest = await globalThis.crypto.subtle.digest('SHA-256', raw);
+  return Array.from(new Uint8Array(digest).slice(0, 6), b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function encryptSyncPayload(payload, key, saltB64, iterations = SYNC_CRYPTO_ITERATIONS) {
+  const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
+  const plain = new TextEncoder().encode(JSON.stringify(payload));
+  const cipher = await globalThis.crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plain);
+  return {
+    type: SYNC_CRYPTO_TYPE,
+    v: SYNC_CRYPTO_VERSION,
+    kdf: { name: 'PBKDF2-SHA256', iterations, salt: saltB64 },
+    cipher: 'AES-GCM-256',
+    iv: syncB64Encode(iv),
+    data: syncB64Encode(new Uint8Array(cipher)),
+    encryptedAt: new Date().toISOString(),
+  };
+}
+
+async function decryptSyncPayload(envelope, key) {
+  if (!isEncryptedSyncBlob(envelope)) throw new Error('Not an encrypted Inkling backup');
+  let plain;
+  try {
+    plain = await globalThis.crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: syncB64Decode(envelope.iv) }, key, syncB64Decode(envelope.data),
+    );
+  } catch {
+    throw new Error('Could not decrypt this backup — wrong passphrase, or it was re-encrypted on another device');
+  }
+  return JSON.parse(new TextDecoder().decode(plain));
+}
+/* SYNC-CRYPTO-END */
+
 // Railway sync: a self-hosted alternative to Gist sync (see server/).
 // Same payload shape (GistSync.buildPayload/restorePayload), just pushed to
 // your own Postgres-backed endpoint instead of a GitHub gist.
 const RailwaySync = {
-  async push(baseUrl, token, expectedRevision = null) {
-    const payload = GistSync.buildPayload();
-    const content = JSON.stringify(payload);
+  // One authenticated POST. Split out so a passphrase change can upload the
+  // re-encrypted blob *before* committing the new key locally: if the upload
+  // fails, this device keeps the old key, which is still the key the server's
+  // copy is encrypted with.
+  async send(baseUrl, token, data, expectedRevision = null) {
+    const content = JSON.stringify(data);
     try { JSON.parse(content); } catch (e) { throw new Error('Local data is corrupted, cannot push: ' + e.message); }
-    const body = { token, data: payload };
-    // Optimistic concurrency (the server supports it): a push built on a
-    // revision this device has seen is rejected if another device wrote in
-    // between, instead of silently overwriting its chats.
+    const body = { token, data };
+    // Optimistic concurrency: a push built on a revision this device has seen
+    // is rejected if another device wrote in between, instead of silently
+    // overwriting its chats. null opts out (deliberate overwrite).
     if (expectedRevision != null) body.expectedRevision = expectedRevision;
     const r = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/sync`, {
       method: 'POST',
@@ -2005,18 +2102,171 @@ const RailwaySync = {
     const j = await r.json();
     return { updatedAt: j.updatedAt, revision: j.revision };
   },
+
+  async push(baseUrl, token, expectedRevision = null) {
+    const payload = GistSync.buildPayload();
+    let data = payload;
+    if (SyncCrypto.enabled()) {
+      const meta = SyncCrypto.meta();
+      data = await encryptSyncPayload(payload, await SyncCrypto.requireKey(), meta.salt, meta.iterations);
+    } else {
+      // Never replace a ciphertext backup with plaintext because this browser
+      // has not been set up with the passphrase. The meta call is a few dozen
+      // bytes, unlike pulling the whole blob just to look at it.
+      const remote = await this.meta(baseUrl, token).catch(() => null);
+      if (remote && remote.encrypted) {
+        const err = new Error('That backup is end-to-end encrypted. Enable encryption on this device with the same passphrase before pushing.');
+        err.locked = true;
+        throw err;
+      }
+    }
+    return this.send(baseUrl, token, data, expectedRevision);
+  },
+
   async pull(baseUrl, token) {
     const r = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/sync?token=${encodeURIComponent(token)}`);
     if (!r.ok) throw new Error(`Sync server ${r.status}: ${(await r.text().catch(() => '')) || r.statusText}`);
     const j = await r.json();
     if (!j.data) throw new Error('No backup found for this token yet, push from another device first.');
-    return { data: j.data, revision: j.revision };
+    const encrypted = isEncryptedSyncBlob(j.data);
+    let data = j.data;
+    if (encrypted) {
+      if (!SyncCrypto.enabled()) {
+        const err = new Error('This backup is end-to-end encrypted. Open Settings → Sync → Railway and enable encryption with the passphrase you used on the other device.');
+        err.locked = true;
+        throw err;
+      }
+      data = await decryptSyncPayload(j.data, await SyncCrypto.requireKey());
+    }
+    return { data, revision: j.revision, encrypted };
   },
-  // Lightweight poll for auto-sync, just the remote's last-updated timestamp
+
+  // Lightweight poll for auto-sync: timestamp, revision and whether the blob
+  // is encrypted, without transferring the (potentially multi-MB) backup.
   async meta(baseUrl, token) {
     const r = await fetch(`${baseUrl.replace(/\/+$/, '')}/api/sync/meta?token=${encodeURIComponent(token)}`);
     if (!r.ok) throw new Error(`Sync server ${r.status}: ${(await r.text().catch(() => '')) || r.statusText}`);
-    return (await r.json()).updatedAt;
+    const j = await r.json();
+    return { updatedAt: j.updatedAt, revision: j.revision, encrypted: !!j.encrypted };
+  },
+};
+
+// D29 key management. Only public material (salt, iteration count, a 12-hex
+// fingerprint, whether this device remembers the key) goes to localStorage;
+// the passphrase is never stored, only used to derive a key. "Remember" keeps
+// the raw derived key, which is the usual trade: convenience for the ability
+// to decrypt if this browser profile is compromised.
+const SYNC_CRYPTO_META_KEY = 'hmm_sync_crypto';
+const SYNC_CRYPTO_KEY_KEY = 'hmm_sync_crypto_key';
+let __syncKey = null;
+
+const SyncCrypto = {
+  meta() {
+    try {
+      const m = JSON.parse(localStorage.getItem(SYNC_CRYPTO_META_KEY) || 'null');
+      return m && typeof m.salt === 'string' && typeof m.fingerprint === 'string' ? m : null;
+    } catch { return null; }
+  },
+  enabled() { return !!this.meta(); },
+  unlocked() { return !!__syncKey; },
+  fingerprint() { return (this.meta() || {}).fingerprint || ''; },
+
+  async persistKey(key, remember) {
+    if (!remember) { localStorage.removeItem(SYNC_CRYPTO_KEY_KEY); return; }
+    const raw = await globalThis.crypto.subtle.exportKey('raw', key);
+    localStorage.setItem(SYNC_CRYPTO_KEY_KEY, syncB64Encode(new Uint8Array(raw)));
+  },
+
+  // Called at launch and when the Sync modal opens. Returns whether the key is
+  // in memory afterwards.
+  async loadRemembered() {
+    if (__syncKey) return true;
+    const meta = this.meta();
+    const stored = localStorage.getItem(SYNC_CRYPTO_KEY_KEY);
+    if (!meta || !stored) return false;
+    try {
+      const key = await globalThis.crypto.subtle.importKey('raw', syncB64Decode(stored), { name: 'AES-GCM' }, true, ['encrypt', 'decrypt']);
+      if (await syncKeyFingerprint(key) !== meta.fingerprint) {
+        // The stored key belongs to an older passphrase (changed or cleared
+        // elsewhere): drop it and ask for the passphrase instead of failing
+        // decryption with a misleading "corrupt backup".
+        localStorage.removeItem(SYNC_CRYPTO_KEY_KEY);
+        return false;
+      }
+      __syncKey = key;
+      return true;
+    } catch {
+      localStorage.removeItem(SYNC_CRYPTO_KEY_KEY);
+      return false;
+    }
+  },
+
+  async enable(passphrase, { remember = true } = {}) {
+    const salt = newSyncSalt();
+    const iterations = SYNC_CRYPTO_ITERATIONS;
+    const key = await deriveSyncKey(passphrase, salt, iterations);
+    const fingerprint = await syncKeyFingerprint(key);
+    localStorage.setItem(SYNC_CRYPTO_META_KEY, JSON.stringify({
+      v: 1, salt, iterations, fingerprint, remember: !!remember, createdAt: new Date().toISOString(),
+    }));
+    __syncKey = key;
+    await this.persistKey(key, remember);
+    window.dispatchEvent(new Event('hmm-sync-crypto-changed'));
+    return fingerprint;
+  },
+
+  async unlock(passphrase) {
+    const meta = this.meta();
+    if (!meta) throw new Error('Encryption is not enabled on this device');
+    const key = await deriveSyncKey(passphrase, meta.salt, meta.iterations);
+    if (await syncKeyFingerprint(key) !== meta.fingerprint) throw new Error('Wrong passphrase');
+    __syncKey = key;
+    await this.persistKey(key, meta.remember);
+    window.dispatchEvent(new Event('hmm-sync-crypto-changed'));
+    return true;
+  },
+
+  lock() {
+    __syncKey = null;
+    localStorage.removeItem(SYNC_CRYPTO_KEY_KEY);
+    window.dispatchEvent(new Event('hmm-sync-crypto-changed'));
+  },
+
+  // Re-keying uploads first (via `push(envelope)`) and only then commits the
+  // new salt/fingerprint, so a failed upload cannot leave this device holding a
+  // key the server's copy is not encrypted with.
+  async changePassphrase(oldPassphrase, newPassphrase, { remember, push } = {}) {
+    await this.unlock(oldPassphrase);
+    const meta = this.meta();
+    const salt = newSyncSalt();
+    const iterations = meta.iterations;
+    const key = await deriveSyncKey(newPassphrase, salt, iterations);
+    const fingerprint = await syncKeyFingerprint(key);
+    if (push) {
+      const envelope = await encryptSyncPayload(GistSync.buildPayload(), key, salt, iterations);
+      await push(envelope);
+    }
+    localStorage.setItem(SYNC_CRYPTO_META_KEY, JSON.stringify({
+      ...meta, salt, iterations, fingerprint, remember: remember != null ? !!remember : meta.remember, changedAt: new Date().toISOString(),
+    }));
+    __syncKey = key;
+    await this.persistKey(key, remember != null ? remember : meta.remember);
+    window.dispatchEvent(new Event('hmm-sync-crypto-changed'));
+    return fingerprint;
+  },
+
+  // Returns null when encryption is off. Throws a `.locked` error when it is on
+  // but this session has no key, so callers can tell "nothing to do" from
+  // "ask the user for the passphrase".
+  async requireKey() {
+    if (!this.enabled()) return null;
+    if (!__syncKey) await this.loadRemembered();
+    if (!__syncKey) {
+      const err = new Error('Sync is locked — enter your passphrase in Settings → Sync');
+      err.locked = true;
+      throw err;
+    }
+    return __syncKey;
   },
 };
 
@@ -2170,6 +2420,8 @@ Object.assign(window, {
   summarizeMessages, GistSync, RailwaySync, testProvider, providerProfile, generationExtras,
   shouldAutoSummarize, utilitySettings,
   chatToMarkdown, chatToJson, chatToHtml, chatExportRows, trashExpired,
+  SyncCrypto, isEncryptedSyncBlob, encryptSyncPayload, decryptSyncPayload,
+  deriveSyncKey, syncKeyFingerprint, newSyncSalt,
   downloadCharJson, downloadCharPng,
   parseTextbox, expressionAt, resolveExpressionKey, expressionNameFromFilename, pitchForCharacter,
 });

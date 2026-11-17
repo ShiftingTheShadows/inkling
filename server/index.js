@@ -101,10 +101,17 @@ app.get('/api/sync/meta', async (req, res) => {
   const token = String(req.query.token || '');
   if (token.length < MIN_TOKEN_LEN) return res.status(400).json({ error: `token must be at least ${MIN_TOKEN_LEN} characters` });
   try {
-    const { rows } = await pool.query('SELECT updated_at, revision FROM backups WHERE token_hash = $1', [hashToken(token)]);
+    // `encrypted` lets a client refuse to overwrite an end-to-end encrypted
+    // backup with plaintext before it uploads anything. The data is dropped by
+    // dropping the row, never by reading it here.
+    const { rows } = await pool.query(
+      "SELECT updated_at, revision, (data->>'type') AS kind FROM backups WHERE token_hash = $1",
+      [hashToken(token)]
+    );
     res.json({
       updatedAt: rows.length ? rows[0].updated_at : null,
       revision: rows.length ? Number(rows[0].revision) : null,
+      encrypted: rows.length ? rows[0].kind === 'inkling-encrypted-backup' : false,
     });
   } catch (e) {
     console.error('GET /api/sync/meta failed:', e);

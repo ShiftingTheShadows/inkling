@@ -1,6 +1,6 @@
 // hmm-app.jsx — Root App
 const { useState, useEffect, useCallback } = React;
-const { AppCtx, S, genId, GistSync, RailwaySync, CHANGELOG, providerProfile } = window;
+const { AppCtx, S, genId, GistSync, RailwaySync, SyncCrypto, CHANGELOG, providerProfile } = window;
 const { Sidebar, WelcomeScreen, ChatView, FoldersPage, McpSetupModal, LocalModelsModal } = window;
 const { ToastStack, CommandPalette, SettingsModal, CharEditorModal, GroupEditorModal, ImportModal, HistoryModal, PersonasModal, SyncModal, LorebookModal, ChangelogModal } = window;
 
@@ -204,6 +204,15 @@ function App() {
     let pushTimer = null;
     let pushInFlight = false;
     let pollTimer = null;
+    let warnedLocked = false;
+
+    // One toast per launch: an encrypted backup with no key would otherwise
+    // nag on every local edit and every 60s poll.
+    const warnLocked = msg => {
+      if (warnedLocked) return;
+      warnedLocked = true;
+      addToast(msg || 'Sync is locked — open Settings → Sync and unlock with your passphrase.', 'warning');
+    };
 
     const stop = () => {
       clearTimeout(pushTimer); pushTimer = null;
@@ -221,7 +230,9 @@ function App() {
         // Another device wrote since this one last read: never overwrite it
         // unattended — pull and merge instead, which is what poll() already
         // does (and it only reloads when something actually changed).
-        if (e.conflict) {
+        if (e.locked) {
+          warnLocked(e.message);
+        } else if (e.conflict) {
           pushInFlight = false;
           await poll(url, token);
         } else {
@@ -235,7 +246,14 @@ function App() {
     const poll = async (url, token) => {
       if (pushInFlight || pushTimer) return; // local changes pending, don't clobber them
       try {
-        const remoteUpdatedAt = await RailwaySync.meta(url, token);
+        const remote = await RailwaySync.meta(url, token);
+        // D29: don't pull (and definitely don't push) a blob this session
+        // cannot decrypt; wait for the user to unlock instead.
+        if (remote && remote.encrypted && !SyncCrypto.unlocked()) {
+          warnLocked('Sync is end-to-end encrypted — open Settings → Sync and enter your passphrase to receive changes.');
+          return;
+        }
+        const remoteUpdatedAt = remote && remote.updatedAt;
         const lastSync = localStorage.getItem('hmm_railway_last_sync');
         if (remoteUpdatedAt && (!lastSync || new Date(remoteUpdatedAt) > new Date(lastSync))) {
           const { data, revision } = await RailwaySync.pull(url, token);
@@ -253,16 +271,20 @@ function App() {
           }
         }
       } catch (e) {
-        console.warn('Auto-sync poll failed:', e);
+        if (e.locked) warnLocked(e.message);
+        else console.warn('Auto-sync poll failed:', e);
       }
     };
 
-    const start = () => {
+    const start = async () => {
       stop();
       const url = localStorage.getItem('hmm_railway_url');
       const token = localStorage.getItem('hmm_railway_token');
       const enabled = localStorage.getItem('hmm_railway_autosync') === 'true';
       if (!enabled || !url || !token) return;
+      // A remembered key has to be in memory before the first poll, otherwise
+      // pulling an encrypted backup would report itself as locked.
+      await SyncCrypto.loadRemembered();
       window.__hmmOnDataChange = () => {
         clearTimeout(pushTimer);
         pushTimer = setTimeout(() => { pushTimer = null; doPush(url, token); }, 4000);
