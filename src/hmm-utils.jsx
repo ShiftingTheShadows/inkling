@@ -8,6 +8,7 @@ const AppCtx = createContext(null);
 // images blow past the ~5MB localStorage cap. IndexedDB holds
 // hundreds of MB. All reads hit an in-memory Map (synchronous),
 // writes go to the Map immediately and to IDB asynchronously.
+/* STORAGE-CORE-START */
 const __mem = new Map();
 let __db = null;
 
@@ -101,18 +102,116 @@ const __set = (k, v) => { __mem.set(k, v); __idbPut(k, v); __notifyDataChange(k)
 // never carries.
 const __setQuiet = (k, v) => { __mem.set(k, v); __idbPut(k, v); };
 
-// Boot: open IDB, hydrate cache, one-time migration from localStorage
+// ── Lazy chat loading (F42) ─────────────────────────────────────
+// Chat bodies used to be hydrated into memory at boot along with everything
+// else, so a large library paid for every message up front. Boot now keeps
+// only the small records (characters, settings, meta, ...) and remembers which
+// characters have a chat on disk; a chat is read when it is opened.
+/* STORAGE-BOOT-START */
+// `hmm_chat_meta` is the small F36 summary map, not a chat body.
+function deferredChatId(key) {
+  if (typeof key !== 'string' || key === 'hmm_chat_meta') return null;
+  if (key.startsWith('hmm_chat_')) return key.slice('hmm_chat_'.length);
+  if (key.startsWith('hmm_hist_')) return key.slice('hmm_hist_'.length);
+  return null;
+}
+
+// What boot does with one stored record: keep it in memory, or note that this
+// character has a chat on disk and defer its body. Split out so the storage
+// test can drive the real rule instead of a copy of it.
+function createBootIngest(mem) {
+  const hydrated = [];
+  const deferred = new Set();
+  return {
+    accept(key, value) {
+      const id = deferredChatId(key);
+      if (id != null) { deferred.add(id); return false; }
+      mem.set(key, value); hydrated.push(key);
+      return true;
+    },
+    hydrated: () => hydrated.slice(),
+    deferred: () => [...deferred],
+  };
+}
+
+// A save from a view that mounted before its chat loaded would otherwise
+// replace the real history with an empty list or a fresh greeting. Writing is
+// allowed when the chat is in memory, or when nothing is on disk yet.
+function chatSaveAllowed(id, loaded, onDisk) {
+  return !!loaded || !(onDisk && onDisk.has(id));
+}
+/* STORAGE-BOOT-END */
+
+const __chatOnDisk = new Set(); // ids whose chat/history body is still only in IDB
+const __chatLoaded = new Set(); // ids whose body is in memory now
+let __allChatsLoaded = false;
+
+function __idbGet(key) {
+  return new Promise((res, rej) => {
+    if (!__db) return res(undefined);
+    try {
+      const req = __db.transaction('kv', 'readonly').objectStore('kv').get(key);
+      req.onsuccess = () => res(req.result);
+      req.onerror = () => rej(req.error);
+    } catch (e) { rej(e); }
+  });
+}
+
+// Read one character's chat + saved sessions into memory. Idempotent, so a view
+// can await it every time a character is opened.
+async function __loadChats(id) {
+  if (!id || __chatLoaded.has(id)) return __get(`hmm_chat_${id}`, []);
+  try {
+    const [chat, hist] = await Promise.all([__idbGet(`hmm_chat_${id}`), __idbGet(`hmm_hist_${id}`)]);
+    if (chat !== undefined && !__mem.has(`hmm_chat_${id}`)) __mem.set(`hmm_chat_${id}`, chat);
+    if (hist !== undefined && !__mem.has(`hmm_hist_${id}`)) __mem.set(`hmm_hist_${id}`, hist);
+  } catch (e) { console.warn('Inkling: could not load chat for', id, e); }
+  __chatOnDisk.delete(id);
+  __chatLoaded.add(id);
+  // F36 summary for a chat saved before the meta map existed. Derived state, so
+  // the sidebar stays correct without loading every chat.
+  if (!(__get('hmm_chat_meta', {}) || {})[id]) __writeChatMeta(id, __get(`hmm_chat_${id}`, []));
+  return __get(`hmm_chat_${id}`, []);
+}
+
+// Everything-at-once read for the paths that genuinely need every chat: sync,
+// backups, snapshots, deep search and restore merging.
+async function __loadAllChats() {
+  if (__allChatsLoaded) return;
+  if (!__db) { __allChatsLoaded = true; return; } // no IDB: boot kept everything
+  await new Promise((res, rej) => {
+    const req = __db.transaction('kv', 'readonly').objectStore('kv').openCursor();
+    req.onsuccess = () => {
+      const cur = req.result;
+      if (!cur) return res();
+      const id = deferredChatId(cur.key);
+      if (id != null) { __mem.set(cur.key, cur.value); __chatLoaded.add(id); }
+      cur.continue();
+    };
+    req.onerror = () => rej(req.error);
+  });
+  __chatOnDisk.clear();
+  __allChatsLoaded = true;
+}
+
+// Boot: open IDB, hydrate the small records, defer chat bodies, one-time
+// migration from localStorage.
 window.InklingStorageReady = (async () => {
   try {
     __db = await __idbOpen();
+    const ingest = createBootIngest(__mem);
     await new Promise((res, rej) => {
       const req = __db.transaction('kv', 'readonly').objectStore('kv').openCursor();
       req.onsuccess = () => {
         const cur = req.result;
-        if (cur) { __mem.set(cur.key, cur.value); cur.continue(); } else res();
+        if (cur) { ingest.accept(cur.key, cur.value); cur.continue(); } else res();
       };
       req.onerror = () => rej(req.error);
     });
+    ingest.deferred().forEach(id => __chatOnDisk.add(id));
+    if (ingest.deferred().length) {
+      console.info(`Inkling: ${ingest.deferred().length} chat(s) stay on disk until opened`);
+    }
     // Migrate legacy localStorage data once, then free the quota
     const legacy = [];
     for (let i = 0; i < localStorage.length; i++) {
@@ -123,7 +222,8 @@ window.InklingStorageReady = (async () => {
       if (!__mem.has(k)) {
         try {
           const v = JSON.parse(localStorage.getItem(k));
-          __mem.set(k, v); __idbPut(k, v);
+          if (!ingest.accept(k, v)) __chatOnDisk.add(deferredChatId(k));
+          __idbPut(k, v); // deferred or not, it now lives in IDB
         } catch (e) { console.warn('Migration skipped corrupt key:', k); }
       }
     });
@@ -132,15 +232,19 @@ window.InklingStorageReady = (async () => {
   } catch (e) {
     console.error('IndexedDB unavailable — falling back to localStorage:', e);
     __db = null;
+    // No IDB to lazy-load from later: keep everything resident so nothing is
+    // unreachable.
     for (let i = 0; i < localStorage.length; i++) {
       const k = localStorage.key(i);
       if (/^hmm_(chars$|chat_|hist_|lorebook$|settings$|personas$)/.test(k)) {
         try { __mem.set(k, JSON.parse(localStorage.getItem(k))); } catch {}
       }
     }
+    __allChatsLoaded = true;
   }
   __backfillChatMeta();
 })();
+/* STORAGE-CORE-END */
 
 /* SIDEBAR-EXPORTS-START */
 // F36: the character list needs one line of preview per row, nothing more. It
@@ -266,10 +370,26 @@ const S = {
   folders: () => __get('hmm_folders', []),
   saveFolders: v => __set('hmm_folders', v),
   chat: id => __get(`hmm_chat_${id}`, []),
+  // F42: chats are no longer all resident. Views await loadChats(id) for the
+  // character they are about to show; loadAllChats() is for the few paths that
+  // really need every chat (sync, backups, snapshots, deep search, restore).
+  chatLoaded: id => __chatLoaded.has(id),
+  chatsLoaded: () => __allChatsLoaded,
+  loadChats: id => __loadChats(id),
+  loadAllChats: () => __loadAllChats(),
+  chatCacheStats: () => ({ inMemory: __chatLoaded.size, onDisk: __chatOnDisk.size, allLoaded: __allChatsLoaded }),
   // F36: the sidebar reads this instead of every chat. Derived on save, so it
   // is never stale and never part of buildPayload().
   chatMeta: () => __get('hmm_chat_meta', {}) || {},
-  saveChat: (id, v) => { __set(`hmm_chat_${id}`, v); __writeChatMeta(id, v); },
+  saveChat: (id, v) => {
+    if (!chatSaveAllowed(id, __chatLoaded.has(id), __chatOnDisk)) {
+      console.warn(`Inkling: refused to save chat ${id} before it was loaded`);
+      return false;
+    }
+    __chatLoaded.add(id); __chatOnDisk.delete(id);
+    __set(`hmm_chat_${id}`, v); __writeChatMeta(id, v);
+    return true;
+  },
   history: id => __get(`hmm_hist_${id}`, []),
   saveHistory: (id, v) => __set(`hmm_hist_${id}`, v),
   // AI-assist design chat, per character. Lives in IndexedDB and rides the
@@ -300,11 +420,12 @@ const S = {
   deleteCharData: id => {
     __mem.delete(`hmm_chat_${id}`); __mem.delete(`hmm_hist_${id}`); __mem.delete(`hmm_draft_${id}`); __mem.delete(`hmm_assist_${id}`);
     __idbDel(`hmm_chat_${id}`); __idbDel(`hmm_hist_${id}`); __idbDel(`hmm_draft_${id}`); __idbDel(`hmm_assist_${id}`);
+    __chatOnDisk.delete(id); __chatLoaded.delete(id);
     const meta = { ...(__get('hmm_chat_meta', {}) || {}) };
     if (id in meta) { delete meta[id]; __setQuiet('hmm_chat_meta', meta); }
   },
   clearAll: () => new Promise(res => {
-    __mem.clear();
+    __mem.clear(); __chatOnDisk.clear(); __chatLoaded.clear(); __allChatsLoaded = true;
     if (!__db) return res();
     try {
       const tx = __db.transaction('kv', 'readwrite');
@@ -326,8 +447,9 @@ const S = {
   // eat a large share of the quota. Built here rather than in the UI so every
   // caller gets the same payload shape as a normal backup.
   snapshot: () => __get('hmm_snapshot_auto', null),
-  snapshotNow: label => {
+  snapshotNow: async label => {
     try {
+      await __loadAllChats();
       const payload = GistSync.buildPayload();
       if (JSON.stringify(payload).length > 4000000) return null; // ~8MB — not worth the quota
       const snap = { at: new Date().toISOString(), label, payload };
@@ -470,6 +592,7 @@ const CHANGELOG = [
     version: '2026-11-17',
     date: 'Nov 17, 2026',
     items: [
+      'Changed: chats load when you open a character instead of all at startup — a big library now boots with far less memory and no up-front history read. Message counts and previews in the sidebar and on the welcome screen still appear immediately.',
       'Changed: greeting images can upload to imgbb or a custom upload URL (self-hosted, S3/R2) instead of only freeimage.host — pick the host in Settings → Integrations. Unconfigured installs keep using freeimage.host exactly as before.',
       'Changed: web search reads JavaScript-rendered pages. A page that arrives as an empty shell is re-read through a renderer instead of coming back blank, and keyless search falls back to a second no-key provider when DuckDuckGo blocks the request, so search still works with no API key set. Page reads also verify where a hostname actually points (including each redirect) before fetching, and the remote MCP server refuses requests addressed to an unexpected host or coming from another site.',
       'New: an A→Z sort for the character sidebar, alongside ALL, ★ FAV and RECENT. The choice is saved with your settings, so it is still selected after a reload.',
@@ -2308,6 +2431,10 @@ const GistSync = {
     return { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', 'Accept': 'application/vnd.github+json' };
   },
   buildPayload() {
+    // F42: a payload built while chat bodies are still lazy would ship empty
+    // chats and overwrite the real history on the next pull. Fail loudly
+    // instead; callers await S.loadAllChats() first.
+    if (!__allChatsLoaded) throw new Error('Chats are not loaded yet — await S.loadAllChats() before building a payload');
     const chars = S.chars();
     const chats = {}, histories = {}, assistChats = {};
     chars.forEach(c => {
@@ -2365,25 +2492,34 @@ const GistSync = {
     if (Array.isArray(d.characters)) S.saveChars(d.characters);
     // Chats are keyed by character id and a merge can keep a local chat whose
     // character the remote payload never listed, so write every key present.
-    Object.entries(d.chats || {}).forEach(([id, msgs]) => { if (Array.isArray(msgs)) S.saveChat(id, msgs); });
+    Object.entries(d.chats || {}).forEach(([id, msgs]) => {
+      if (!Array.isArray(msgs)) return;
+      // Restoring is authoritative: the incoming payload replaces whatever was
+      // on disk for this character, so the write is allowed without a load.
+      __chatLoaded.add(id); __chatOnDisk.delete(id);
+      S.saveChat(id, msgs);
+    });
     Object.entries(d.histories || {}).forEach(([id, hist]) => { if (Array.isArray(hist)) S.saveHistory(id, hist); });
     Object.entries(d.assistChats || {}).forEach(([id, msgs]) => { if (Array.isArray(msgs) && msgs.length) S.saveAssistChat(id, msgs); });
   },
   // Preview the merge without writing anything, for the restore dialog.
-  previewRestore(data, { policy = 'sync' } = {}) {
+  async previewRestore(data, { policy = 'sync' } = {}) {
+    await __loadAllChats();
     const preset = policy === 'import' ? MERGE_POLICIES.import : MERGE_POLICIES.sync;
     return mergePayloads(this.buildPayload(), data, { ...preset, localHasSettings: __get('hmm_settings', null) != null }).stats;
   },
   // mode 'merge' (default) keeps local data and folds the backup in; 'replace'
   // makes this device an exact copy (settings included, secrets excepted).
-  restorePayload(data, { mode = 'merge', policy = 'sync' } = {}) {
+  async restorePayload(data, { mode = 'merge', policy = 'sync' } = {}) {
     if (mode === 'replace') { this.writePayload(data); return null; }
+    await __loadAllChats();
     const preset = policy === 'import' ? MERGE_POLICIES.import : MERGE_POLICIES.sync;
     const { merged, stats } = mergePayloads(this.buildPayload(), data, { ...preset, localHasSettings: __get('hmm_settings', null) != null });
     this.writePayload(merged);
     return stats;
   },
   async push(token, gistId) {
+    await __loadAllChats();
     const payload = this.buildPayload();
     const content = JSON.stringify(payload, null, 2);
 
@@ -2575,6 +2711,7 @@ const RailwaySync = {
   },
 
   async push(baseUrl, token, expectedRevision = null) {
+    await __loadAllChats();
     const payload = GistSync.buildPayload();
     let data = payload;
     if (SyncCrypto.enabled()) {
@@ -2714,6 +2851,7 @@ const SyncCrypto = {
     const key = await deriveSyncKey(newPassphrase, salt, iterations);
     const fingerprint = await syncKeyFingerprint(key);
     if (push) {
+      await __loadAllChats();
       const envelope = await encryptSyncPayload(GistSync.buildPayload(), key, salt, iterations);
       await push(envelope);
     }

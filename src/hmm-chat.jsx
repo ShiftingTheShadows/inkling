@@ -284,11 +284,15 @@ function VariationsPanel({ messages, char, settings, onClose, onUse, addToast })
 }
 
 function WelcomeScreen({ chars, onNewChar, onImport, onSelectChar }) {
-  const totalMsgs = chars.reduce((s, c) => s + S.chat(c.id).length, 0);
+  // F42: chat bodies are not resident at boot, so the welcome screen reads the
+  // same small F36 summary map the sidebar uses instead of every history.
+  const meta = S.chatMeta();
+  const countFor = id => meta[id]?.count || 0;
+  const totalMsgs = chars.reduce((s, c) => s + countFor(c.id), 0);
 
   // Recent convos: chars with messages, sorted by updatedAt
   const recent = [...chars]
-    .filter(c => S.chat(c.id).length > 0)
+    .filter(c => countFor(c.id) > 0)
     .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))
     .slice(0, 4);
 
@@ -326,13 +330,9 @@ function WelcomeScreen({ chars, onNewChar, onImport, onSelectChar }) {
             <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.18em', color: 'var(--text3)', marginBottom: 10, textAlign: 'left' }}>CONTINUE WHERE YOU LEFT OFF</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {recent.map(c => {
-                const msgs = S.chat(c.id);
-                const last = msgs[msgs.length - 1];
-                const lastText = last
-                  ? (typeof last.content === 'string' ? last.content : last.content?.find?.(x => x.type === 'text')?.text || '')
-                  : '';
-                const preview = lastText.replace(/\*/g, '').replace(/\s+/g, ' ').trim().slice(0, 72);
-                const lastAuthor = last?.role === 'user' ? 'You' : c.name;
+                const m = meta[c.id] || {};
+                const preview = String(m.preview || '').replace(/\*/g, '').replace(/\s+/g, ' ').trim().slice(0, 72);
+                const lastAuthor = m.lastRole === 'user' ? 'You' : c.name;
                 const when = c.updatedAt ? formatDate(c.updatedAt) : '';
                 return (
                   <div
@@ -352,7 +352,7 @@ function WelcomeScreen({ chars, onNewChar, onImport, onSelectChar }) {
                       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 2 }}>
                         <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{c.name}</span>
                         <span style={{ fontSize: 10, color: 'var(--text3)' }}>{when}</span>
-                        <span style={{ fontSize: 9, color: 'var(--text3)', marginLeft: 'auto', whiteSpace: 'nowrap' }}>{msgs.length} msgs</span>
+                        <span style={{ fontSize: 9, color: 'var(--text3)', marginLeft: 'auto', whiteSpace: 'nowrap' }}>{countFor(c.id)} msgs</span>
                       </div>
                       <div style={{ fontSize: 11, color: 'var(--text3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                         <span style={{ color: 'var(--text2)', marginRight: 4 }}>{lastAuthor}:</span>{preview || '—'}
@@ -371,7 +371,7 @@ function WelcomeScreen({ chars, onNewChar, onImport, onSelectChar }) {
             <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.18em', color: 'var(--text3)', marginBottom: 10 }}>ALL CHARACTERS</div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 8 }}>
               {chars.map(c => {
-                const count = S.chat(c.id).length;
+                const count = countFor(c.id);
                 return (
                   <div
                     key={c.id}
