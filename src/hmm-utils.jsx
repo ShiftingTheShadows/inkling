@@ -333,8 +333,9 @@ const CHANGELOG = [
     version: '2026-11-17',
     date: 'Nov 17, 2026',
     items: [
-      'New: end-to-end encryption for Railway sync. The backup is stored as an AES-GCM blob keyed by a passphrase the server never sees — unlocked once per device and optionally remembered. A device without the passphrase refuses to push over it, the browser never uploads plaintext to an encrypted backup, and MCP reports it cannot read one.',
-      'Changed: the sync server reports whether a backup is encrypted, so a browser that has not been set up with the passphrase can tell before it overwrites anything.',
+      'New: end-to-end encryption for Railway sync. The backup is stored as an AES-GCM envelope keyed by a passphrase the server never sees, unlocked once per device (optionally remembered). Enabling encrypts and replaces the plaintext backup, LOCK NOW drops the key, and changing the passphrase re-encrypts and re-uploads the backup; a forgotten passphrase cannot be recovered, so download a plaintext backup first.',
+      'Changed: a locked or unencrypted browser refuses to push plaintext over an encrypted backup, and MCP says it cannot read or edit ciphertext instead of writing over it.',
+      'Note for self-hosted sync servers: the encrypted-backup flag on /api/sync/meta takes effect once server/ is redeployed. Until then pulls still detect and decrypt encrypted backups, but a browser without the passphrase cannot be warned before it pushes.',
       'New: storage warnings. If the browser refuses a save (disk full, private window, blocked site data), a banner says so and offers a backup export instead of failing silently.',
       'Changed: restoring a backup now merges by default — new characters, folders and scripts are added, newer records win, and a longer local chat is never replaced by an older one. Gist pull, Railway pull, auto-sync and file import all use it; "Replace everything" is still one click away.',
       'New: TEST CONNECTION in Settings sends a one-token request and reports exactly what is wrong — key, endpoint, model, timeout, or a missing /api proxy — instead of a broken reply in the chat.',

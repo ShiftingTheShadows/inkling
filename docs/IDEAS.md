@@ -7,9 +7,11 @@ them without restating them.
 Effort tags: **S** ≈ under an hour, **M** ≈ an afternoon, **L** ≈ a day or more.
 
 > **Status:** D24, D27, A3, F35, D25, A4, A1, A2, A5, A6, A7, B9, B10, B11, B12,
-> B13, B14, B16, B17, B18, C19, C20, D26, D28, D30, E31, E32, E34, F38, F39 and F44 are
-> implemented — see
+> B13, B14, B16, B17, B18, C19, C20, D26, D28, D29, D30, E31, E32, E34, F38, F39 and F44
+> are implemented — see
 > [plans/2026-11-17-data-safety-three.md](superpowers/plans/2026-11-17-data-safety-three.md).
+> D29's three product decisions were answered before it was built; the chosen paths are
+> recorded in its entry, so they are not open questions.
 
 ---
 
@@ -63,16 +65,19 @@ funnels through one OpenAI-compatible branch using a single shared
   entries. *(M)*
 - **B13 — done.** **Swipe on user messages** too, and **edit-in-place** without resending
   (currently edit resends and truncates). *(M)*
-- **B14 — done.** **Continue without a user turn** for solo characters — group chats have
-  "SPEAK ▸" per member; solo chats have no "keep going" nudge. *(S)*
+- **B14 — done.** **Continue without a user turn** for solo characters — a CONTINUE action
+  in the composer streams the next assistant beat with a "continue the scene" instruction and
+  no invented user message, through the normal abort/error/retry path. *(S)*
 - **B15.** **Multi-member group turns** — a "director" toggle where a cheap model picks
   the next speaker, or 2–3 characters reply in sequence. *(M)*
 - **B16 — done.** **Clipboard paste + drag-drop images** into the composer (file picker only
   today), multiple images per message, `capture` on the mobile input for camera. *(S)*
-- **B17 — done.** **Timestamps / separators toggle.** `showTokens` exists; timestamp display is
-  unconditional. *(S)*
-- **B18 — done.** **Chat export** — per-chat Markdown/JSON/HTML. Full backup and character cards
-  exist, but not "give me this one log". *(S)*
+- **B17 — done.** **Timestamps / separators toggle.** A Settings → Appearance checkbox
+  (`showTimestamps`, on by default and synced) hides every message time while keeping the
+  transcript readable. *(S)*
+- **B18 — done.** **Chat export** — the chat menu exports this one log as Markdown, JSON
+  (`inkling-chat-v1`) or a self-contained HTML page, all from one shared row model that names
+  speakers and notes attached images. *(S)*
 
 ## C. Textbox / Undertale mode
 
@@ -93,7 +98,9 @@ funnels through one OpenAI-compatible branch using a single shared
   quota error silently loses data. Toast plus a "storage full, export now" banner. *(S)*
 - **D25 — done.** **Headless auto-backup** — automatic local snapshot before destructive ops
   (delete character, clear chat, import backup), plus a rolling restore point. *(M)*
-- **D26 — done.** **Trash bin** — soft-delete characters/chats for N days. *(M)*
+- **D26 — done.** **Trash bin** — deleting a character (with its chat and history) or clearing
+  a chat parks a copy in `hmm_trash` for 30 days; Settings → Storage lists each entry with
+  RESTORE and EMPTY TRASH, and expired entries are purged on launch. *(M)*
 - **D27 — done.** **Merge, don't replace.** `restorePayload` overwrites the characters array
   wholesale, so pulling or importing a backup discards local-only characters. Offer
   merge-by-id (replace / keep both / skip). *(M)*
@@ -101,13 +108,20 @@ funnels through one OpenAI-compatible branch using a single shared
   (built for MCP) but the browser omits it and keeps last-write-wins, and a pull triggers
   a full `location.reload()`. Send the revision and prompt "remote changed — keep mine /
   take theirs". *(M)*
-- **D29 — done.** **End-to-end encrypt the sync blob** — the Railway backup is stored as
-  an AES-GCM envelope keyed by a passphrase (PBKDF2-SHA256, per-blob salt + IV) the server
-  never sees. It unlocks once per device, can be remembered, and is re-keyed by uploading
-  the re-encrypted blob before the new key is committed. A device without the passphrase
-  refuses to push over an encrypted backup, the browser never uploads plaintext to one, and
-  MCP reports that it cannot read ciphertext instead of writing over it. Gist sync is
-  unchanged and says so in the UI. *(M/L)*
+- **D29 — done.** **End-to-end encrypt the sync blob** — the Railway backup is stored server-side
+  as an AES-GCM envelope (PBKDF2-SHA256, per-key salt, fresh IV) keyed by a separate passphrase
+  the server never sees, unlocked once per device and optionally remembered. Enabling encrypts
+  and replaces the plaintext revision; a locked device refuses to push plaintext and an
+  unencrypted client refuses to overwrite an encrypted backup (checked via the `encrypted` meta
+  flag); MCP refuses ciphertext instead of writing through it; changing the passphrase
+  re-encrypts and uploads before committing the new key, and a forgotten passphrase is
+  unrecoverable. Gist sync is unchanged and the UI says so. *(M/L)*
+  - **Decisions (answered, implemented):** a separate passphrase unlocked once per device with
+    optional remember; enabling encrypts and replaces the stored plaintext immediately; changing
+    the passphrase re-encrypts and uploads first, with no recovery path.
+  - **Operational note:** the `/api/sync/meta` `encrypted` flag only takes effect once the
+    `server/` service is redeployed. Until then pulls still detect and decrypt encrypted blobs,
+    but the pre-push guard cannot see that a backup is encrypted.
 - **D30 — done.** **Server hardening** — rate-limit `/api/sync` and `/api/sync/meta` (token
   guessing is unthrottled, minimum length 8), tighten CORS, add a purge path. *(S)*
 
@@ -115,8 +129,9 @@ funnels through one OpenAI-compatible branch using a single shared
 
 - **E31 — done.** **`inkling_search_messages`** — full-text across every chat; the most obviously
   missing tool for "what did we say about X".
-- **E32 — done.** **`inkling_export_character`** — return a `chara_card_v2` JSON blob so a
-  character can move between installs without a browser round-trip.
+- **E32 — done.** **`inkling_export_character`** — an MCP tool returning a `chara_card_v2`
+  object (avatar data excluded) so a character can move between installs without a browser
+  round-trip.
 - **E33.** **Message-level edit/delete, folder tree, `fields` selection on
   `get_character`** — keeps big payloads out of context.
 - **E34 — done.** **Read-only mode** — an env flag exposing only read tools.
@@ -140,54 +155,27 @@ funnels through one OpenAI-compatible branch using a single shared
   avatars). Lazy-load chats per character; store avatars as Blobs once libraries grow. *(M)*
 - **F43.** `build.mjs` comments still say "what Netlify publishes" while deploy is
   Vercel. *(S)*
-- **F44 — done.** Modals are `div`s with no `role="dialog"`, focus trap or focus restore; icon
-  buttons rely on `title` for accessible names. *(M)*
+- **F44 — done.** **Modal dialog semantics** — every modal is `role="dialog"` + `aria-modal`,
+  labelled from its title, moves focus inside, traps Tab and restores focus on close; icon-only
+  buttons take `aria-label` from their tooltip. *(M)*
 
 ---
 
-## Priority order — most to least necessary
+## Priority order — what's left, most to least necessary
 
-1. **D24** — silent data loss is the only failure mode with no recovery path.
-2. **D27** — a backup pull or import can quietly delete local characters.
-3. **A3** — Test connection. Removes the most common "why doesn't it work" hour.
-4. **A1** — per-provider profiles; the current shared triple fights every provider switch.
-5. **A2** — preset picker; same code, turns "custom" into two clicks.
-6. **B11** — retry/backoff/timeout and error bubbles instead of fake replies in the chat.
-7. **F35** — wrong model in the status bar; one line, constant low-grade confusion.
-8. **D25** — auto-snapshot before destructive ops; `confirm()` is the only guard today.
-9. **A4** — delete the unused `openrouterKey` / `openrouterModel` trap.
-10. **B9** — per-chat persona; removes manual switching in the app's core loop.
-11. **F38** — a linter would catch the dev/prod hook class of bug before it ships.
-12. **F39** — CI for `npm test` + build; the desktop workflow is the only automation.
-13. **A6** — stop sequences, penalties and prompt caching: better prose and lower bills.
-14. **A5** — live model lists so the OpenRouter picker stops rotting.
-15. **D28** — revision CAS in the browser closes the last clobber case and the jarring reload.
-16. **B10** — auto-summarize keeps long chats from silently truncating.
-17. **E31** — message search over MCP; the one tool an agent actually needs here.
-18. **C19** — present mode: designed for, not built, and the most visible "wow".
-19. **B12** — real message search with match navigation and cross-chat scope.
-20. **B16** — paste/drag images; the everyday attachment path.
-21. **C20** — click-to-advance and number-key choices in the textbox.
-22. **B13** — swipe user messages and edit-in-place without resending.
-23. **A7** — utility model for assists/summaries/character generation.
-24. **D29** — E2E encryption; the right answer for a roleplay backup host seeing plaintext.
-25. **B18** — per-chat export for sharing or archiving a single log.
-26. **B14** — solo "continue" without typing a user turn.
-27. **F44** — modal dialog semantics and focus handling.
-28. **D26** — trash bin for characters and chats.
-29. **B17** — timestamp toggle for people who want a cleaner transcript.
-30. **E32** — export a character card over MCP.
-31. **D30** — rate limiting and CORS tightening on the sync server.
-32. **A8** — real usage numbers instead of `length / 4` against a fixed 16k.
-33. **B15** — director mode / multi-reply group turns.
-34. **E33** — message edit/delete and field selection for lighter MCP payloads.
-35. **C21** — user font upload, also resolving the NC-ND font constraint.
-36. **F40** — better page reading and keyless search; DNS-rebinding hardening.
-37. **F36** — stop reading every chat in the sidebar render.
-38. **F37** — alphabetical sort option in the sidebar.
-39. **F41** — configurable image host.
-40. **C22** — per-character blip volume/toggle.
-41. **C23** — auto-advance pages for long messages.
-42. **F42** — lazy IDB loading; matters only once libraries get big.
-43. **E34** — MCP read-only mode.
-44. **F43** — stale "Netlify" comment in `build.mjs`.
+Everything marked done above is shipped; this list is only the open items, in the order they
+should be tackled.
+
+1. **A8** — real token usage from provider responses instead of `length / 4` against a fixed
+   16k context.
+2. **B15** — director mode / multi-reply group turns.
+3. **C21** — user font upload, also resolving the NC-ND font constraint.
+4. **C22** — per-character blip volume/toggle.
+5. **C23** — auto-advance pages for long messages.
+6. **E33** — message edit/delete, folder tree, and `fields` selection for lighter MCP payloads.
+7. **F36** — stop reading every chat in the sidebar render.
+8. **F37** — alphabetical sort option in the sidebar.
+9. **F40** — better page reading and keyless search; DNS-rebinding hardening.
+10. **F41** — configurable image host.
+11. **F42** — lazy IDB loading; matters only once libraries get big.
+12. **F43** — stale "Netlify" comment in `build.mjs`.

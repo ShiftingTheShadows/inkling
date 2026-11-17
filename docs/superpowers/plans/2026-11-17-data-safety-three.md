@@ -20,7 +20,11 @@ nothing from the other two.
 Node's built-in test runner (no framework), IndexedDB via the `S` wrapper in
 `src/hmm-utils.jsx`.
 
-**Non-goals (explicitly out of scope):**
+**Non-goals (explicitly out of scope at the time):**
+
+> **Update (2026-11-17):** D28 (revision CAS on browser pushes) and D29 (end-to-end sync
+> encryption) have both since shipped. This plan is kept as the record of that batch; see
+> `docs/IDEAS.md` for their current, shipped descriptions.
 
 - Per-provider profiles / preset URL picker (IDEA A1, A2) — A3 only *tests* the current form.
 - Chat error bubbles with Retry (B11) — A3 avoids `callAI` entirely for this reason.
