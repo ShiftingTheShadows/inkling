@@ -27,6 +27,66 @@ function resolveBy(list, ref, label) {
 const personaView = p => ({ ...p, avatar: p.avatar ? `[${Math.round(p.avatar.length / 1024)}KB data URI omitted]` : '' });
 const needBackup = data => { if (!data) throw new Error('No backup found yet. Open Inkling and let it sync once first.'); return data; };
 
+// E33: what a message actually says. Content is usually a string, but a
+// multimodal message stores an array of parts.
+const msgText = m => (typeof m.content === 'string'
+  ? m.content
+  : Array.isArray(m.content) ? m.content.map(p => p?.text || '').join(' ').trim() : '');
+
+// E33: address one message by id (unique) or by its 0-based index in the chat -
+// the same position inkling_search_messages reports. Editing or deleting a
+// single message this way avoids rewriting the whole chat through clear_chat.
+function resolveMessage(msgs, ref) {
+  const needle = str(ref).trim();
+  if (!needle) throw new Error('message reference is empty');
+  const byId = msgs.findIndex(m => m.id === needle);
+  if (byId >= 0) return { index: byId, msg: msgs[byId] };
+  if (/^\d+$/.test(needle)) {
+    const i = Number(needle);
+    if (i < msgs.length) return { index: i, msg: msgs[i] };
+    throw new Error(`No message at index ${i}; the chat has ${msgs.length} message${msgs.length === 1 ? '' : 's'}.`);
+  }
+  throw new Error(`No message with id "${needle}" in this chat. Pass a message id or a 0-based index.`);
+}
+
+// E33: one nested object instead of making the caller stitch parentId links
+// together. `totalCharacters` counts the subtree, which is what someone
+// asking "what is in this folder" means. Cycle-safe: a hand-edited backup can
+// carry a parent chain that loops, so a folder already visited is skipped
+// rather than recursing forever. A character whose folderId points at a folder
+// that no longer exists counts as unfiled instead of vanishing.
+function buildFolderTree(folders, characters) {
+  const known = new Set(folders.map(f => f.id));
+  const byParent = new Map();
+  for (const f of folders) {
+    const key = f.parentId && known.has(f.parentId) ? f.parentId : null;
+    if (!byParent.has(key)) byParent.set(key, []);
+    byParent.get(key).push(f);
+  }
+  const visited = new Set();
+  const build = (parentId, depth) => (byParent.get(parentId) || []).flatMap(f => {
+    if (visited.has(f.id)) return [];
+    visited.add(f.id);
+    const own = characters.filter(c => c.folderId === f.id).map(c => c.name);
+    const children = build(f.id, depth + 1);
+    return [{
+      id: f.id, name: f.name, color: f.color || null, parentId, depth,
+      characters: own, characterCount: own.length,
+      totalCharacters: own.length + children.reduce((n, c) => n + c.totalCharacters, 0),
+      children,
+    }];
+  });
+  return {
+    folderCount: folders.length,
+    folders: folders.map(f => ({
+      id: f.id, name: f.name, color: f.color || null, parentId: f.parentId ?? null,
+      characters: characters.filter(c => c.folderId === f.id).length,
+    })),
+    tree: build(null, 0),
+    unfiled: characters.filter(c => !c.folderId || !known.has(c.folderId)).map(c => c.name),
+  };
+}
+
 export const EXTRA_TOOLS = [
   // personas
   { name: 'inkling_list_personas', description: 'List the user personas (who the user plays as in chats), and which one is active.',
@@ -67,13 +127,25 @@ export const EXTRA_TOOLS = [
     inputSchema: { type: 'object', properties: {
       character: { type: 'string' }, role: { type: 'string', enum: ['user', 'assistant'] }, content: { type: 'string' },
     }, required: ['character', 'role', 'content'] } },
+  { name: 'inkling_update_message', description: 'Rewrite one message\'s text in place, leaving the rest of the chat untouched. Address it by message id, or by its 0-based index as returned by inkling_get_chat / inkling_search_messages.',
+    inputSchema: { type: 'object', properties: {
+      character: { type: 'string', description: 'Character id or name.' },
+      message: { type: ['string', 'number'], description: 'Message id, or its 0-based index in the chat.' },
+      content: { type: 'string', description: 'New message text.' },
+    }, required: ['character', 'message', 'content'] } },
+  { name: 'inkling_delete_message', description: 'Delete one message from a chat, leaving every other message in place. Not undoable. Confirm with the user first, then pass confirm:true.',
+    inputSchema: { type: 'object', properties: {
+      character: { type: 'string', description: 'Character id or name.' },
+      message: { type: ['string', 'number'], description: 'Message id, or its 0-based index in the chat.' },
+      confirm: { type: 'boolean', description: 'Must be true.' },
+    }, required: ['character', 'message', 'confirm'] } },
   { name: 'inkling_clear_chat', description: 'Delete every message in a character\'s chat (the character stays). Not undoable. Confirm with the user first, then pass confirm:true.',
     inputSchema: { type: 'object', properties: {
       character: { type: 'string' }, confirm: { type: 'boolean' },
     }, required: ['character', 'confirm'] } },
 
   // folders
-  { name: 'inkling_list_folders', description: 'List character folders (nestable) with parent and how many characters each holds directly.',
+  { name: 'inkling_list_folders', description: 'Read the character folder tree: nested children, the characters in each folder, subtree totals, and which characters are unfiled.',
     inputSchema: { type: 'object', properties: {} } },
   { name: 'inkling_create_folder', description: 'Create a character folder, optionally inside another folder.',
     inputSchema: { type: 'object', properties: {
@@ -262,6 +334,41 @@ export async function handleExtra(name, args, { sync, ok, fail }) {
       return ok({ added: { id: msg.id, role: msg.role, character: charName }, revision: res.revision });
     }
 
+    case 'inkling_update_message': {
+      const text = str(args.content);
+      if (!text.trim()) return fail('content is empty.');
+      let info;
+      const res = await sync.mutate(d => {
+        assertPayloadShape(d);
+        const char = resolveCharacter(d.characters, args.character);
+        const msgs = d.chats?.[char.id] || [];
+        const { index, msg } = resolveMessage(msgs, args.message);
+        msg.content = text;
+        msg.edited = true;
+        info = { character: char.name, index, message: { id: msg.id, role: msg.role, content: text } };
+      });
+      if (res.aborted) return fail(res.message);
+      return ok({ updated: info, revision: res.revision, note: 'Inkling will pick this up within ~60s, or hit Sync now in Settings.' });
+    }
+
+    case 'inkling_delete_message': {
+      if (args.confirm !== true) return fail('Refusing to delete without confirm:true. Ask the user first.');
+      let info;
+      const res = await sync.mutate(d => {
+        assertPayloadShape(d);
+        const char = resolveCharacter(d.characters, args.character);
+        const msgs = d.chats?.[char.id] || [];
+        const { index, msg } = resolveMessage(msgs, args.message);
+        d.chats[char.id] = msgs.filter((_, i) => i !== index);
+        info = {
+          character: char.name, index, remaining: msgs.length - 1,
+          deleted: { id: msg.id, role: msg.role, preview: msgText(msg).slice(0, 120) },
+        };
+      });
+      if (res.aborted) return fail(res.message);
+      return ok({ ...info, revision: res.revision });
+    }
+
     case 'inkling_clear_chat': {
       if (args.confirm !== true) return fail('Refusing to clear without confirm:true. Ask the user first.');
       let cleared, charName;
@@ -280,8 +387,7 @@ export async function handleExtra(name, args, { sync, ok, fail }) {
     case 'inkling_list_folders': {
       const { data } = await sync.pull();
       needBackup(data);
-      const chars = data.characters || [];
-      return ok({ folders: (data.folders || []).map(f => ({ ...f, characters: chars.filter(c => c.folderId === f.id).length })) });
+      return ok(buildFolderTree(data.folders || [], data.characters || []));
     }
 
     case 'inkling_create_folder': {

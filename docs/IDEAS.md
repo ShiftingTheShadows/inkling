@@ -7,8 +7,8 @@ them without restating them.
 Effort tags: **S** ≈ under an hour, **M** ≈ an afternoon, **L** ≈ a day or more.
 
 > **Status:** D24, D27, A3, F35, D25, A4, A1, A2, A5, A6, A7, B9, B10, B11, B12,
-> A8, B13, B14, B15, B16, B17, B18, C19, C20, C21, C22, C23, D26, D28, D29, D30, E31, E32, E34, F38,
-> F39 and F44 are implemented — see
+> A8, B13, B14, B15, B16, B17, B18, C19, C20, C21, C22, C23, D26, D28, D29, D30, E31, E32, E33, E34,
+> F38, F39 and F44 are implemented — see
 > [plans/2026-11-17-data-safety-three.md](superpowers/plans/2026-11-17-data-safety-three.md).
 > D29's three product decisions were answered before it was built; the chosen paths are
 > recorded in its entry, so they are not open questions.
@@ -155,8 +155,12 @@ funnels through one OpenAI-compatible branch using a single shared
 - **E32 — done.** **`inkling_export_character`** — an MCP tool returning a `chara_card_v2`
   object (avatar data excluded) so a character can move between installs without a browser
   round-trip.
-- **E33.** **Message-level edit/delete, folder tree, `fields` selection on
-  `get_character`** — keeps big payloads out of context.
+- **E33 — done.** **Smaller MCP edits and reads.** `inkling_update_message` and
+  `inkling_delete_message` change or remove one message by id or 0-based index without touching
+  the rest of the chat (delete requires `confirm:true`); `inkling_list_folders` returns a real
+  nested tree with each folder's characters, subtree totals and the unfiled characters;
+  `inkling_get_character` takes `fields` (camelCase or snake_case) and returns only those values
+  plus id and name, refusing an unknown name with the valid list. *(M)*
 - **E34 — done.** **Read-only mode** — an env flag exposing only read tools.
 
 ## F. Smaller fixes noticed while reading
@@ -189,10 +193,9 @@ funnels through one OpenAI-compatible branch using a single shared
 Everything marked done above is shipped; this list is only the open items, in the order they
 should be tackled.
 
-1. **E33** — message edit/delete, folder tree, and `fields` selection for lighter MCP payloads.
-2. **F36** — stop reading every chat in the sidebar render.
-3. **F37** — alphabetical sort option in the sidebar.
-4. **F40** — better page reading and keyless search; DNS-rebinding hardening.
-5. **F41** — configurable image host.
-6. **F42** — lazy IDB loading; matters only once libraries get big.
-7. **F43** — stale "Netlify" comment in `build.mjs`.
+1. **F36** — stop reading every chat in the sidebar render.
+2. **F37** — alphabetical sort option in the sidebar.
+3. **F40** — better page reading and keyless search; DNS-rebinding hardening.
+4. **F41** — configurable image host.
+5. **F42** — lazy IDB loading; matters only once libraries get big.
+6. **F43** — stale "Netlify" comment in `build.mjs`.

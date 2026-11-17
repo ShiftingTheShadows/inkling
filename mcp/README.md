@@ -90,15 +90,17 @@ Local run: `INKLING_MCP_SECRET=... INKLING_SYNC_URL=... INKLING_SYNC_TOKEN=... n
 |---|---|
 | `inkling_status` | Connection check plus counts. Start here if something misbehaves. |
 | `inkling_list_characters` | All bots — id, name, tags, message count. Optional `search`. |
-| `inkling_get_character` | One bot in full. Avatar omitted unless `include_avatar: true`. |
+| `inkling_get_character` | One bot. Avatar omitted unless `include_avatar: true`; pass `fields` (camelCase or snake_case) to return only the parts you need. |
 | `inkling_create_character` | New bot. Needs `name` and `first_message`. |
 | `inkling_update_character` | Patch fields; anything you don't pass is left alone. |
 | `inkling_delete_character` | Deletes the bot **and its chat history**. Requires `confirm: true`. |
 | `inkling_list_personas` / `create` / `update` / `delete` | User personas. The last persona can't be deleted; deleting the active one switches to another. |
 | `inkling_get_chat` | Read a character's messages, paged from the end (`limit`, `offset`). |
 | `inkling_add_message` | Append a `user` or `assistant` message to a chat. |
+| `inkling_update_message` | Rewrite one message in place, by id or 0-based index. Nothing else in the chat moves. |
+| `inkling_delete_message` | Delete one message by id or 0-based index. Requires `confirm: true`. |
 | `inkling_clear_chat` | Empty a chat, keep the character. Requires `confirm: true`. |
-| `inkling_list_folders` / `create_folder` / `delete_folder` | Nestable character folders. Deleting moves contents up a level. |
+| `inkling_list_folders` / `create_folder` / `delete_folder` | Nestable character folders; the listing is a tree with characters, subtree totals and unfiled names. Deleting moves contents up a level. |
 | `inkling_update_folder` | Rename, recolor or re-parent a folder. Refuses to move a folder into itself or its subfolders. |
 | `inkling_move_character` / `inkling_move_characters` | Put one or many characters in a folder (`folder: ""` = top level). Bulk is all-or-nothing. |
 | `inkling_list_scripts` / `get_script` / `create_script` / `add_script_entry` | Lorebook scripts and their keyword entries. Advanced (JS) scripts are not editable here. |

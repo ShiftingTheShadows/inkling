@@ -20,7 +20,7 @@ import path from 'node:path';
 
 import { SyncClient, assertPayloadShape } from './sync.js';
 import { EXTRA_TOOLS, handleExtra } from './extra.js';
-import { buildCharacter, normalizeInput, summarize, detail, resolveCharacter } from './characters.js';
+import { buildCharacter, normalizeInput, summarize, detail, resolveCharacter, pickCharacterFields } from './characters.js';
 
 export const CONFIG_PATH = path.join(os.homedir(), '.inkling-mcp.json');
 
@@ -80,12 +80,13 @@ const TOOLS = [
   },
   {
     name: 'inkling_get_character',
-    description: 'Read one character in full: description, personality, scenario, first message, example dialogues, system prompt, alternate greetings.',
+    description: 'Read one character: description, personality, scenario, first message, example dialogues, system prompt, alternate greetings. Pass fields to return only the ones you need.',
     inputSchema: {
       type: 'object',
       properties: {
         character: { type: 'string', description: 'Character id or name.' },
         include_avatar: { type: 'boolean', description: 'Include the raw avatar data URI. Off by default because it is large.' },
+        fields: { type: 'array', items: { type: 'string' }, description: 'Return only these fields (id and name always come back). Accepts camelCase or snake_case, e.g. ["description","personality"]. Omit for the full record.' },
       },
       required: ['character'],
     },
@@ -221,7 +222,8 @@ async function handle(name, args) {
       const { data } = await sync.pull();
       if (!data) return fail('No backup found yet. Open Inkling and let it sync once first.');
       const char = resolveCharacter(data.characters || [], args.character);
-      return ok(detail(char, { includeAvatar: !!args.include_avatar }));
+      const full = detail(char, { includeAvatar: !!args.include_avatar });
+      return ok(args.fields === undefined ? full : pickCharacterFields(full, args.fields));
     }
 
     case 'inkling_create_character': {
