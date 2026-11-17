@@ -194,6 +194,81 @@ async function __loadAllChats() {
   __allChatsLoaded = true;
 }
 
+/* AVATAR-BLOB-START */
+// F42: avatars are base64 data URLs everywhere they are consumed — <img src>,
+// the gist/Railway payload, the encrypted envelope, the PNG card export — but
+// at rest in IndexedDB they are Blobs. That is the storage boundary: no base64
+// inflation on disk, byte-identical strings in memory and on the wire.
+function avatarIsDataUrl(v) {
+  return typeof v === 'string' && /^data:([^;,]+);base64,/.test(v);
+}
+
+function avatarIsBlob(v) {
+  return typeof Blob !== 'undefined' && v instanceof Blob;
+}
+
+// Decodes the base64 body and keeps the bytes as a Blob. Anything that is not
+// a base64 data URL (a remote URL, an empty avatar) is passed through as-is,
+// and a malformed body is left alone rather than risking a corrupt image.
+function avatarToStored(v) {
+  if (!avatarIsDataUrl(v)) return v;
+  const m = /^data:([^;,]+);base64,([\s\S]*)$/.exec(v);
+  if (!m) return v;
+  try {
+    const bin = atob(m[2]);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: m[1] });
+  } catch { return v; }
+}
+
+// Boot reads Blobs back into the base64 form every caller expects. A failed
+// conversion loses that one avatar (initials tile) instead of the character.
+async function avatarFromStored(v) {
+  if (!avatarIsBlob(v)) return v;
+  try {
+    const bytes = new Uint8Array(await v.arrayBuffer());
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return `data:${v.type || 'image/png'};base64,${btoa(bin)}`;
+  } catch (e) {
+    console.warn('Inkling: could not read a stored avatar', e);
+    return '';
+  }
+}
+
+// Characters and personas both carry `avatar`; the same conversion applies.
+function charsToStored(list) {
+  return (Array.isArray(list) ? list : []).map(c => (
+    c && avatarIsDataUrl(c.avatar) ? { ...c, avatar: avatarToStored(c.avatar) } : c
+  ));
+}
+
+async function charsFromStored(list) {
+  return Promise.all((Array.isArray(list) ? list : []).map(async c => {
+    if (!c || !avatarIsBlob(c.avatar)) return c;
+    return { ...c, avatar: await avatarFromStored(c.avatar) };
+  }));
+}
+
+// True when a hydrated list still holds base64 avatars, i.e. the record predates
+// this storage form and should be rewritten once at boot.
+function avatarsNeedCompaction(list) {
+  return (Array.isArray(list) ? list : []).some(c => c && avatarIsDataUrl(c.avatar));
+}
+/* AVATAR-BLOB-END */
+
+// Write a character/persona list: base64 stays in memory, Blobs go to IDB. The
+// localStorage fallback JSON-stringifies, which would turn a Blob into {}, so
+// it keeps the base64 form.
+function __storeAvatarList(key, v) {
+  __mem.set(key, v);
+  __idbPut(key, __db ? charsToStored(v) : v);
+  __notifyDataChange(key);
+}
+
 // Boot: open IDB, hydrate the small records, defer chat bodies, one-time
 // migration from localStorage.
 window.InklingStorageReady = (async () => {
@@ -209,6 +284,16 @@ window.InklingStorageReady = (async () => {
       req.onerror = () => rej(req.error);
     });
     ingest.deferred().forEach(id => __chatOnDisk.add(id));
+    // F42: avatars were read as Blobs; hydrate them as the data URLs everything
+    // else expects, and rewrite a pre-existing base64 record once so it is
+    // compact at rest from the next boot on.
+    for (const key of ['hmm_chars', 'hmm_personas']) {
+      const stored = __mem.get(key);
+      if (!Array.isArray(stored)) continue;
+      const hydrated = await charsFromStored(stored);
+      __mem.set(key, hydrated);
+      if (__db && avatarsNeedCompaction(hydrated)) __idbPut(key, charsToStored(hydrated));
+    }
     if (ingest.deferred().length) {
       console.info(`Inkling: ${ingest.deferred().length} chat(s) stay on disk until opened`);
     }
@@ -366,7 +451,7 @@ function __backfillChatMeta() {
 
 const S = {
   chars: () => __get('hmm_chars', []),
-  saveChars: v => __set('hmm_chars', v),
+  saveChars: v => __storeAvatarList('hmm_chars', v),
   folders: () => __get('hmm_folders', []),
   saveFolders: v => __set('hmm_folders', v),
   chat: id => __get(`hmm_chat_${id}`, []),
@@ -525,7 +610,7 @@ const S = {
   },
   saveSettings: v => __set('hmm_settings', v),
   personas: () => __get('hmm_personas', null) || [{ id: 'default', name: 'You', description: '', avatar: '' }],
-  savePersonas: v => __set('hmm_personas', v),
+  savePersonas: v => __storeAvatarList('hmm_personas', v),
   // D26: soft deletes. A deleted character (with its chat and history) or a
   // cleared chat sits here for 30 days and can be restored from Settings.
   trash: () => __get('hmm_trash', []) || [],
@@ -592,7 +677,7 @@ const CHANGELOG = [
     version: '2026-11-17',
     date: 'Nov 17, 2026',
     items: [
-      'Changed: chats load when you open a character instead of all at startup — a big library now boots with far less memory and no up-front history read. Message counts and previews in the sidebar and on the welcome screen still appear immediately.',
+      'Changed: chats load when you open a character instead of all at startup — a big library now boots with far less memory and no up-front history read. Message counts and previews in the sidebar and on the welcome screen still appear immediately. Character and persona avatars are now kept as compact image data on disk (about a quarter smaller) and converted back to the usual data URLs on load, so avatars and backups are unchanged.',
       'Changed: greeting images can upload to imgbb or a custom upload URL (self-hosted, S3/R2) instead of only freeimage.host — pick the host in Settings → Integrations. Unconfigured installs keep using freeimage.host exactly as before.',
       'Changed: web search reads JavaScript-rendered pages. A page that arrives as an empty shell is re-read through a renderer instead of coming back blank, and keyless search falls back to a second no-key provider when DuckDuckGo blocks the request, so search still works with no API key set. Page reads also verify where a hostname actually points (including each redirect) before fetching, and the remote MCP server refuses requests addressed to an unexpected host or coming from another site.',
       'New: an A→Z sort for the character sidebar, alongside ALL, ★ FAV and RECENT. The choice is saved with your settings, so it is still selected after a reload.',

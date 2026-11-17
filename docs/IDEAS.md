@@ -222,10 +222,16 @@ funnels through one OpenAI-compatible branch using a single shared
   overwrite a real history with an empty one; restoring a backup marks the incoming chats loaded
   and writes them deliberately. Measured with the same store before and after: the old boot held
   6 keys and 18 message/session entries in memory, the new boot holds 3 keys and no message
-  bodies, deferring both characters until one is opened. Avatar storage is unchanged: avatars
-  ride `hmm_chars` as base64 because the gist/Railway payload and the PNG card export carry them
-  in that form, so moving them to Blobs is a separate storage-format change rather than a boot
-  cost. *(M)*
+  bodies, deferring both characters until one is opened. **Avatars are Blobs at rest.**
+  `hmm_chars` and `hmm_personas` hold base64 data URLs in memory only: every write converts each
+  `data:` avatar to a Blob in IndexedDB (about a quarter less stored data for the same bytes), and
+  boot converts them back before the first render. Everything that consumes an avatar —
+  `<img src>`, the gist/Railway payload, the encrypted envelope, the PNG card export — still sees
+  the exact original base64 string, so the wire formats are byte-identical. An existing base64
+  record is rewritten once at boot, remote-URL and empty avatars pass through untouched, a
+  malformed data URL is left alone rather than corrupted, and the no-IndexedDB fallback keeps
+  base64 because its JSON copy would flatten a Blob. Trashed characters and the automatic snapshot
+  still carry base64 (they are JSON restore points, written back through `saveChars`). *(M)*
 - **F43.** `build.mjs` comments still say "what Netlify publishes" while deploy is
   Vercel. *(S)*
 - **F44 — done.** **Modal dialog semantics** — every modal is `role="dialog"` + `aria-modal`,
