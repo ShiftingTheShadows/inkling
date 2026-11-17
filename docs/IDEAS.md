@@ -8,7 +8,7 @@ Effort tags: **S** ≈ under an hour, **M** ≈ an afternoon, **L** ≈ a day or
 
 > **Status:** D24, D27, A3, F35, D25, A4, A1, A2, A5, A6, A7, B9, B10, B11, B12,
 > A8, B13, B14, B15, B16, B17, B18, C19, C20, C21, C22, C23, D26, D28, D29, D30, E31, E32, E33, E34,
-> F36, F37, F38, F39 and F44 are implemented — see
+> F36, F37, F38, F39, F40 and F44 are implemented — see
 > [plans/2026-11-17-data-safety-three.md](superpowers/plans/2026-11-17-data-safety-three.md).
 > D29's three product decisions were answered before it was built; the chosen paths are
 > recorded in its entry, so they are not open questions.
@@ -183,9 +183,21 @@ funnels through one OpenAI-compatible branch using a single shared
   `eslint-plugin-react-hooks` would find statically. *(S/M)*
 - **F39 — done.** CI only builds the desktop app — no workflow for `npm test` + `npm run build`.
   *(S)*
-- **F40.** `api/search.js` strips HTML with regexes and cannot handle JS-rendered pages;
-  a reader fallback (e.g. Jina `r.jina.ai`, or SearXNG for keyless search) beats
-  DuckDuckGo scraping. `safeUrl` blocks by hostname only — DNS rebinding uncovered. *(M)*
+- **F40 — done.** **Page reading, keyless search and DNS-rebinding hardening.**
+  `api/search.js` still reads plain HTML directly, but a `text/html` page that yields less than
+  400 characters of prose (an empty SPA shell) is re-read through `r.jina.ai`, which renders
+  JavaScript; a reader refusal (its anonymous tier can answer with a JSON error) falls back to
+  the direct text and never leaks that JSON as page content. The reply now says which path was
+  used (`reader: 'html' | 'jina'`). Keyless search tries DuckDuckGo's HTML endpoint and, when it
+  blocks or returns nothing, falls back to Jina's keyless reader search (`s.jina.ai`), parsing
+  its links into results — no API key involved in either step. Outbound page reads resolve the
+  hostname over DNS-over-HTTPS and refuse any answer in loopback, private, link-local, CGNAT,
+  benchmarking or multicast space (v4 and v6), re-check every redirect hop, and fail closed when
+  the address cannot be verified, so a hostname that looks public but resolves to
+  `127.0.0.1` or `169.254.169.254` is never fetched. The remote MCP server (`mcp/http.js`)
+  additionally answers only loopback or operator-listed hosts and refuses a foreign browser
+  `Origin`, which blocks DNS rebinding against the local connector while leaving the MCP client,
+  curl and local/preview development unaffected. *(M)*
 - **F41.** Image upload is hardwired to freeimage.host + a user key; make the endpoint
   configurable (imgbb, S3/R2, self-hosted). *(M)*
 - **F42.** Boot hydrates **every** IDB key into memory (all chats, histories, base64
@@ -203,7 +215,6 @@ funnels through one OpenAI-compatible branch using a single shared
 Everything marked done above is shipped; this list is only the open items, in the order they
 should be tackled.
 
-1. **F40** — better page reading and keyless search; DNS-rebinding hardening.
-2. **F41** — configurable image host.
-3. **F42** — lazy IDB loading; matters only once libraries get big.
-4. **F43** — stale "Netlify" comment in `build.mjs`.
+1. **F41** — configurable image host.
+2. **F42** — lazy IDB loading; matters only once libraries get big.
+3. **F43** — stale "Netlify" comment in `build.mjs`.

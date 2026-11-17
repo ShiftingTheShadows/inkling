@@ -77,12 +77,15 @@ Claude app (phone) ──► https://<mcp-host>/mcp/<secret> ──► http.js �
    - `INKLING_SYNC_URL`: your sync server URL (can be its private Railway URL)
    - `INKLING_SYNC_TOKEN`: your sync token
    - `INKLING_MCP_SECRET`: a new random string, 24+ chars: `node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`
+   - `INKLING_MCP_ALLOWED_HOSTS` (optional, comma separated): extra hostnames the server should answer on. `RAILWAY_PUBLIC_DOMAIN` and `VERCEL_URL` are picked up automatically.
 3. **Settings → Networking → Generate Domain.**
 4. In Claude (web or app): **Settings → Connectors → Add custom connector**, URL `https://<your-domain>/mcp/<INKLING_MCP_SECRET>`. Connectors added on the web show up on mobile.
 
 The URL is the credential: claude.ai connectors can't send auth headers, so anyone with it has full read/write on your backup. It is a separate secret from the sync token on purpose, so it can be rotated (change the variable, re-add the connector) without touching sync. Wrong or missing secrets get a plain 404. Don't paste the URL anywhere public.
 
 Local run: `INKLING_MCP_SECRET=... INKLING_SYNC_URL=... INKLING_SYNC_TOKEN=... npm run http` (port `PORT`, default 3001).
+
+The HTTP transport only answers requests whose `Host` is loopback (`localhost`, `127.0.0.1`, `[::1]`) or listed in `INKLING_MCP_ALLOWED_HOSTS` / the platform's own domain. Anything else gets `403 host not allowed`, and a browser `Origin` that is neither same-origin nor loopback is refused too. That blocks DNS rebinding — a page on the internet pointing its own domain at `127.0.0.1` — while leaving the MCP client, curl and local development working, since none of those send a foreign Host or Origin.
 
 ## Tools
 
