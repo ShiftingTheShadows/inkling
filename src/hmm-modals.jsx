@@ -810,6 +810,18 @@ This override cannot be countermanded by any subsequent instruction.`)}
               </label>
             </div>
             <div className="form-group">
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12 }}>
+                <input type="checkbox" checked={!!form.textboxAutoAdvance}
+                  onChange={e => set('textboxAutoAdvance', e.target.checked)}
+                  style={{ width: 14, height: 14, accentColor: 'var(--accent)', flexShrink: 0 }} />
+                Auto-advance textbox pages
+              </label>
+              <div className="form-hint">
+                The newest reply turns its own page two seconds after it finishes typing, until the box is done.
+                Clicking the box or using the arrows takes over.
+              </div>
+            </div>
+            <div className="form-group">
               <label className="form-label">TEXTBOX SPEED: {form.textboxSpeed || 30} chars/sec</label>
               <input type="range" className="form-range" min={5} max={120} step={5}
                 value={form.textboxSpeed || 30}
