@@ -1,6 +1,6 @@
 // hmm-modals.jsx — Modals, toasts, command palette
 const { useState, useContext, useEffect, useMemo, useRef } = React;
-const { AppCtx, S, genId, charBg, charFg, GistSync, RailwaySync, SyncCrypto, callAI, compressImage, uploadImage, CHANGELOG, testProvider } = window;
+const { AppCtx, S, genId, charBg, charFg, GistSync, RailwaySync, SyncCrypto, normalizeGroupReplies, callAI, compressImage, uploadImage, CHANGELOG, testProvider } = window;
 
 // Shared stroke-icon set for the command palette — same visual language as the
 // topbar/sidebar icon buttons, instead of mismatched ASCII/unicode/emoji glyphs.
@@ -2076,13 +2076,15 @@ function GroupEditorModal({ editId, onClose }) {
   const existing = editId ? ctx.chars.find(c => c.id === editId) : null;
   const [name, setName] = useState(existing?.name || '');
   const [memberIds, setMemberIds] = useState(existing?.memberIds || []);
+  const [director, setDirector] = useState(!!existing?.director);
+  const [groupReplies, setGroupReplies] = useState(existing?.groupReplies || 1);
   const candidates = ctx.chars.filter(c => !c.isGroup);
   const toggle = id => setMemberIds(ids => ids.includes(id) ? ids.filter(x => x !== id) : [...ids, id]);
 
   // Same unsaved-changes guard as CharEditorModal — see there for why.
-  const initialRef = useRef(JSON.stringify({ name, memberIds }));
+  const initialRef = useRef(JSON.stringify({ name, memberIds, director, groupReplies }));
   const stateRef = useRef();
-  stateRef.current = { name, memberIds };
+  stateRef.current = { name, memberIds, director, groupReplies };
   const isDirty = () => JSON.stringify(stateRef.current) !== initialRef.current;
   const attemptClose = () => {
     if (isDirty() && !window.confirm('Discard unsaved changes to this group?')) return;
@@ -2096,7 +2098,7 @@ function GroupEditorModal({ editId, onClose }) {
   const save = () => {
     if (!name.trim()) { ctx.addToast('Group name is required', 'error'); return; }
     if (memberIds.length < 2) { ctx.addToast('Pick at least two members', 'error'); return; }
-    const data = { name: name.trim(), memberIds, isGroup: true, updatedAt: new Date().toISOString() };
+    const data = { name: name.trim(), memberIds, isGroup: true, director, groupReplies: normalizeGroupReplies(groupReplies), updatedAt: new Date().toISOString() };
     ctx.setChars(prev => {
       const next = editId
         ? prev.map(c => c.id === editId ? { ...c, ...data } : c)
@@ -2136,6 +2138,25 @@ function GroupEditorModal({ editId, onClose }) {
               </div>
             )}
             <div className="form-hint" style={{ marginTop: 8 }}>Members take turns replying — mention a name to make that character answer, or use the SPEAK buttons in chat.</div>
+          </div>
+          <div className="form-group" style={{ marginTop: 14 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 12 }}>
+              <input
+                type="checkbox" checked={director} onChange={e => setDirector(e.target.checked)}
+                style={{ width: 14, height: 14, accentColor: 'var(--accent)', flexShrink: 0 }}
+              />
+              DIRECTOR — a cheap utility model picks who speaks next
+            </label>
+            <div className="form-hint">Falls back to strict rotation if the utility model is unavailable or answers with something unusable. Configure the utility model in Settings → Utility model.</div>
+          </div>
+          <div className="form-group" style={{ marginBottom: 0 }}>
+            <label className="form-label">REPLIES PER TURN</label>
+            <select className="form-select" value={normalizeGroupReplies(groupReplies)} onChange={e => setGroupReplies(Number(e.target.value))}>
+              <option value={1}>1 — one member replies</option>
+              <option value={2}>2 — two members reply in sequence</option>
+              <option value={3}>3 — three members reply in sequence</option>
+            </select>
+            <div className="form-hint">Each reply sees the ones before it. Manual SPEAK buttons still produce a single reply.</div>
           </div>
         </div>
         <div className="modal-footer">

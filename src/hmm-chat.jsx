@@ -1,6 +1,7 @@
 // hmm-chat.jsx — Chat view, messages, input
 const { useState, useContext, useEffect, useRef, useCallback } = React;
-const { AppCtx, S, genId, estimateTokens, contextTokensFromMessages, modelContextLength, formatTime, renderMarkdown, charBg, charFg, callAI, buildSystemPrompt, summarizeMessages, compressImage, downloadCharJson, downloadCharPng, avatarPx, providerProfile, shouldAutoSummarize, utilitySettings, chatToMarkdown, chatToJson, chatToHtml } = window;
+const { AppCtx, S, genId, estimateTokens, contextTokensFromMessages, modelContextLength,
+  nextGroupSpeaker, parseDirectorChoice, normalizeGroupReplies, formatTime, renderMarkdown, charBg, charFg, callAI, buildSystemPrompt, summarizeMessages, compressImage, downloadCharJson, downloadCharPng, avatarPx, providerProfile, shouldAutoSummarize, utilitySettings, chatToMarkdown, chatToJson, chatToHtml } = window;
 const { CharAvatar, Textbox } = window;
 
 function UserAvatar({ persona, size = 32 }) {
@@ -434,14 +435,17 @@ function ChatView() {
     : null;
   const memberName = id => members?.find(m => m.id === id)?.name || char?.name || '?';
 
-  // Mentioned member answers; otherwise round-robin after the last speaker
-  const pickSpeaker = (userText, baseMsgs) => {
-    const t = (userText || '').toLowerCase();
-    const mentioned = members.filter(m => t.includes(m.name.toLowerCase()));
-    if (mentioned.length) return mentioned[0];
-    const lastId = [...baseMsgs].reverse().find(m => m.role === 'assistant' && m.charId)?.charId;
-    const idx = members.findIndex(m => m.id === lastId);
-    return members[(idx + 1) % members.length];
+  // Mentioned member answers; otherwise round-robin after the last speaker.
+  const pickSpeaker = (userText, baseMsgs) => nextGroupSpeaker(members, baseMsgs, { mentionText: userText });
+
+  // B15: group options live on the group record, so they sync with it.
+  const patchGroup = patch => {
+    ctx.setChars(prev => {
+      const next = prev.map(c => c.id === char.id ? { ...c, ...patch, updatedAt: new Date().toISOString() } : c);
+      S.saveChars(next);
+      return next;
+    });
+    ctx.setCurrentChar(prev => ({ ...prev, ...patch }));
   };
 
   // Group history: other characters' lines carry a name prefix so the model
@@ -472,8 +476,9 @@ function ChatView() {
     }
     setStreamingId(streamMsgId);
     setGenerating(true);
+    let text = '';
     try {
-      await callAI(groupApiMsgs(baseMsgs), speaker, aiSettings(), (partial, done, usage) => {
+      text = await callAI(groupApiMsgs(baseMsgs), speaker, aiSettings(), (partial, done, usage) => {
         setMessages(prev => prev.map(m => m.id === streamMsgId ? { ...m, content: partial, charId: speaker.id, usage: usage || m.usage } : m));
         if (done) {
           setStreamingId(null);
@@ -492,8 +497,52 @@ function ChatView() {
         const f = prev.map(m => m.id === streamMsgId ? { ...m, content: '', error: e.message } : m);
         saveAndSync(f); return f;
       });
+      return { id: streamMsgId, text: '' };
     } finally {
       setGenerating(false);
+    }
+    // B15: the caller chains this reply into the next member's turn.
+    return { id: streamMsgId, text: text || '' };
+  };
+
+  // B15 director: a cheap utility model picks the next speaker from the last
+  // few lines. Any unparseable answer (or a failed call) falls back to rotation,
+  // so enabling it can never stall a turn.
+  const directorPick = async (baseMsgs, { mentionText = '' } = {}) => {
+    if (!members?.length) return null;
+    const lastId = [...baseMsgs].reverse().find(m => m.role === 'assistant' && m.charId)?.charId;
+    const lastSpeaker = members.find(m => m.id === lastId);
+    const excludeId = members.length > 1 ? lastSpeaker?.id : undefined;
+    const transcript = groupApiMsgs(baseMsgs).slice(-10)
+      .map(m => `${m.role === 'user' ? 'User' : 'Scene'}: ${m.content}`).join('\n');
+    const sys = `You direct a group roleplay. Members: ${members.map(m => m.name).join(', ')}.`
+      + (lastSpeaker && members.length > 1 ? ` ${lastSpeaker.name} just spoke; choose someone else.` : '')
+      + ' Pick the member whose reply would make the scene most interesting next.'
+      + ' Reply with ONLY their exact name, nothing else.';
+    const prompt = `${transcript || '(no lines yet)'}\n\n${mentionText ? `The user is addressing ${mentionText}. ` : ''}Who speaks next? Reply with one name.`;
+    const fake = { name: 'Director', description: '', personality: '', scenario: '', firstMessage: '', exampleDialogues: '', systemPrompt: '' };
+    try {
+      const out = await callAI([{ role: 'user', content: prompt }], fake, utilitySettings(aiSettings()), null, { system: sys });
+      const picked = parseDirectorChoice(out, members, { excludeId });
+      if (picked) return picked;
+    } catch (e) {
+      console.warn('Director pick failed, rotating instead:', e);
+    }
+    return nextGroupSpeaker(members, baseMsgs, { mentionText });
+  };
+
+  // B15: one user turn can produce 1–3 replies, each seeing the previous one.
+  const runGroupTurn = async (baseMsgs, { count = 1, mentionText = '' } = {}) => {
+    let convo = baseMsgs;
+    for (let i = 0; i < count; i++) {
+      if (!members?.length) return;
+      const speaker = char.director
+        ? await directorPick(convo, { mentionText: i === 0 ? mentionText : '' })
+        : nextGroupSpeaker(members, convo, { mentionText: i === 0 ? mentionText : '' });
+      if (!speaker) return;
+      const res = await generateAs(speaker, convo);
+      if (!res || !res.text) return;
+      convo = [...convo, { id: res.id, role: 'assistant', charId: speaker.id, content: res.text, timestamp: new Date().toISOString() }];
     }
   };
   const [inputVal, setInputVal] = useState('');
@@ -731,7 +780,7 @@ function ChatView() {
       if (!members?.length) { ctx.addToast('Group has no members — edit the group first', 'warning'); return; }
       setPendingImages([]); // group scenes are text-only for now
       const userMsg = { id: genId(), role: 'user', content: text, timestamp: new Date().toISOString() };
-      await generateAs(pickSpeaker(text, messages), [...messages, userMsg]);
+      await runGroupTurn([...messages, userMsg], { count: normalizeGroupReplies(char.groupReplies), mentionText: text });
       return;
     }
 
@@ -869,7 +918,7 @@ function ChatView() {
     if (char.isGroup) {
       if (!members?.length) { ctx.addToast('Group has no members — edit the group first', 'warning'); return; }
       setMessages(trimmed);
-      await generateAs(pickSpeaker(newText, trimmed), trimmed);
+      await runGroupTurn(trimmed, { count: normalizeGroupReplies(char.groupReplies), mentionText: newText });
       return;
     }
     const streamMsgId = genId();
@@ -934,7 +983,7 @@ function ChatView() {
     const withNarr = [...messages, narratorMsg];
     if (char.isGroup) {
       if (!members?.length) { ctx.addToast('Group has no members — edit the group first', 'warning'); return; }
-      await generateAs(pickSpeaker(text, withNarr), withNarr);
+      await runGroupTurn(withNarr, { count: normalizeGroupReplies(char.groupReplies), mentionText: text });
       return;
     }
     const streamMsgId = genId();
@@ -1332,6 +1381,12 @@ function ChatView() {
                   {headerMenuItem('Export Chat · HTML',
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M21 15V19C21 20.1 20.1 21 19 21H5C3.9 21 3 20.1 3 19V15" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/><path d="M7 10L12 15L17 10M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>,
                     () => exportChat('html'))}
+                  {char.isGroup && headerMenuItem(`${char.director ? '✓ ' : ''}Director Picks Speakers`,
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2L15 9L22 12L15 15L12 22L9 15L2 12L9 9L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round"/></svg>,
+                    () => patchGroup({ director: !char.director }))}
+                  {char.isGroup && headerMenuItem(`Replies Per Turn: ${normalizeGroupReplies(char.groupReplies)}`,
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M17 1L21 5L17 9M21 5H8C5.8 5 4 6.8 4 9V11M7 23L3 19L7 15M3 19H16C18.2 19 20 17.2 20 15V13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+                    () => patchGroup({ groupReplies: normalizeGroupReplies(char.groupReplies) % 3 + 1 }))}
                   {!char.isGroup && headerMenuItem('Duplicate Character',
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="9" y="9" width="12" height="12" stroke="currentColor" strokeWidth="2"/><path d="M5 15H4C2.9 15 2 14.1 2 13V4C2 2.9 2.9 2 4 2H13C14.1 2 15 2.9 15 4V5" stroke="currentColor" strokeWidth="2"/></svg>,
                     () => {
@@ -1444,6 +1499,8 @@ function ChatView() {
         {char.isGroup && members?.length > 0 && (
           <div style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '7px 16px 0', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 9, color: 'var(--text3)', letterSpacing: '0.12em', flexShrink: 0 }}>SPEAK ▸</span>
+            {char.director && <span style={{ fontSize: 9, color: 'var(--accent)', letterSpacing: '0.1em' }}>DIRECTOR</span>}
+            {normalizeGroupReplies(char.groupReplies) > 1 && <span style={{ fontSize: 9, color: 'var(--accent2)', letterSpacing: '0.1em' }}>×{normalizeGroupReplies(char.groupReplies)}</span>}
             {members.map(m => (
               <button
                 key={m.id} className="btn-secondary btn-sm" disabled={generating}

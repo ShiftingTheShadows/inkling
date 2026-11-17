@@ -336,6 +336,8 @@ const CHANGELOG = [
       'New: end-to-end encryption for Railway sync. The backup is stored as an AES-GCM envelope keyed by a passphrase the server never sees, unlocked once per device (optionally remembered). Enabling encrypts and replaces the plaintext backup, LOCK NOW drops the key, and changing the passphrase re-encrypts and re-uploads the backup; a forgotten passphrase cannot be recovered, so download a plaintext backup first.',
       'Changed: a locked or unencrypted browser refuses to push plaintext over an encrypted backup, and MCP says it cannot read or edit ciphertext instead of writing over it.',
       'Note for self-hosted sync servers: the encrypted-backup flag on /api/sync/meta takes effect once server/ is redeployed. Until then pulls still detect and decrypt encrypted backups, but a browser without the passphrase cannot be warned before it pushes.',
+      'New: group chats can hand direction to a cheap utility model — DIRECTOR picks who speaks next instead of strict rotation, with an automatic fallback to rotation when the model answers with something unusable.',
+      'New: a group can produce 1–3 replies per turn, one after another, each seeing the previous reply. Set it per group in the group editor or from the chat menu.',
       'New: the context meter now uses real token counts reported by the provider (including cached Anthropic input) and the model\'s actual context window — from Settings, the live model list, or a known model family — instead of an estimate divided by a fixed 16k. Endpoints that report no usage still fall back to the estimate.',
       'New: a CONTEXT WINDOW field in Settings for local and custom models, so auto-summarize fires at the right point instead of at 75% of 16k.',
       'New: storage warnings. If the browser refuses a save (disk full, private window, blocked site data), a banner says so and offers a backup export instead of failing silently.',
@@ -456,6 +458,55 @@ async function uploadImage(file, apiKey) {
 }
 
 const estimateTokens = text => Math.ceil((text || '').length / 4);
+/* GROUP-TURN-START */
+// B15: multi-member group turns. The director prompt and the rotation fallback
+// are pure so test/group.test.js can pin the behaviour without a model call.
+const MAX_GROUP_REPLIES = 3;
+
+function normalizeGroupReplies(n) {
+  const v = Math.round(Number(n));
+  return v >= 2 && v <= MAX_GROUP_REPLIES ? v : 1;
+}
+
+// Who speaks next: an explicit mention wins, otherwise round-robin after the
+// last character who spoke. A user message or narrator note never counts as a
+// speaker, and an unknown/absent last id starts the rotation at the top.
+function nextGroupSpeaker(members, messages, { mentionText = '' } = {}) {
+  const list = (members || []).filter(Boolean);
+  if (!list.length) return null;
+  const text = String(mentionText || '').toLowerCase();
+  if (text) {
+    const mentioned = list.filter(m => String(m.name || '').trim() && text.includes(String(m.name).toLowerCase()));
+    if (mentioned.length) return mentioned[0];
+  }
+  const lastId = [...(messages || [])]
+    .reverse()
+    .find(m => m && m.role === 'assistant' && m.charId)?.charId;
+  const idx = list.findIndex(m => m.id === lastId);
+  return list[(idx + 1) % list.length];
+}
+
+// The director is asked for one name. Accept "Vera", "Vera:", "Vera — she…",
+// quoted or bolded forms, and never return someone who just spoke or a name
+// that is not actually a member.
+function parseDirectorChoice(text, members, { excludeId } = {}) {
+  const list = (members || []).filter(Boolean).filter(m => m.id !== excludeId);
+  if (!list.length) return null;
+  const raw = String(text || '')
+    .trim()
+    .replace(/^[*_"'`]+/, '')
+    .replace(/[*_"'`.,:;!]+$/, '')
+    .trim();
+  if (!raw) return null;
+  const lower = raw.toLowerCase();
+  const exact = list.find(m => String(m.name || '').toLowerCase() === lower);
+  if (exact) return exact;
+  const starts = list.find(m => String(m.name || '').trim() && lower.startsWith(String(m.name).toLowerCase()));
+  if (starts) return starts;
+  return list.find(m => String(m.name || '').trim() && lower.includes(String(m.name).toLowerCase())) || null;
+}
+/* GROUP-TURN-END */
+
 /* USAGE-START */
 // A8: honest token accounting. Providers report what they actually charged;
 // prefer that over counting characters, and divide by the model's real context
@@ -2552,6 +2603,7 @@ Object.assign(window, {
   chatToMarkdown, chatToJson, chatToHtml, chatExportRows, trashExpired,
   parseOpenAIUsage, parseAnthropicUsage, mergeUsage, contextTokensFromMessages,
   resolveContextLength, contextMeter, modelContextLength,
+  nextGroupSpeaker, parseDirectorChoice, normalizeGroupReplies,
   SyncCrypto, isEncryptedSyncBlob, encryptSyncPayload, decryptSyncPayload,
   deriveSyncKey, syncKeyFingerprint, newSyncSalt,
   downloadCharJson, downloadCharPng,
