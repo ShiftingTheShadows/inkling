@@ -8,9 +8,10 @@ const L = loadSlice('/* STORAGE-BOOT-START */', '/* STORAGE-BOOT-END */');
 const { eq, ok, done } = makeRunner();
 
 // What a two-character library looks like in IndexedDB.
+const AVATAR = 'data:image/png;base64,' + Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01]).toString('base64');
 const messages = n => Array.from({ length: n }, (_, i) => ({ role: 'user', content: `message ${i}` }));
 const records = new Map([
-  ['hmm_chars', [{ id: 'a', name: 'Ana' }, { id: 'b', name: 'Bo' }]],
+  ['hmm_chars', [{ id: 'a', name: 'Ana', avatar: AVATAR }, { id: 'b', name: 'Bo' }]],
   ['hmm_settings', { theme: 'terminal' }],
   ['hmm_chat_meta', { a: { count: 12, preview: 'message 11' } }],
   ['hmm_chat_a', messages(12)],
@@ -58,7 +59,7 @@ ok('with nothing on disk a save is allowed', L.chatSaveAllowed('a', false, new S
 import fs from 'node:fs';
 
 function fakeIdb(initial) {
-  const store = new Map(initial);
+  const store = initial instanceof Map ? initial : new Map(initial);
   const tx = () => ({
     objectStore: () => ({
       get(key) {
@@ -122,6 +123,8 @@ const expose = `
     saveAllowed: (id) => chatSaveAllowed(id, __chatLoaded.has(id), __chatOnDisk),
     allLoaded: () => __allChatsLoaded,
     db: () => __db,
+    chars: () => __get('hmm_chars', []),
+    writeChars: v => __storeAvatarList('hmm_chars', v),
   };
 `;
 
@@ -152,5 +155,52 @@ const expose = `
   await M.loadAllChats();
   eq('loadAllChats brings the rest in', M.chatOf('b').length, 3);
   ok('and clears the on-disk set', M.onDisk.size === 0 && M.allLoaded());
+
+  // ── F42: avatars are Blobs at rest, base64 in memory ──
+  eq('a stored avatar is hydrated back to its data URL', M.chars()[0].avatar, AVATAR);
+  ok('the record on disk was rewritten with a Blob avatar', db.store.get('hmm_chars')[0].avatar instanceof Blob);
+  ok('and the stored value no longer carries base64', !JSON.stringify(db.store.get('hmm_chars')).includes('base64'));
+
+  M.writeChars([{ id: 'a', name: 'Ana', avatar: AVATAR }, { id: 'c', name: 'Cee', avatar: 'https://example.com/c.png' }]);
+  ok('saving a character writes a Blob avatar', db.store.get('hmm_chars')[0].avatar instanceof Blob);
+  eq('a remote avatar is stored untouched', db.store.get('hmm_chars')[1].avatar, 'https://example.com/c.png');
+  eq('the in-memory character still holds the exact data URL', M.chars()[0].avatar, AVATAR);
+  eq('so the sync/export input is unchanged', JSON.stringify(M.chars()[0].avatar), JSON.stringify(AVATAR));
+
+  // A reload reads the Blob back into the same string.
+  const again = make(fakeIdb(db.store), fakeLocalStorage(), {}, { info() {}, warn() {}, error() {} });
+  await again.ready;
+  eq('a reload restores the identical avatar data URL', again.chars()[0].avatar, AVATAR);
+}
+
+// ── the avatar conversion itself ────────────────────────────
+const A = loadSlice('/* AVATAR-BLOB-START */', '/* AVATAR-BLOB-END */');
+{
+  const list = [
+    { id: 'a', name: 'Ana', avatar: AVATAR },
+    { id: 'b', name: 'Bo', avatar: 'https://example.com/b.png' },
+    { id: 'c', name: 'Cee', avatar: '' },
+  ];
+  const stored = A.charsToStored(list);
+  ok('a base64 avatar becomes a Blob', stored[0].avatar instanceof Blob);
+  eq('carrying its media type', stored[0].avatar.type, 'image/png');
+  eq('with the decoded byte length', stored[0].avatar.size, 6);
+  ok('the name and id survive', stored[0].name === 'Ana' && stored[0].id === 'a');
+  eq('a remote avatar is passed through', stored[1].avatar, 'https://example.com/b.png');
+  eq('an empty avatar is passed through', stored[2].avatar, '');
+  ok('nothing base64-shaped is left at rest', !JSON.stringify(stored).includes('base64'));
+  ok('a pre-existing base64 record is flagged for compaction', A.avatarsNeedCompaction(list));
+  ok('a compacted record is not', !A.avatarsNeedCompaction(stored));
+
+  const back = await A.charsFromStored(stored);
+  eq('the blob round-trips to the exact original string', back[0].avatar, AVATAR);
+  ok('and the character fields are intact', back[0].id === 'a' && back[0].name === 'Ana');
+  eq('a remote avatar survives the round trip', back[1].avatar, 'https://example.com/b.png');
+
+  const broken = A.charsToStored([{ id: 'd', avatar: 'data:image/png;base64,!!!not-base64!!!' }]);
+  eq('a malformed data URL is left alone rather than corrupted', broken[0].avatar, 'data:image/png;base64,!!!not-base64!!!');
+  const svg = A.charsToStored([{ id: 'e', avatar: 'data:image/svg+xml,<svg/>' }]);
+  eq('a non-base64 data URL is left alone', svg[0].avatar, 'data:image/svg+xml,<svg/>');
+  ok('and neither is flagged', !A.avatarsNeedCompaction([{ avatar: 'data:image/svg+xml,<svg/>' }]));
 }
 done();
