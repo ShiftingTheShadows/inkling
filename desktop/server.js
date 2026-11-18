@@ -14,10 +14,24 @@ const MIME = {
   '.ttf': 'font/ttf', '.woff2': 'font/woff2', '.woff': 'font/woff', '.ico': 'image/x-icon',
 };
 
+// ESM imports do not go through Electron's asar-aware fs layer, so a module
+// inside app.asar cannot be loaded at all (ERR_MODULE_NOT_FOUND) — which is why
+// the packaged app used to answer every /api/* request with a 500. The api/
+// directory is asarUnpack'd, so the real files sit in app.asar.unpacked/ next
+// to the archive; point the loader there.
+const unpackedPath = file => {
+  const marker = `app.asar${path.sep}`;
+  return file.includes(marker) ? file.replace(marker, `app.asar.unpacked${path.sep}`) : file;
+};
+
+// Electron's fs patches make an unpacked entry look present at its asar path;
+// plain fs (dev, and this test suite) only sees the unpacked copy.
+const exists = file => fs.existsSync(file) || fs.existsSync(unpackedPath(file));
+
 async function handleApi(root, name, req, res) {
   const file = path.join(root, 'api', `${name}.js`);
-  if (!/^[a-z0-9_-]+$/i.test(name) || !fs.existsSync(file)) { res.writeHead(404).end('Not found'); return; }
-  const mod = await import(pathToFileURL(file).href);
+  if (!/^[a-z0-9_-]+$/i.test(name) || !exists(file)) { res.writeHead(404).end('Not found'); return; }
+  const mod = await import(pathToFileURL(exists(unpackedPath(file)) ? unpackedPath(file) : file).href);
   let body;
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     const chunks = [];
@@ -83,4 +97,4 @@ function createServer(root, preferredPort) {
     });
 }
 
-module.exports = { createServer };
+module.exports = { createServer, unpackedPath };

@@ -29,6 +29,16 @@ jobs:
       - name: Build packages
         working-directory: desktop
         run: npm run dist
+      - name: Check the packaged API is on disk
+        working-directory: desktop
+        # The api/ modules are asarUnpack'd because Electron's ESM loader cannot
+        # import from inside app.asar; if they stay in the archive the packaged
+        # app answers every /api/* request with an error.
+        run: |
+          for f in search anthropic imgupload; do
+            test -f "release/linux-unpacked/resources/app.asar.unpacked/web/api/$f.js" || {
+              echo "missing app.asar.unpacked/web/api/$f.js" >&2; exit 1; }
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: inkling-linux
