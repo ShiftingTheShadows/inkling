@@ -80,6 +80,17 @@ npm run dist                   # AppImage + deb + tar.gz into desktop/release/
 It serves on `127.0.0.1:47831` (override with `INKLING_PORT`). Keep that port stable: saved
 data is tied to it.
 
+**If the AppImage prints `dlopen(): error loading libfuse.so.2` and no window opens**, the
+distro has no FUSE 2 — Ubuntu 22.04 and newer and Debian 12 ship it without one, and the
+AppImage cannot mount itself without it. Either install it (`sudo apt install libfuse2t64` on
+24.04+, `sudo apt install libfuse2` on older releases), or run the AppImage without FUSE:
+
+```
+./Inkling-*.AppImage --appimage-extract-and-run
+```
+
+The `.deb` and `.tar.gz` from the same release need no FUSE at all.
+
 ## Running it
 
 ```

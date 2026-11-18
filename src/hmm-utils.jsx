@@ -677,6 +677,7 @@ const CHANGELOG = [
     version: '2026-11-17',
     date: 'Nov 17, 2026',
     items: [
+      'Fixed: the Linux desktop build could not run its bundled API — Claude, web search and image upload failed with a server error because the modules could not be loaded from inside the app archive. They are now unpacked next to it and loaded from there, and a packaged build starts without the sandbox helper that an AppImage cannot ship setuid.',
       'Changed: Continue in a group scene now speaks as the member who wrote the line being continued — with that member’s own character sheet and the usual name-prefixed transcript — instead of writing as the group itself.',
       'New: Enhance can rewrite only the part of your message you selected — select a sentence, run Enhance, and accepting replaces just that fragment with the rest of the draft untouched. The assist menu also gained tone presets (more descriptive, plainer, dialogue only, shorten) that stack with your own direction and carry into Try again.',
       'New: AI assist suggestions open in a review sheet instead of replacing your draft. Accept keeps the generated text, Try again stacks another version (the last three are kept and switchable), and Keep original closes the sheet with what you typed untouched — so Write for me, Enhance and Impersonate can never silently eat a message.',

@@ -6,9 +6,15 @@ const { createServer } = require('./server');
 const PORT = Number(process.env.INKLING_PORT) || 47831;
 const ROOT = path.join(__dirname, 'web');
 
-// AppImages can't ship a setuid chrome-sandbox helper; without this Chromium
-// refuses to start on many distros. We only ever load our own local origin.
-if (process.env.APPIMAGE) app.commandLine.appendSwitch('no-sandbox');
+// AppImages can't ship a setuid chrome-sandbox helper (squashfs has no setuid
+// bits), and a packaged install next to a non-setuid helper fails the same way,
+// so a packaged build starts without the sandbox. A source checkout
+// (`npm start`) keeps the normal sandbox. We only ever load our own local
+// origin — 127.0.0.1 on this machine.
+if (app.isPackaged) {
+  app.commandLine.appendSwitch('no-sandbox');
+  app.commandLine.appendSwitch('disable-setuid-sandbox');
+}
 
 // Black-window fix: GPU compositing is the usual culprit on Linux (Wayland,
 // NVIDIA, VMs, missing GL drivers). A text chat app doesn't need it, so
