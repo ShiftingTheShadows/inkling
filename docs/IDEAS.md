@@ -9,7 +9,7 @@ Effort tags: **S** ≈ under an hour, **M** ≈ an afternoon, **L** ≈ a day or
 > **Status:** D24, D27, A3, F35, D25, A4, A1, A2, A5, A6, A7, B9, B10, B11, B12,
 > A8, B13, B14, B15, B16, B17, B18, C19, C20, C21, C22, C23, D26, D28, D29, D30, E31, E32, E33, E34,
 > F36, F37, F38, F39, F40, F41, F42, F43 and F44 are implemented; batch G below is the
-> follow-up pass, where G1 and G2 are implemented and G3–G15 are open — see
+> follow-up pass, where G1–G3 are implemented and G4–G15 are open — see
 > [plans/2026-11-17-data-safety-three.md](superpowers/plans/2026-11-17-data-safety-three.md).
 > D29's three product decisions were answered before it was built; the chosen paths are
 > recorded in its entry, so they are not open questions.
@@ -274,9 +274,19 @@ user had typed.
   before: the whole draft is enhanced. The span logic lives in four pure helpers
   (`assistScopeFromDraft`, `assistScopeSplice`, `assistTonePresets`, `assistToneHint`) in a
   marked region of `hmm-utils.jsx`, guarded by `test/assist-scope.test.js`. *(S)*
-- **G3.** **Group-aware continue.** `assist('continue')` builds the prompt from the group
-  record, so a group continuation is out of voice and attributed to the group rather than
-  the member who spoke last; use the last message's `charId` member system prompt. *(S)*
+- **G3 — done.** **Group-aware continue.** Continue built its prompt from the character in
+  hand, which in a group is the group record — a pseudo-character with a name and a member
+  list but no personality, scenario or example dialogue — so a continuation came back flat and
+  was attributed to the group. In a group it now resolves the member who wrote the line being
+  continued from that message's `charId`, builds the system prompt from that member's own
+  fields plus the existing group scene block, and sends history through the same name-prefixed
+  transcript normal group replies use, so the model can still tell the speakers apart. The
+  continuation is appended to the same message through its branch list as before, so the
+  pre-continuation version stays one swipe away, and the toast names the member. A line with
+  no member voice — a narrator turn, or someone who has since left the group — is refused with
+  a clear message instead of being continued as the group. Solo chats keep the original path
+  unchanged. The speaker resolver is `groupContinueSpeaker` in a marked region of
+  `hmm-utils.jsx`, guarded by `test/group-continue.test.js`. *(S)*
 - **G4.** **Undo summarize.** Summarizing hides all but the last four messages with no way
   back; keep the hidden ids on the summary message and offer an unhide action. *(S)*
 - **G5.** **Per-message assist actions.** Rewrite / punch up / shorten / longer / narrate on
@@ -312,16 +322,15 @@ user had typed.
 Everything marked done above is shipped; this list is only the open items, in the order they
 should be tackled.
 
-1. **G3** — group-aware continue (S)
-2. **G4** — undo summarize (S)
-3. **G9** — assist failure honesty and retry (S)
-4. **G6** — streaming assists with stop (M)
-5. **G5** — per-message assist actions (M)
-6. **G7** — context inspector (M)
-7. **G12** — shortcut sheet and action palette (M)
-8. **G8** — per-character assist style (S)
-9. **G13** — settings search (M)
-10. **G14** — mobile layout pass (M)
-11. **G15** — avatar crop and fallback (S)
-12. **G10** — field-scoped character generation (M)
-13. **G11** — virtualized transcript (L)
+1. **G4** — undo summarize (S)
+2. **G9** — assist failure honesty and retry (S)
+3. **G6** — streaming assists with stop (M)
+4. **G5** — per-message assist actions (M)
+5. **G7** — context inspector (M)
+6. **G12** — shortcut sheet and action palette (M)
+7. **G8** — per-character assist style (S)
+8. **G13** — settings search (M)
+9. **G14** — mobile layout pass (M)
+10. **G15** — avatar crop and fallback (S)
+11. **G10** — field-scoped character generation (M)
+12. **G11** — virtualized transcript (L)
